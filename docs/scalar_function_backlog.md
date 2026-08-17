@@ -113,34 +113,27 @@ committed (an embedded-prefix offset decision that inspected the
 parsed byte value instead of the address's own source text).
 
 ### Parse functions (`func_string.go` / `func_net.go`)
-**`parse_command_line` CLOSED 2026-08-17** — implements the standard
-Win32 CommandLineToArgvW tokenization algorithm, verified against
-real ADX's own worked example; see `kql_coverage.md` for detail.
-Still open: `parse_user_agent`, `parse_version`, `parse_xml`,
-`extract_json` (a single-value shortcut over `parse_json` + dot-access
-— verify whether it's meaningfully different before building it as a
-new thing), `indexof_regex`.
+**`parse_command_line` and `parse_user_agent` CLOSED (2026-08-17 and
+2026-08-18)** — see `kql_coverage.md` for full detail on both,
+including `parse_user_agent`'s own reversal note (the earlier
+deferral below was based on the actual `ua-parser/uap-core` regex
+database being assumed unfetchable; it turned out to be public and
+fetchable, which removed the blocker). Still open: `parse_version`,
+`parse_xml`, `extract_json` (a single-value shortcut over `parse_json`
++ dot-access — verify whether it's meaningfully different before
+building it as a new thing), `indexof_regex`.
 
-**`parse_user_agent` scope note (2026-08-17, deliberately deferred,
-not attempted)**: real ADX's own docs state its implementation is
+**`parse_user_agent` scope note — SUPERSEDED 2026-08-18, see
+`kql_coverage.md`'s Sprint 15 entry.** (Original 2026-08-17 note,
+kept for history: real ADX's own docs state its implementation is
 "built on regex checks of the input string against a huge number of
-predefined patterns" (the underlying reference is the open-source
-`ua-parser` project's own regex pattern database, hundreds of
-browser/OS/device patterns, not a small closed-form algorithm like
-`parse_command_line`'s CommandLineToArgvW). No worked example showing
-exact output field values for a real user-agent string was found in
-the docs actually fetched this session — only the output *shape*
-(Browser: Family/MajorVersion/MinorVersion/Patch; OperatingSystem:
-adds PatchMinor; Device fields not enumerated in what was found). A
-plausible-but-uncalibrated regex-pattern reimplementation would run
-and look reasonable without any confidence it matches real ADX's own
-actual classification for anything but the most trivial inputs —
-structurally the same risk this project's own `reduce` scope note
-already declined to take on for exactly this reason (see
-`kql_coverage.md`'s `reduce` note). Deliberately left unimplemented
-rather than shipped with unverified precision; revisit only with the
-actual `ua-parser` regex database (or a real, multi-example ADX
-worked-output table) in hand, not another documentation-only attempt.
+predefined patterns," and at the time this was deliberately deferred
+because no worked example with real output values had been found and
+the actual pattern database's accessibility hadn't been checked. Both
+turned out to be resolvable: the database is public
+(`ua-parser/uap-core`'s own `regexes.yaml`), and real ADX's own docs
+do include worked examples with exact output values once looked for
+directly rather than via a narrower search pass.)
 
 ### `_TimeReceived` accessor
 `ingestion_time()` — real ADX's own function-form accessor for the
