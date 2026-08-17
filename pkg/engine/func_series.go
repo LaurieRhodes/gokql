@@ -79,17 +79,17 @@ func evalSeriesFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 	case "series_stats_dynamic":
 		return evalSeriesStatsDynamic(fc, schema, row)
 
-	// series_stats (NOT series_stats_dynamic) is deliberately NOT
-	// implemented — see this file's own Tier 3 section comment below
-	// for why: its real syntax, `extend (Name, ...) = series_stats(
-	// series [, ignore_nonfinite])`, expands to MULTIPLE output
-	// columns from one function call, needing destructuring-
-	// assignment grammar support (`(a, b, c) = expr`) that doesn't
-	// exist anywhere in this engine's project/extend parser — a real,
-	// separate, bigger gap than adding one more function, not
-	// something to fake by returning a single dynamic value under
-	// the same name (which would silently NOT match real ADX's own
-	// documented multi-column output shape).
+		// series_stats (NOT series_stats_dynamic) is deliberately NOT
+		// implemented — see this file's own Tier 3 section comment below
+		// for why: its real syntax, `extend (Name, ...) = series_stats(
+		// series [, ignore_nonfinite])`, expands to MULTIPLE output
+		// columns from one function call, needing destructuring-
+		// assignment grammar support (`(a, b, c) = expr`) that doesn't
+		// exist anywhere in this engine's project/extend parser — a real,
+		// separate, bigger gap than adding one more function, not
+		// something to fake by returning a single dynamic value under
+		// the same name (which would silently NOT match real ADX's own
+		// documented multi-column output shape).
 	}
 	return nil, false, nil
 }
@@ -533,17 +533,21 @@ func evalSeriesUnary(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 	case "series_exp":
 		op = func(x float64) interface{} { return math.Exp(x) }
 	case "series_sin":
-		op = func(x float64) interface{} { return math.Sin(x) }
+		// Shares its implementation with the scalar sin() function
+		// (func_convert.go, added 2026-08-17) via the trigSin helper,
+		// rather than calling math.Sin directly here, so the two
+		// families can't drift apart.
+		op = func(x float64) interface{} { return trigSin(x) }
 	case "series_cos":
-		op = func(x float64) interface{} { return math.Cos(x) }
+		op = func(x float64) interface{} { return trigCos(x) }
 	case "series_tan":
-		op = func(x float64) interface{} { return math.Tan(x) }
+		op = func(x float64) interface{} { return trigTan(x) }
 	case "series_asin":
-		op = func(x float64) interface{} { return math.Asin(x) }
+		op = func(x float64) interface{} { return trigAsin(x) }
 	case "series_acos":
-		op = func(x float64) interface{} { return math.Acos(x) }
+		op = func(x float64) interface{} { return trigAcos(x) }
 	case "series_atan":
-		op = func(x float64) interface{} { return math.Atan(x) }
+		op = func(x float64) interface{} { return trigAtan(x) }
 	}
 	out := make([]interface{}, len(arr))
 	for i, el := range arr {
@@ -848,4 +852,3 @@ func seriesOptionalPlaceholderArg(fc *parser.FuncCall, schema *types.Schema, row
 	}
 	return evalExpr(fc.Args[argIndex], schema, row)
 }
-
