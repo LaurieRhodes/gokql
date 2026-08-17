@@ -293,9 +293,108 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		b, _ := json.Marshal(result)
 		return string(b), true, nil
 
+	case "parse_command_line":
+		// parse_command_line(command_line, parser_type) — added
+		// 2026-08-17. Only parser_type="windows" is documented as
+		// supported by real ADX; implements the standard Win32
+		// CommandLineToArgvW tokenization algorithm (whitespace-
+		// delimited arguments, double-quote-bounded arguments allow
+		// embedded whitespace, an even run of N backslashes before a
+		// quote emits N/2 literal backslashes and the quote toggles
+		// quoting, an odd run emits (N-1)/2 backslashes plus one
+		// literal escaped quote character) — verified exactly against
+		// real ADX's own worked example:
+		// parse_command_line('echo "hello world!"', 'windows') ==
+		// ["echo","hello world!"]. A parser_type other than "windows"
+		// returns null rather than guessing at undocumented behavior,
+		// since real ADX's own docs state windows is the only
+		// currently-supported value without describing what happens
+		// otherwise.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("parse_command_line requires 2 arguments")
+		}
+		cmdVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		typeVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if cmdVal == nil || typeVal == nil {
+			return nil, true, nil
+		}
+		if fmt.Sprintf("%v", typeVal) != "windows" {
+			return nil, true, nil
+		}
+		args := parseWindowsCommandLine(fmt.Sprintf("%v", cmdVal))
+		b, _ := json.Marshal(args)
+		return string(b), true, nil
+
 	default:
 		return nil, false, nil
 	}
+}
+
+// parseWindowsCommandLine implements the standard Win32
+// CommandLineToArgvW tokenization algorithm, verified against real
+// ADX's own parse_command_line worked example
+// ('echo "hello world!"' -> ["echo","hello world!"]) — see the
+// parse_command_line case above for the full rule description.
+func parseWindowsCommandLine(s string) []string {
+	var args []string
+	runes := []rune(s)
+	n := len(runes)
+	i := 0
+	skipWS := func() {
+		for i < n && (runes[i] == ' ' || runes[i] == '\t') {
+			i++
+		}
+	}
+	skipWS()
+	for i < n {
+		var cur []rune
+		inQuotes := false
+		for i < n {
+			c := runes[i]
+			switch {
+			case c == '\\':
+				count := 0
+				for i < n && runes[i] == '\\' {
+					count++
+					i++
+				}
+				if i < n && runes[i] == '"' {
+					for k := 0; k < count/2; k++ {
+						cur = append(cur, '\\')
+					}
+					if count%2 == 1 {
+						cur = append(cur, '"')
+						i++
+					} else {
+						inQuotes = !inQuotes
+						i++
+					}
+				} else {
+					for k := 0; k < count; k++ {
+						cur = append(cur, '\\')
+					}
+				}
+			case c == '"':
+				inQuotes = !inQuotes
+				i++
+			case !inQuotes && (c == ' ' || c == '\t'):
+				goto endArg
+			default:
+				cur = append(cur, c)
+				i++
+			}
+		}
+	endArg:
+		args = append(args, string(cur))
+		skipWS()
+	}
+	return args
 }
 
 // evalNetFuncExtended handles additional network and identity functions.
