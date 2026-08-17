@@ -2536,6 +2536,28 @@ func parseAggregation(s string) (*Aggregation, error) {
 		if (agg.Function == "arg_max" || agg.Function == "arg_min") && len(agg.Args) >= 2 {
 			nameSourceIdx = 1
 		}
+		// covariance/covariancep/covarianceif/covariancepif are a
+		// second deliberate exception to the single-column
+		// function_argname[0] convention, verified against real ADX's
+		// own worked example before diverging: summarize
+		// covariance(x, y) names its output column "covariance_x_y"
+		// -- BOTH argument column names, not just the first -- since
+		// covariance is inherently a two-variable statistic, unlike
+		// variance/stdev/etc which describe a single column. Added
+		// 2026-08-17 alongside implementing the covariance family
+		// itself (aggregation.go).
+		if (agg.Function == "covariance" || agg.Function == "covariancep" ||
+			agg.Function == "covarianceif" || agg.Function == "covariancepif") &&
+			len(agg.Args) >= 2 {
+			ref0, ok0 := agg.Args[0].(*ColumnRef)
+			ref1, ok1 := agg.Args[1].(*ColumnRef)
+			if ok0 && ok1 {
+				agg.Name = agg.Function + "_" + ref0.Name + "_" + ref1.Name
+				return agg, nil
+			}
+			agg.Name = agg.Function + "_"
+			return agg, nil
+		}
 		// percentiles_array's own auto-name prefix is "percentiles",
 		// not the literal function name "percentiles_array" — verified
 		// directly against real ADX's own worked example before fixing

@@ -856,6 +856,80 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		return variance / float64(len(values)), nil
 
+	case "covariance":
+		// covariance(expr1, expr2) — sample covariance, added
+		// 2026-08-17. Verified exactly against real ADX's own worked
+		// example: datatable x=[1,2,3,4,5], y=[14,10,17,20,50] ->
+		// covariance(x,y) == 20.5 (hand-computed: mean_x=3, mean_y=22.2,
+		// sum of (x_i-mean_x)(y_i-mean_y) = 82.0, divided by n-1=4 ->
+		// 20.5 — matches the real docs output exactly). Real ADX's own
+		// docs state "Null values are ignored and don't factor into
+		// the calculation" — since this is a PAIRED statistic, a row
+		// is only included if BOTH expr1 and expr2 are non-null for
+		// that row (pairwise exclusion), the same convention already
+		// verified for series_pearson_correlation elsewhere in this
+		// codebase.
+		if len(agg.Args) != 2 {
+			return nil, fmt.Errorf("covariance requires 2 arguments")
+		}
+		xs, ys := collectPairedFloats(agg.Args[0], agg.Args[1], schema, rows)
+		if len(xs) < 2 {
+			return nil, nil
+		}
+		return sampleCovariance(xs, ys), nil
+
+	case "covariancep":
+		// covariancep(expr1, expr2) — population covariance, added
+		// 2026-08-17. Same pairwise-null-exclusion rule as covariance
+		// above; divisor is n (population), not n-1 (sample) — the
+		// same n-vs-n-1 relationship already correctly implemented for
+		// variance/variancep. No dedicated real-ADX worked example
+		// with numeric output was found for covariancep specifically
+		// (only covariance's own worked example, and the general
+		// population-vs-sample distinction documented identically
+		// across the whole variance/covariance function family) —
+		// flagged here rather than silently claimed as equally
+		// verified.
+		if len(agg.Args) != 2 {
+			return nil, fmt.Errorf("covariancep requires 2 arguments")
+		}
+		xs, ys := collectPairedFloats(agg.Args[0], agg.Args[1], schema, rows)
+		if len(xs) == 0 {
+			return nil, nil
+		}
+		return populationCovariance(xs, ys), nil
+
+	case "covarianceif":
+		// covarianceif(expr1, expr2, predicate) — conditional sample
+		// covariance, added 2026-08-17. Mirrors covariance's own logic
+		// exactly (sample covariance, n-1 divisor, pairwise null
+		// exclusion), with the predicate applied as an additional
+		// per-row filter before the pairwise-null check — the same
+		// predicate-filtering style varianceif/stdevif/sumif already
+		// use elsewhere in this file.
+		if len(agg.Args) != 3 {
+			return nil, fmt.Errorf("covarianceif requires 3 arguments")
+		}
+		xs, ys := collectPairedFloatsIf(agg.Args[0], agg.Args[1], agg.Args[2], schema, rows)
+		if len(xs) < 2 {
+			return nil, nil
+		}
+		return sampleCovariance(xs, ys), nil
+
+	case "covariancepif":
+		// covariancepif(expr1, expr2, predicate) — conditional
+		// population covariance, added 2026-08-17. Mirrors
+		// variancepif's own logic exactly (n divisor, requires at
+		// least 1 qualifying pair).
+		if len(agg.Args) != 3 {
+			return nil, fmt.Errorf("covariancepif requires 3 arguments")
+		}
+		xs, ys := collectPairedFloatsIf(agg.Args[0], agg.Args[1], agg.Args[2], schema, rows)
+		if len(xs) == 0 {
+			return nil, nil
+		}
+		return populationCovariance(xs, ys), nil
+
 	case "sumif":
 		// sumif(expr, predicate)
 		if len(agg.Args) != 2 {
@@ -1035,7 +1109,7 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 	switch funcName {
 	case "count", "countif", "dcount", "dcountif", "count_distinct", "count_distinctif":
 		return types.TypeLong
-	case "sum", "avg", "sumif", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "percentile", "percentiles":
+	case "sum", "avg", "sumif", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "percentile", "percentiles", "covariance", "covariancep", "covarianceif", "covariancepif":
 		return types.TypeReal
 	case "min", "max", "minif", "maxif":
 		if len(args) > 0 {
@@ -1125,4 +1199,91 @@ func computePercentiles(agg parser.Aggregation, pcts []float64, rows []types.Row
 		}
 	}
 	return result, nil
+}
+
+// --- Covariance family helpers (added 2026-08-17) ---
+
+// collectPairedFloats evaluates expr1 and expr2 for every row and
+// keeps only the (x,y) pairs where BOTH are non-null — the pairwise
+// null-exclusion rule real ADX's own covariance docs describe
+// ("null values are ignored") applied correctly for a two-variable
+// statistic, where a null on either side makes the whole pair
+// unusable, not just the null side.
+func collectPairedFloats(expr1, expr2 parser.Expr, schema *types.Schema, rows []types.Row) ([]float64, []float64) {
+	var xs, ys []float64
+	for _, row := range rows {
+		xVal, err := evalExpr(expr1, schema, row)
+		if err != nil || xVal == nil {
+			continue
+		}
+		yVal, err := evalExpr(expr2, schema, row)
+		if err != nil || yVal == nil {
+			continue
+		}
+		xs = append(xs, types.ToFloat64(xVal))
+		ys = append(ys, types.ToFloat64(yVal))
+	}
+	return xs, ys
+}
+
+// collectPairedFloatsIf is collectPairedFloats with an additional
+// per-row predicate filter, applied before the pairwise-null check —
+// the shared logic behind covarianceif/covariancepif.
+func collectPairedFloatsIf(expr1, expr2, predicate parser.Expr, schema *types.Schema, rows []types.Row) ([]float64, []float64) {
+	var xs, ys []float64
+	for _, row := range rows {
+		predVal, err := evalExpr(predicate, schema, row)
+		if err != nil {
+			continue
+		}
+		if pred, ok := predVal.(bool); !ok || !pred {
+			continue
+		}
+		xVal, err := evalExpr(expr1, schema, row)
+		if err != nil || xVal == nil {
+			continue
+		}
+		yVal, err := evalExpr(expr2, schema, row)
+		if err != nil || yVal == nil {
+			continue
+		}
+		xs = append(xs, types.ToFloat64(xVal))
+		ys = append(ys, types.ToFloat64(yVal))
+	}
+	return xs, ys
+}
+
+// sampleCovariance computes the sample covariance (n-1 divisor) of
+// two equal-length paired float slices, verified exactly against real
+// ADX's own covariance() worked example (x=[1,2,3,4,5],
+// y=[14,10,17,20,50] -> 20.5). Caller must ensure len(xs) >= 2.
+func sampleCovariance(xs, ys []float64) float64 {
+	return covarianceSum(xs, ys) / float64(len(xs)-1)
+}
+
+// populationCovariance computes the population covariance (n divisor)
+// of two equal-length paired float slices — the same n-vs-n-1
+// relationship already correctly implemented for variance/variancep.
+// Caller must ensure len(xs) >= 1.
+func populationCovariance(xs, ys []float64) float64 {
+	return covarianceSum(xs, ys) / float64(len(xs))
+}
+
+// covarianceSum computes sum((x_i - mean_x)(y_i - mean_y)) — the
+// shared numerator behind both sampleCovariance and
+// populationCovariance, which differ only in their divisor.
+func covarianceSum(xs, ys []float64) float64 {
+	meanX, meanY := 0.0, 0.0
+	for i := range xs {
+		meanX += xs[i]
+		meanY += ys[i]
+	}
+	n := float64(len(xs))
+	meanX /= n
+	meanY /= n
+	sum := 0.0
+	for i := range xs {
+		sum += (xs[i] - meanX) * (ys[i] - meanY)
+	}
+	return sum
 }
