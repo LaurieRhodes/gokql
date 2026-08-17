@@ -1,15 +1,28 @@
 # Time Series (`make-series` + `series_*`) Backlog
 
+**Status update (2026-08-17): Tier 1 + Tier 2 are now DONE** — 26 of
+the 49 `series_*` functions closed in one pass (all of Tier 1's
+element-wise arithmetic/comparison/unary-math/trig, plus all 4 of
+Tier 2's gap-filling functions). See the "Tier 1"/"Tier 2" sections
+below for the exact scope, and `pkg/engine/func_series.go`'s own top
+comment for two real findings that corrected this document's own
+earlier planning-stage guesses (comparison functions return booleans,
+not 1.0/0.0; two different missing-element conventions exist across
+the function family, not one). Two real, separate bugs in unrelated
+conversion functions were found and fixed along the way, while wiring
+up the actual make-series + series_fill_forward integration path end
+to end — see `pkg/engine/func_convert.go`'s own updated comments.
+23 functions remain: Tier 3 (summary statistics, 6 functions) is the
+natural next step; Tiers 4-5 (curve fitting, signal processing) were
+already flagged LOW priority for this project's own use cases.
+
 **Status update (2026-08-15): `make-series` itself is now DONE** — see
 `docs/kql_coverage.md`'s own Implemented table and Sprint 8 entry for
 full verification detail (every value in real ADX's own worked
 examples matched exactly, including the bin_at floor-division edge
 case and kind=nonempty). The prerequisite this whole document was
 gated on is closed; the 49 `series_*` functions below are now
-genuinely actionable, not blocked. This document's own "Suggested
-build order" section (near the end) is otherwise unchanged and still
-the right place to start: Tier 1 (element-wise) + Tier 2 (fill)
-together, next.
+genuinely actionable, not blocked.
 
 A dedicated backlog, separate from `scalar_function_backlog.md`,
 because this is a genuinely different shape of gap: one prerequisite
@@ -22,8 +35,9 @@ enumeration (make-series + 51 `series_*` names) provided directly.
 `series_dot_product` (`func_vector.go`, built for embedding/vector
 similarity work); `make-series` itself (2026-08-15, main syntax only —
 see `docs/kql_coverage.md`'s own scope note for exactly which parts of
-real ADX's documented grammar this covers). **Confirmed genuinely
-missing**: the other 49 `series_*` functions.
+real ADX's documented grammar this covers); all of Tier 1 (22
+functions) and Tier 2 (4 functions) below, closed 2026-08-17.
+**Confirmed genuinely missing**: the 23 functions in Tiers 3-5.
 
 ---
 
@@ -91,7 +105,7 @@ single operator: it's the enabling prerequisite for the entire
 
 ---
 
-## Tier 1 — element-wise math/comparison over one or two arrays (🟡 MED, low individual complexity, high value in aggregate)
+## Tier 1 — element-wise math/comparison over one or two arrays — ✅ COMPLETE (2026-08-17)
 
 All of these share one shape: map a scalar operation across the
 elements of one or two `dynamic` arrays (of equal length, or
@@ -122,7 +136,7 @@ first, then these become thin wrappers over them, not new math):
 
 ---
 
-## Tier 2 — gap-filling (🟡 MED, directly referenced by make-series's own docs as the recommended way to handle missing bins)
+## Tier 2 — gap-filling — ✅ COMPLETE (2026-08-17)
 
 `series_fill_forward` (use the previous value), `series_fill_backward`
 (use the next value), `series_fill_const` (a fixed fill value),

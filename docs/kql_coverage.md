@@ -2,8 +2,8 @@
 
 Based on Microsoft's official [Kusto-Query-Language](https://github.com/microsoft/Kusto-Query-Language) repository (ANTLR grammar + symbol definitions), cross-checked function-by-function and operator-by-operator against the actual source, not assumed from a prior pass.
 
-**Last updated:** 2026-08-15 (Sprint 12: invoke closed; reduce deliberately documented as out of scope, not a gap)
-**Project stats:** 29,873 lines Go, 65 source files, 530 tests across 47 test files (verified fresh this session, not carried over)
+**Last updated:** 2026-08-17 (Sprint 13: series_* Tier 1 + Tier 2 closed)
+**Project stats:** 30,536 lines Go, 66 source files, 545 tests across 49 test files (verified fresh this session, not carried over)
 
 This rewrite corrects a significant amount of drift in the previous version (dated 2026-02-28): several operators, comparison forms, and aggregation functions listed as "not yet implemented" or "out of scope" were already implemented — some before that version was even written, some added across sessions since without this document being updated. Several entire capability areas (stored functions, materialized views, federation, automatic ingest-time timestamping, host-embedding extension points, vector similarity) were built since and never documented here at all. Every claim below was checked directly against the source or with a live query before being written down.
 
@@ -117,7 +117,7 @@ None known — the previous version's "hasprefix/hassuffix" and "like/!like" ent
 
 ## Scalar Functions
 
-### Implemented (~150 entry points)
+### Implemented (~178 entry points)
 
 Functions are organized across focused source files.
 
@@ -253,6 +253,18 @@ Vector similarity as native KQL, no external vector database required.
 
 Also see `.embed-into` under Management Commands for bulk embedding of an entire column at ingest time.
 
+#### Time Series — `func_series.go` (26 functions, 2026-08-17)
+
+Element-wise array math and gap-filling — the operations `make-series`'s own output array is for. Full detail, exact verification against real ADX's own docs, and two real bugs found and fixed while building these: [`docs/timeseries_backlog.md`](./timeseries_backlog.md).
+
+| Family | Functions | Notes |
+| --- | --- | --- |
+| Arithmetic | series_add, series_subtract, series_multiply, series_divide, series_pow | Element-wise over two dynamic arrays; null for a position missing from the shorter array or non-numeric |
+| Comparison | series_equals, series_not_equals, series_less, series_less_equals, series_greater, series_greater_equals | Returns a dynamic array of **booleans** (verified directly against real ADX's own docs — corrects an earlier planning-stage guess of 1.0/0.0) |
+| Unary math | series_abs, series_sign, series_ceiling, series_floor, series_log, series_exp | series_log/series_exp use the natural base, matching this engine's own already-correct scalar log()/exp() |
+| Trig | series_sin, series_cos, series_tan, series_asin, series_acos, series_atan | |
+| Gap filling | series_fill_forward, series_fill_backward, series_fill_const, series_fill_linear | series_fill_backward verified exactly against its own real-ADX worked example; series_fill_linear's fill_edges default (true) is an explicitly flagged assumption, not confirmed from available sources |
+
 #### Window Functions (via serialize)
 
 | Function   | Notes                                                 |
@@ -267,7 +279,7 @@ Correction to an earlier version of this document, which claimed "no standalone 
 
 ### Out of Scope
 
-Geo functions (50+), machine learning plugins, graph functions, cluster/cursor/principal introspection functions (current_cluster_endpoint, current_principal, cursor_after, extent_id, and similar — meaningful only in a real, multi-tenant clustered deployment, no equivalent concept in this engine's single-node model). See `scalar_function_backlog.md` for the full, itemized out-of-scope list including exactly which hll/tdigest/punycode entry points these cover. Series functions (beyond the two vector-similarity ones above) are NOT purely out of scope — see [`docs/timeseries_backlog.md`](./timeseries_backlog.md): most of the 49 remaining series_* functions are genuine, prioritized gaps (medium priority for the element-wise/fill/statistics families, low priority only for curve-fitting and signal-processing/anomaly-detection).
+Geo functions (50+), machine learning plugins, graph functions, cluster/cursor/principal introspection functions (current_cluster_endpoint, current_principal, cursor_after, extent_id, and similar — meaningful only in a real, multi-tenant clustered deployment, no equivalent concept in this engine's single-node model). See `scalar_function_backlog.md` for the full, itemized out-of-scope list including exactly which hll/tdigest/punycode entry points these cover. Series functions are NOT purely out of scope — see [`docs/timeseries_backlog.md`](./timeseries_backlog.md): Tier 1 (element-wise, 22 functions) and Tier 2 (gap-filling, 4 functions) were closed 2026-08-17 (see the Time Series subsection above); Tier 3 (summary statistics, 6 functions) is a genuine, medium-priority remaining gap; Tiers 4-5 (curve-fitting, signal-processing/anomaly-detection, 14 functions) are low priority for this project's own use cases.
 
 ---
 
@@ -633,6 +645,14 @@ Beyond the original 7-gap backlog: a review of the 13 "Out of Scope" operators s
 
 Tabular operators: 41/53 implemented, 0 gaps remaining, 12 deliberately out of scope (`reduce` among them, now with its own specific, honest reasoning rather than a blanket "not prioritized").
 
+### ✅ Sprint 13: series_* Tier 1 + Tier 2 — COMPLETE (2026-08-17)
+
+1. ✅ **26 functions**: all of Tier 1 (arithmetic, comparison, unary math, trig — 22 functions) and all of Tier 2 (gap-filling — 4 functions). See the Scalar Functions section's own new "Time Series" subsection above for the full function list and `docs/timeseries_backlog.md` for the complete verification detail per function. Two real findings corrected earlier planning-stage guesses in that same backlog document: comparison functions return **booleans**, not 1.0/0.0 (verified directly against real ADX's own docs); the arithmetic and cosine-similarity function families use two genuinely *different* documented conventions for mismatched array lengths (null-padding vs. truncate-to-shorter), not one.
+2. ✅ **Two more real, separate bugs found and fixed while wiring up the actual make-series + series_fill_forward integration path end to end** (the documented reason series_fill_* exists at all, not a hypothetical): bare `double()`/`real()` (and `int()`/`long()`/`bool()`) didn't exist at all as type-cast functions, only their `to`-prefixed forms did; and `toint`/`tolong`/`todouble`/`toreal` silently returned 0/0.0 for a null argument instead of propagating null, breaking real ADX's own documented `default=double(null)` idiom outright. Adding the bare aliases caused one real, immediately-caught regression (`TestUDFBasic`, already in the suite, exercising a user-defined function literally named `double`) — fixed via a narrow user-function-wins check rather than broadening to every built-in.
+3. ✅ 15 new tests across two files, full suite (547 tests) passes with `-race`, `go vet` clean, verified against all three real production scopes.
+
+Scalar functions: ~178 entry points implemented (was ~150). 23 `series_*` functions remain: Tier 3 (summary statistics, 6 functions, MED priority) is the natural next step; Tiers 4-5 (curve fitting, signal processing, 14 functions) stay LOW priority per this project's own use cases.
+
 ### Future
 
 1. **hll / hll_if / hll_merge, tdigest / tdigest_merge** — sketch structures; low priority for a single-node engine
@@ -651,7 +671,7 @@ Tabular operators: 41/53 implemented, 0 gaps remaining, 12 deliberately out of s
 | ---------------------------- | ----------- | --------- | -------- | -------------------------------------- |
 | Tabular operators                | 41          | 53        | 77%      | 41 implemented + 0 not-yet-implemented + 12 out-of-scope = 53, a full, cross-checked enumeration (2026-08-14/15), not the earlier, incomplete 47 |
 | Comparison operators                | 22          | 35        | 63%*     | Effectively complete in practice — 0 known gaps; the 35 denominator counts individual grammar symbols, this row counts table rows (see methodology note above) |
-| Scalar functions                       | ~150        | 420       | 36%      | 300+ are geo/series/obscure                         |
+| Scalar functions                       | ~178        | 420       | 42%      | 300+ are geo/series/obscure; series_* Tier 1+2 (26 functions) closed 2026-08-17 |
 | Aggregation functions                     | 24          | 61        | 39%*     | All common + conditional variants covered — remaining gap is entirely the sketch/niche family (hll, tdigest, buildschema, weighted percentiles); denominator counts symbols, this row counts table rows |
 | File formats                                 | 4           | —         | —        | CSV, JSON, NDJSON, Parquet (xlsx deliberately removed 2026-08-15, see File-Based Querying section) |
 | **Practical coverage**                          | —           | —         | **~93%** | **Of security analyst queries, plus a real, persisted-function/materialized-view/federation layer beyond raw language coverage** |
