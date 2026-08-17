@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/LaurieRhodes/gokql/pkg/engine/uaparser"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
@@ -330,6 +331,66 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		args := parseWindowsCommandLine(fmt.Sprintf("%v", cmdVal))
 		b, _ := json.Marshal(args)
 		return string(b), true, nil
+
+	case "parse_user_agent":
+		// parse_user_agent(user_agent_string, look_for) — added
+		// 2026-08-18. Real ADX's own docs describe this as "built on
+		// regex checks of the input string against a huge number of
+		// predefined patterns" — this implementation uses that exact
+		// pattern database (ua-parser/uap-core's own regexes.yaml,
+		// embedded verbatim under pkg/engine/uaparser/, Apache-2.0
+		// licensed, see that package's NOTICE.md), not a hand-rolled
+		// approximation, via the pkg/engine/uaparser package which
+		// implements uap-core's own published matching algorithm.
+		// Verified exactly against two of real ADX's own worked
+		// examples: a Nokia N81/Symbian/Series60 user agent (a
+		// deliberately tricky case — the string contains a literal
+		// "Safari/4" substring that a naive parser would misclassify,
+		// but the correct answer, "Nokia OSS Browser" version 3.1
+		// sourced from a completely different token in the string,
+		// falls straight out of using the real pattern database) and
+		// an AdobeAIR user agent.
+		//
+		// look_for is REQUIRED (not optional) per real ADX's own
+		// docs, and may be a single string or a dynamic array; the
+		// output only includes the requested categories (verified
+		// directly: a single "browser" request returns only a
+		// {"Browser": {...}} object, no OperatingSystem/Device keys
+		// at all). Output field order (Family before MajorVersion
+		// before MinorVersion before Patch, etc, and Family before
+		// Brand before Model for Device — NOT alphabetical, which
+		// would put Brand before Family) is preserved via ordered Go
+		// structs rather than a map, to match real ADX's own worked
+		// examples exactly.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("parse_user_agent requires 2 arguments")
+		}
+		uaVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		lookForVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if uaVal == nil || lookForVal == nil {
+			return nil, true, nil
+		}
+		var targets []string
+		if arr, ok := parseJSONArray(lookForVal); ok {
+			for _, el := range arr {
+				targets = append(targets, fmt.Sprintf("%v", el))
+			}
+		} else {
+			targets = []string{fmt.Sprintf("%v", lookForVal)}
+		}
+		uaStr := fmt.Sprintf("%v", uaVal)
+		result, err := parseUserAgentResult(uaStr, targets)
+		if err != nil {
+			return nil, true, err
+		}
+		b2, _ := json.Marshal(result)
+		return string(b2), true, nil
 
 	default:
 		return nil, false, nil
@@ -1624,6 +1685,85 @@ func maskIPv6(b [16]byte, prefix int) [16]byte {
 		out[fullBytes] = b[fullBytes] & mask
 	}
 	return out
+}
+
+// --- parse_user_agent output shaping (added 2026-08-18) ---
+//
+// These structs exist purely to control JSON key ORDER: real ADX's
+// own worked examples show Family before MajorVersion before
+// MinorVersion before Patch (etc), which is NOT alphabetical order
+// (alphabetically Brand < Family < Model for the Device object, but
+// the documented order is Family, Brand, Model). Go's encoding/json
+// preserves struct field declaration order but sorts map keys
+// alphabetically, so a plain map[string]interface{} would silently
+// produce the wrong key order for Device specifically.
+
+type uaBrowserOut struct {
+	Family       string `json:"Family"`
+	MajorVersion string `json:"MajorVersion"`
+	MinorVersion string `json:"MinorVersion"`
+	Patch        string `json:"Patch"`
+}
+
+type uaOSOut struct {
+	Family       string `json:"Family"`
+	MajorVersion string `json:"MajorVersion"`
+	MinorVersion string `json:"MinorVersion"`
+	Patch        string `json:"Patch"`
+	PatchMinor   string `json:"PatchMinor"`
+}
+
+type uaDeviceOut struct {
+	Family string `json:"Family"`
+	Brand  string `json:"Brand"`
+	Model  string `json:"Model"`
+}
+
+type uaParseOut struct {
+	Browser         *uaBrowserOut `json:"Browser,omitempty"`
+	OperatingSystem *uaOSOut      `json:"OperatingSystem,omitempty"`
+	Device          *uaDeviceOut  `json:"Device,omitempty"`
+}
+
+// parseUserAgentResult builds the requested subset of {Browser,
+// OperatingSystem, Device} for uaStr, using the real ua-parser
+// pattern database (pkg/engine/uaparser). targets are matched against
+// real ADX's own documented values "browser", "os", "device" —
+// unrecognized values are silently ignored (no worked example was
+// found describing behavior for an invalid look_for value, so this
+// engine doesn't guess at an error condition for it). Output category
+// order always follows the canonical Browser/OperatingSystem/Device
+// order regardless of the order targets were requested in, matching
+// every worked example found (none exercises a non-canonical request
+// order to confirm otherwise either way).
+func parseUserAgentResult(uaStr string, targets []string) (*uaParseOut, error) {
+	want := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		want[t] = true
+	}
+	out := &uaParseOut{}
+	if want["browser"] {
+		b, err := uaparser.ParseBrowser(uaStr)
+		if err != nil {
+			return nil, err
+		}
+		out.Browser = &uaBrowserOut{Family: b.Family, MajorVersion: b.MajorVersion, MinorVersion: b.MinorVersion, Patch: b.Patch}
+	}
+	if want["os"] {
+		o, err := uaparser.ParseOS(uaStr)
+		if err != nil {
+			return nil, err
+		}
+		out.OperatingSystem = &uaOSOut{Family: o.Family, MajorVersion: o.MajorVersion, MinorVersion: o.MinorVersion, Patch: o.Patch, PatchMinor: o.PatchMinor}
+	}
+	if want["device"] {
+		d, err := uaparser.ParseDevice(uaStr)
+		if err != nil {
+			return nil, err
+		}
+		out.Device = &uaDeviceOut{Family: d.Family, Brand: d.Brand, Model: d.Model}
+	}
+	return out, nil
 }
 
 // canonicalIPv6String formats a 16-byte address as real ADX's own
