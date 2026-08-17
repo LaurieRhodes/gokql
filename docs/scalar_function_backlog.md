@@ -46,11 +46,12 @@ with the pre-existing `series_sin`/`series_cos`/etc family (which
 previously called `math.Sin`/`math.Cos` directly with no scalar
 counterpart) — see `kql_coverage.md` for full detail.
 
-### Statistics — covariance (`aggregation.go`, alongside `variance`/`stdev`)
-`covariance`, `covarianceif`, `covariancep`, `covariancepif` — sample
-and population covariance between two columns, with conditional
-variants; the same shape as the `variance`/`variancep`/`varianceif`/
-`variancepif` family already fully implemented.
+### Statistics — covariance — CLOSED 2026-08-17
+`covariance`, `covarianceif`, `covariancep`, `covariancepif` are all
+implemented in `aggregation.go`, verified against real ADX's own
+worked example, with pairwise null exclusion and an auto-generated
+output column name that (unlike `variance`) includes both argument
+names — see `kql_coverage.md` for full detail.
 
 ### Array functions (`func_dynamic.go`, alongside the existing `array_*` family)
 `array_sum`, `array_split`, `array_rotate_left`, `array_rotate_right`,
@@ -110,10 +111,34 @@ whole IPv6 family this engine has none of yet: `ipv6_compare`,
 `parse_ipv6`, `parse_ipv6_mask`.
 
 ### Parse functions (`func_string.go` / `func_net.go`)
-`parse_command_line`, `parse_user_agent`, `parse_version`, `parse_xml`,
+**`parse_command_line` CLOSED 2026-08-17** — implements the standard
+Win32 CommandLineToArgvW tokenization algorithm, verified against
+real ADX's own worked example; see `kql_coverage.md` for detail.
+Still open: `parse_user_agent`, `parse_version`, `parse_xml`,
 `extract_json` (a single-value shortcut over `parse_json` + dot-access
 — verify whether it's meaningfully different before building it as a
-new thing), `indexof_regex`
+new thing), `indexof_regex`.
+
+**`parse_user_agent` scope note (2026-08-17, deliberately deferred,
+not attempted)**: real ADX's own docs state its implementation is
+"built on regex checks of the input string against a huge number of
+predefined patterns" (the underlying reference is the open-source
+`ua-parser` project's own regex pattern database, hundreds of
+browser/OS/device patterns, not a small closed-form algorithm like
+`parse_command_line`'s CommandLineToArgvW). No worked example showing
+exact output field values for a real user-agent string was found in
+the docs actually fetched this session — only the output *shape*
+(Browser: Family/MajorVersion/MinorVersion/Patch; OperatingSystem:
+adds PatchMinor; Device fields not enumerated in what was found). A
+plausible-but-uncalibrated regex-pattern reimplementation would run
+and look reasonable without any confidence it matches real ADX's own
+actual classification for anything but the most trivial inputs —
+structurally the same risk this project's own `reduce` scope note
+already declined to take on for exactly this reason (see
+`kql_coverage.md`'s `reduce` note). Deliberately left unimplemented
+rather than shipped with unverified precision; revisit only with the
+actual `ua-parser` regex database (or a real, multi-example ADX
+worked-output table) in hand, not another documentation-only attempt.
 
 ### `_TimeReceived` accessor
 `ingestion_time()` — real ADX's own function-form accessor for the
