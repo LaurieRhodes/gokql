@@ -97,18 +97,20 @@ wrapper rather than new logic), `datetime_local_to_utc`,
 `datetime_utc_to_local`, `datetime_list_timezones`,
 `unixtime_microseconds_todatetime`, `unixtime_nanoseconds_todatetime`
 
-### IPv4 / IPv6 (`func_net.go`, alongside the existing ipv4 family)
-**IPv4 half CLOSED 2026-08-17**: `has_any_ipv4`, `has_any_ipv4_prefix`,
-`has_ipv4_prefix`, `ipv4_is_in_any_range`, `ipv4_is_match`,
-`ipv4_range_to_cidr_list`, `ipv4_netmask_suffix`, `format_ipv4_mask`,
-`parse_ipv4_mask` are all implemented and verified against real ADX
+### IPv4 / IPv6 — CLOSED 2026-08-17
+`has_any_ipv4`, `has_any_ipv4_prefix`, `has_ipv4_prefix`,
+`ipv4_is_in_any_range`, `ipv4_is_match`, `ipv4_range_to_cidr_list`,
+`ipv4_netmask_suffix`, `format_ipv4_mask`, `parse_ipv4_mask`, plus the
+full IPv6 family (`ipv6_compare`, `ipv6_is_in_range`,
+`ipv6_is_in_any_range`, `ipv6_is_match`, `parse_ipv6`,
+`parse_ipv6_mask`) are all implemented and verified against real ADX
 worked examples — see `kql_coverage.md`'s own entry for full detail,
-including 5 real bugs found and fixed in already-implemented sibling
-functions (`has_ipv4`, `format_ipv4`, `ipv4_compare`,
-`ipv4_is_private`, `ipv4_is_in_range`) along the way. Still open: a
-whole IPv6 family this engine has none of yet: `ipv6_compare`,
-`ipv6_is_in_range`, `ipv6_is_in_any_range`, `ipv6_is_match`,
-`parse_ipv6`, `parse_ipv6_mask`.
+including 5 real bugs found and fixed in already-implemented IPv4
+sibling functions (`has_ipv4`, `format_ipv4`, `ipv4_compare`,
+`ipv4_is_private`, `ipv4_is_in_range`) plus one real bug found and
+fixed in this session's own new IPv6 code before it was ever
+committed (an embedded-prefix offset decision that inspected the
+parsed byte value instead of the address's own source text).
 
 ### Parse functions (`func_string.go` / `func_net.go`)
 **`parse_command_line` CLOSED 2026-08-17** — implements the standard
