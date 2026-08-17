@@ -39,6 +39,9 @@ func evalFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.V
 	if v, ok, err := evalVectorFunc(fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalSeriesFunc(fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalUserFunc(fc, schema, row); ok {
 		return v, err
 	}

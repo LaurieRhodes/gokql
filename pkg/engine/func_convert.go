@@ -13,23 +13,62 @@ import (
 // evalConvertFunc handles type conversion, null-test, and conditional functions.
 func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
-	case "toint", "tolong":
+	case "toint", "tolong", "int", "long":
+		// Also serves as this engine's bare int()/long() literal-cast
+		// form — real KQL treats a scalar type name as a conversion
+		// function identical to its "to"-prefixed counterpart (e.g.
+		// long(x) === tolong(x)), the same relationship already
+		// established for datetime()/todatetime() elsewhere in this
+		// parser. Null-propagation added 2026-08-15 alongside this —
+		// a real, separate, pre-existing bug found while wiring up
+		// make-series+series_fill_* integration testing:
+		// toint(null)/tolong(null) silently returned 0 instead of
+		// null, the one inconsistency in this whole function (every
+		// sibling conversion in this file, e.g. tobool immediately
+		// below, already null-checks correctly) — confirmed live,
+		// not assumed, before fixing.
+		if fc.Name == "int" || fc.Name == "long" {
+			if userFuncOverridesBuiltinName(fc.Name) {
+				return nil, false, nil
+			}
+		}
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
 		val, err := evalExpr(fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
 		}
 		return types.ToInt64(val), true, nil
 
-	case "todouble", "toreal":
+	case "todouble", "toreal", "real", "double":
+		// Bare real()/double() alias, same reasoning as int/long
+		// above — real KQL treats "real" and "double" as synonymous
+		// type names, both valid as this same conversion function.
+		// Null-propagation fixed 2026-08-15: found live while testing
+		// make-series's own documented default=double(null) idiom
+		// (see series-fill-*'s own doc comments, func_series.go) --
+		// double(null) silently returning 0.0 instead of null breaks
+		// that idiom's entire point, since it exists specifically to
+		// let a fill function distinguish "genuinely no data" from
+		// "a real value of zero."
+		if fc.Name == "real" || fc.Name == "double" {
+			if userFuncOverridesBuiltinName(fc.Name) {
+				return nil, false, nil
+			}
+		}
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
 		val, err := evalExpr(fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
 		}
 		return types.ToFloat64(val), true, nil
 
@@ -213,7 +252,12 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		return best, true, nil
 
-	case "tobool", "toboolean":
+	case "tobool", "toboolean", "bool":
+		if fc.Name == "bool" {
+			if userFuncOverridesBuiltinName(fc.Name) {
+				return nil, false, nil
+			}
+		}
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
@@ -475,4 +519,27 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 	default:
 		return nil, false, nil
 	}
+}
+
+// userFuncOverridesBuiltinName reports whether a `let`-bound scalar
+// function named name exists in the current LetContext — checked
+// specifically for this file's bare int()/long()/real()/double()/
+// bool() aliases (added 2026-08-15) before treating one of those
+// names as this engine's own built-in conversion function, so that a
+// legitimate, pre-existing user-defined function of the same name
+// (e.g. `let double = (x: long) { x * 2 }`, exactly what
+// TestUDFBasic already exercised before these aliases existed) keeps
+// working exactly as it did before — a real regression this check
+// caught and fixed immediately via that existing test, not a
+// hypothetical worth guarding against. Deliberately narrow: only the
+// newly-added bare names call this, not every conversion function in
+// this file, since broadening it to the whole dispatch chain (letting
+// ANY user function shadow ANY built-in) is a bigger, separate change
+// with its own test implications not audited here.
+func userFuncOverridesBuiltinName(name string) bool {
+	if activeLetContext == nil {
+		return false
+	}
+	_, ok := activeLetContext.Functions[name]
+	return ok
 }
