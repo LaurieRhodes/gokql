@@ -940,6 +940,250 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		}
 		return rand.Float64(), true, nil
 
+	case "parse_ipv6":
+		// parse_ipv6(ip) — added 2026-08-17. Converts an IPv6 or
+		// IPv4-notation string to its canonical, fully-expanded IPv6
+		// string representation. Equivalent to parse_ipv6_mask(ip,
+		// 128) — the explicit-128 default never reduces below
+		// whatever prefix (if any) is already embedded in ip itself.
+		// See parseIPv6WithPrefix's own doc comment for the full,
+		// worked-example-verified rules this depends on.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("parse_ipv6 requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		b, effPrefix, ok := parseIPv6WithPrefix(fmt.Sprintf("%v", val))
+		if !ok {
+			return "", true, nil
+		}
+		return canonicalIPv6String(maskIPv6(b, effPrefix)), true, nil
+
+	case "parse_ipv6_mask":
+		// parse_ipv6_mask(ip, prefix) — added 2026-08-17. Converts an
+		// IPv6/IPv4-notation string plus an explicit prefix to a
+		// canonical, fully-expanded, masked IPv6 string. Verified
+		// exactly against real ADX's own 7-row worked-example table,
+		// including two genuinely surprising details found ONLY in
+		// the table's numeric output, not stated anywhere in the
+		// prose docs:
+		//   1. An embedded prefix on an IPv4-representable address
+		//      (plain dotted-decimal, or the exact "::a.b.c.d"
+		//      spelling) combines into the 128-bit effective prefix
+		//      via a +96 offset (confirmed: '192.168.255.255/24'
+		//      explicit-124 produces the IDENTICAL output to
+		//      unprefixed '192.168.255.255' explicit-120 — both
+		//      effective at 120 = 96+24). A genuine IPv6-notation
+		//      address's own embedded prefix has NO offset.
+		//   2. The literal "::a.b.c.d" spelling (which Go's own
+		//      net.ParseIP renders with NO ffff inserted, the
+		//      deprecated all-zero "IPv4-compatible" form) is
+		//      auto-canonicalized by real ADX to the IPv4-MAPPED form
+		//      instead (ffff inserted) — confirmed directly:
+		//      '::192.168.255.255' with no masking still produces
+		//      "...:ffff:c0a8:ffff", not "...:0000:c0a8:ffff".
+		// See parseIPv6WithPrefix's own doc comment for the full
+		// verification detail and the one genuinely untested edge
+		// case (a non-zero-prefix IPv6 address embedding a dotted-
+		// quad tail, e.g. "fe80::192.168.1.1") deliberately left to
+		// ordinary parsing rather than guessed at.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("parse_ipv6_mask requires 2 arguments")
+		}
+		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		prefixVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if ipVal == nil || prefixVal == nil {
+			return nil, true, nil
+		}
+		b, embeddedEff, ok := parseIPv6WithPrefix(fmt.Sprintf("%v", ipVal))
+		if !ok {
+			return "", true, nil
+		}
+		explicitP, pok := toInt64(prefixVal)
+		if !pok || explicitP < 0 || explicitP > 128 {
+			return "", true, nil
+		}
+		effective := embeddedEff
+		if int(explicitP) < effective {
+			effective = int(explicitP)
+		}
+		return canonicalIPv6String(maskIPv6(b, effective)), true, nil
+
+	case "ipv6_compare":
+		// ipv6_compare(ip1, ip2 [, prefix]) — added 2026-08-17. Same
+		// min-of-all-supplied-prefixes combination rule as
+		// ipv4_compare, generalized to 128-bit addresses via
+		// parseIPv6WithPrefix. An explicit prefix argument (unlike an
+		// embedded one) is always a raw 0-128 value, never offset —
+		// verified against real ADX's own worked-example tables,
+		// where a prefix ARGUMENT combines identically regardless of
+		// whether either address is in IPv4 or IPv6 notation.
+		if len(fc.Args) < 2 || len(fc.Args) > 3 {
+			return nil, true, fmt.Errorf("ipv6_compare requires 2-3 arguments")
+		}
+		ip1Val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		ip2Val, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if ip1Val == nil || ip2Val == nil {
+			return nil, true, nil
+		}
+		b1, p1, ok1 := parseIPv6WithPrefix(fmt.Sprintf("%v", ip1Val))
+		b2, p2, ok2 := parseIPv6WithPrefix(fmt.Sprintf("%v", ip2Val))
+		if !ok1 || !ok2 {
+			return nil, true, nil
+		}
+		effective := p1
+		if p2 < effective {
+			effective = p2
+		}
+		if len(fc.Args) == 3 {
+			pVal, err := evalExpr(fc.Args[2], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if p, ok := toInt64(pVal); ok && int(p) < effective {
+				effective = int(p)
+			}
+		}
+		m1 := maskIPv6(b1, effective)
+		m2 := maskIPv6(b2, effective)
+		switch {
+		case m1 == m2:
+			return int64(0), true, nil
+		default:
+			for i := 0; i < 16; i++ {
+				if m1[i] != m2[i] {
+					if m1[i] < m2[i] {
+						return int64(-1), true, nil
+					}
+					return int64(1), true, nil
+				}
+			}
+			return int64(0), true, nil
+		}
+
+	case "ipv6_is_match":
+		// ipv6_is_match(ip1, ip2 [, prefix]) — added 2026-08-17.
+		// Verified exactly against real ADX's own full worked-example
+		// tables (both the embedded-prefix-only table and the
+		// embedded-plus-explicit-prefix table — every one of their 21
+		// combined rows, including 4 genuinely mixed IPv4/IPv6-
+		// notation rows, hand-traced against the +96-offset formula
+		// and confirmed to produce the documented true result).
+		if len(fc.Args) < 2 || len(fc.Args) > 3 {
+			return nil, true, fmt.Errorf("ipv6_is_match requires 2-3 arguments")
+		}
+		ip1Val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		ip2Val, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if ip1Val == nil || ip2Val == nil {
+			return nil, true, nil
+		}
+		b1, p1, ok1 := parseIPv6WithPrefix(fmt.Sprintf("%v", ip1Val))
+		b2, p2, ok2 := parseIPv6WithPrefix(fmt.Sprintf("%v", ip2Val))
+		if !ok1 || !ok2 {
+			return nil, true, nil
+		}
+		effective := p1
+		if p2 < effective {
+			effective = p2
+		}
+		if len(fc.Args) == 3 {
+			pVal, err := evalExpr(fc.Args[2], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if p, ok := toInt64(pVal); ok && int(p) < effective {
+				effective = int(p)
+			}
+		}
+		return maskIPv6(b1, effective) == maskIPv6(b2, effective), true, nil
+
+	case "ipv6_is_in_range":
+		// ipv6_is_in_range(Ipv6Address, Ipv6Range) — added
+		// 2026-08-17. The range's own embedded prefix (default 128 —
+		// an implicit exact match — when absent) is the sole mask;
+		// the address argument's own bytes are used unmasked, the
+		// same asymmetric convention already correct for
+		// ipv4_is_in_range.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("ipv6_is_in_range requires 2 arguments")
+		}
+		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		rangeVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if ipVal == nil || rangeVal == nil {
+			return nil, true, nil
+		}
+		ipB, _, ipOk := parseIPv6WithPrefix(fmt.Sprintf("%v", ipVal))
+		rangeB, rangePrefix, rangeOk := parseIPv6WithPrefix(fmt.Sprintf("%v", rangeVal))
+		if !ipOk || !rangeOk {
+			return nil, true, nil
+		}
+		return maskIPv6(ipB, rangePrefix) == maskIPv6(rangeB, rangePrefix), true, nil
+
+	case "ipv6_is_in_any_range":
+		// ipv6_is_in_any_range(Ipv6Address, Ipv6Range [, Ipv6Range...])
+		// or ipv6_is_in_any_range(Ipv6Address, dynamic([...])) — added
+		// 2026-08-17. Same variadic/array calling convention as
+		// ipv4_is_in_any_range, reusing the same generic
+		// collectIPv4SearchTerms helper (its logic is plain string
+		// collection, not IPv4-specific despite the name).
+		if len(fc.Args) < 2 {
+			return nil, true, fmt.Errorf("ipv6_is_in_any_range requires at least 2 arguments")
+		}
+		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if ipVal == nil {
+			return nil, true, nil
+		}
+		ipB, _, ipOk := parseIPv6WithPrefix(fmt.Sprintf("%v", ipVal))
+		if !ipOk {
+			return nil, true, nil
+		}
+		ranges, err := collectIPv4SearchTerms(fc.Args[1:], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		for _, r := range ranges {
+			rangeB, rangePrefix, rangeOk := parseIPv6WithPrefix(r)
+			if !rangeOk {
+				continue
+			}
+			if maskIPv6(ipB, rangePrefix) == maskIPv6(rangeB, rangePrefix) {
+				return true, true, nil
+			}
+		}
+		return false, true, nil
+
 	default:
 		return nil, false, nil
 	}
@@ -1218,4 +1462,177 @@ func ipv4RangeToCIDRList(startAddr, endAddr uint32) []string {
 // uint32ToIPv4String formats a uint32 as a dotted-quad IPv4 string.
 func uint32ToIPv4String(n uint32) string {
 	return fmt.Sprintf("%d.%d.%d.%d", (n>>24)&0xFF, (n>>16)&0xFF, (n>>8)&0xFF, n&0xFF)
+}
+
+// --- IPv6 helpers (added 2026-08-17) ---
+
+// parseIPv6WithPrefix parses an IPv6 or IPv4-notation address string
+// (optionally carrying an embedded "/prefix"), returning its 16-byte
+// representation, its effective prefix length in 128-bit space
+// (default 128 when no embedded prefix is present), and whether
+// parsing succeeded.
+//
+// Real ADX's own docs establish two rules that appear nowhere in the
+// prose text, only in parse_ipv6_mask's own 7-row worked-example
+// table's actual output numbers — both verified by hand-tracing every
+// row against real ADX's own published output before trusting them:
+//
+//  1. An embedded prefix on an address whose TEXT contains a literal
+//     '.' character — a plain dotted-decimal string, or the exact
+//     "::a.b.c.d" spelling — is interpreted in 0-32 IPv4 space and
+//     combined into the 128-bit effective prefix via a +96 offset.
+//     Confirmed: '192.168.255.255/24' combined with an explicit
+//     netmask=124 argument produces the IDENTICAL output to
+//     unprefixed '192.168.255.255' combined with explicit netmask=120
+//     — both effective at 120 (=96+24), not 124. A genuine IPv6-
+//     notation address's own embedded prefix has NO such offset,
+//     confirmed two separate ways: 'fe80::.../120' combined with an
+//     explicit netmask=124 produces effective 120 (the smaller of 120
+//     and 124 directly, not 216); and — critically — this is a
+//     SYNTACTIC decision, not a check on the parsed byte VALUE: a
+//     real, reproduced bug was found and fixed here where
+//     '0:0:0:0:0:ffff:c0a8:ac/60' (real ADX's own
+//     ipv6_is_in_any_range worked example) is written entirely in
+//     colon-hex-group notation with no dot anywhere, even though its
+//     parsed VALUE happens to fall in the same ::ffff:0:0/96 range as
+//     a genuine IPv4-mapped address — an earlier version of this
+//     function that decided the offset by inspecting the parsed byte
+//     pattern instead of the source text wrongly rejected /60 as an
+//     out-of-range IPv4 prefix (60 > 32), when real ADX's own
+//     documented result requires /60 to be used directly as a raw
+//     128-bit prefix.
+//
+//  2. The literal "::a.b.c.d" spelling — which Go's own net.ParseIP
+//     renders with NO ffff inserted (bytes 10-11 stay 0x00 0x00, the
+//     deprecated all-zero "IPv4-compatible" form; confirmed directly
+//     against Go's own behavior before writing this override) — is
+//     auto-canonicalized by real ADX to the IPv4-MAPPED form instead
+//     (ffff inserted at bytes 10-11). Confirmed directly:
+//     '::192.168.255.255' with netmask=128 (i.e. no masking applied
+//     at all) still produces canonical output
+//     "0000:0000:0000:0000:0000:ffff:c0a8:ffff", not
+//     "...:0000:c0a8:ffff" — the only way to get an ffff there with
+//     zero masking is if it was inserted at parse time, not derived
+//     from any bit operation.
+//
+// A genuinely untested edge case, deliberately NOT covered: a real
+// IPv6 address with a non-zero prefix ahead of an embedded dotted-quad
+// tail (e.g. "fe80::192.168.1.1") — no worked example exercises this,
+// so it's left to Go's own ordinary net.ParseIP parsing (no ffff
+// override applied) rather than guessed at either way.
+func parseIPv6WithPrefix(s string) ([16]byte, int, bool) {
+	var out [16]byte
+	addr := s
+	var explicitEmbedded *int
+	if idx := strings.LastIndex(s, "/"); idx >= 0 {
+		p, err := strconv.Atoi(s[idx+1:])
+		if err != nil || p < 0 {
+			return out, 0, false
+		}
+		explicitEmbedded = &p
+		addr = s[:idx]
+	}
+
+	isIPv4Notation := !strings.Contains(addr, ":")
+	// Exactly the "::a.b.c.d" spelling: starts with "::", nothing
+	// else colon-shaped after it, and the remainder is dot-bearing —
+	// deliberately narrow, see the doc comment above.
+	isCompatSpelling := strings.HasPrefix(addr, "::") &&
+		!strings.Contains(addr[2:], ":") && strings.Contains(addr[2:], ".")
+	// Whether an embedded prefix gets the +96 IPv4-space offset is
+	// decided SYNTACTICALLY (does the address text itself contain a
+	// literal '.' character), NOT by inspecting the parsed byte
+	// value — a real, reproduced discrepancy found while verifying
+	// ipv6_is_in_range against real ADX's own worked example:
+	// '0:0:0:0:0:ffff:c0a8:ac/60' is written entirely in colon-hex-
+	// group notation (no dot anywhere) even though its VALUE happens
+	// to fall in the same ::ffff:0:0/96 range as a genuine IPv4-
+	// mapped address. A byte-value-based check wrongly rejected its
+	// embedded /60 as an out-of-range IPv4 prefix (60 > 32); a plain
+	// syntactic "does the text contain a dot" check correctly treats
+	// /60 as a raw 128-bit prefix instead, matching the documented
+	// true result.
+	embeddedGetsOffset := strings.Contains(addr, ".")
+
+	if isIPv4Notation {
+		ip4Val := net.ParseIP(addr)
+		if ip4Val == nil {
+			return out, 0, false
+		}
+		ip4 := ip4Val.To4()
+		if ip4 == nil {
+			return out, 0, false
+		}
+		out[10], out[11] = 0xff, 0xff
+		copy(out[12:], ip4)
+	} else {
+		ipVal := net.ParseIP(addr)
+		if ipVal == nil {
+			return out, 0, false
+		}
+		ip16 := ipVal.To16()
+		if ip16 == nil {
+			return out, 0, false
+		}
+		copy(out[:], ip16)
+		if isCompatSpelling {
+			allZeroPrefix := true
+			for i := 0; i < 10; i++ {
+				if out[i] != 0 {
+					allZeroPrefix = false
+					break
+				}
+			}
+			if allZeroPrefix && out[10] == 0 && out[11] == 0 {
+				out[10], out[11] = 0xff, 0xff
+			}
+		}
+	}
+
+	effective := 128
+	if explicitEmbedded != nil {
+		p := *explicitEmbedded
+		if embeddedGetsOffset {
+			if p > 32 {
+				return out, 0, false
+			}
+			effective = 96 + p
+		} else {
+			if p > 128 {
+				return out, 0, false
+			}
+			effective = p
+		}
+	}
+	return out, effective, true
+}
+
+// maskIPv6 zeroes every bit past prefix in a 16-byte IPv6 address.
+func maskIPv6(b [16]byte, prefix int) [16]byte {
+	var out [16]byte
+	if prefix >= 128 {
+		return b
+	}
+	if prefix <= 0 {
+		return out
+	}
+	fullBytes := prefix / 8
+	remBits := prefix % 8
+	copy(out[:fullBytes], b[:fullBytes])
+	if remBits > 0 && fullBytes < 16 {
+		mask := byte(0xFF << uint(8-remBits))
+		out[fullBytes] = b[fullBytes] & mask
+	}
+	return out
+}
+
+// canonicalIPv6String formats a 16-byte address as real ADX's own
+// documented canonical form: 8 groups of 4 lowercase hex digits,
+// fully expanded, zero-padded, no "::" compression — verified
+// directly against parse_ipv6_mask's own worked-example output
+// strings (e.g. "fe80:0000:0000:0000:085d:e82c:9446:7994").
+func canonicalIPv6String(b [16]byte) string {
+	return fmt.Sprintf("%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+		b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+		b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
 }
