@@ -25,10 +25,9 @@ func (e *Engine) applyProjectByNames(input *types.Table, op *parser.ProjectByNam
 	var patterns []string
 	for _, spec := range op.Specifiers {
 		if spec.ColumnNamesOfTable != "" {
-			if e.letContext == nil {
-				return nil, fmt.Errorf("project-by-names: column_names_of(%s): no such table binding", spec.ColumnNamesOfTable)
-			}
-			tbl, ok := e.letContext.Tables[spec.ColumnNamesOfTable]
+			// LookupTable walks the parent chain, not just
+			// e.letContext's own local map.
+			tbl, ok := e.letContext.LookupTable(spec.ColumnNamesOfTable)
 			if !ok {
 				return nil, fmt.Errorf("project-by-names: column_names_of(%s): no such table binding", spec.ColumnNamesOfTable)
 			}

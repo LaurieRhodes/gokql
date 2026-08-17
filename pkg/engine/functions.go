@@ -71,10 +71,7 @@ var errUDFDepth = errors.New("UDF call depth exceeded (recursive user-defined fu
 // in an isolated scope where only the parameters are visible as columns.
 // Scalar let bindings remain visible through activeLetContext, matching KQL.
 func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	if activeLetContext == nil {
-		return nil, false, nil
-	}
-	fn, ok := activeLetContext.Functions[fc.Name]
+	fn, ok := activeLetContext.LookupFunction(fc.Name)
 	if !ok {
 		return nil, false, nil
 	}

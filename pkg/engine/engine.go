@@ -23,9 +23,65 @@ import (
 
 // LetContext holds let-bound names during compound statement execution.
 type LetContext struct {
-	Scalars   map[string]types.Value        // Scalar let bindings: name → value
+	Scalars   map[string]types.Value         // Scalar let bindings: name → value
 	Functions map[string]*parser.FunctionDef // UDF let bindings: name → definition
-	Tables  map[string]*types.Table // Tabular let bindings: name → result table
+	Tables    map[string]*types.Table        // Tabular let bindings: name → result table
+
+	// Parent is the enclosing scope's own LetContext, if any — nil for
+	// a top-level context. Added 2026-08-17 to fix a real, live
+	// lexical-scoping gap: executeCompound previously installed a
+	// completely ISOLATED fresh context for every nested compound
+	// statement (e.g. a stored function's tabular argument with its
+	// own further `let` bindings, "(let y = 1; MyTable | where x >
+	// y)"), with no way at all for that inner scope to see an
+	// outer-scope name like MyTable — confirmed live via
+	// TestLetBoundTableWithOwnLetsAsTabularArgument's own comment
+	// (stored_functions_test.go), which had documented this as a
+	// known, deliberately-unfixed limitation when the PrecomputedTable
+	// fix (Sprint 12) closed the adjacent, simpler bug. Fixed via a
+	// genuine parent-chain lookup (LookupScalar/LookupTable/
+	// LookupFunction below) rather than a copy-down snapshot at
+	// context-creation time — the chain stays live, so it also
+	// correctly reflects any change to an outer binding made after
+	// the inner context was created, which a one-time copy would not.
+	Parent *LetContext
+}
+
+// LookupScalar checks this context's own Scalars map, falling back to
+// the parent chain (if any) when the name isn't found locally — the
+// standard lexical-scoping shadowing rule: an inner `let x = ...`
+// shadows an outer one with the same name, but an outer binding
+// remains visible to any inner scope that doesn't redeclare it.
+func (ctx *LetContext) LookupScalar(name string) (types.Value, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	if v, ok := ctx.Scalars[name]; ok {
+		return v, true
+	}
+	return ctx.Parent.LookupScalar(name)
+}
+
+// LookupTable is LookupScalar's own tabular-let counterpart.
+func (ctx *LetContext) LookupTable(name string) (*types.Table, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	if t, ok := ctx.Tables[name]; ok {
+		return t, true
+	}
+	return ctx.Parent.LookupTable(name)
+}
+
+// LookupFunction is LookupScalar's own UDF-let counterpart.
+func (ctx *LetContext) LookupFunction(name string) (*parser.FunctionDef, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	if fn, ok := ctx.Functions[name]; ok {
+		return fn, true
+	}
+	return ctx.Parent.LookupFunction(name)
 }
 
 // activeLetContext is the package-level reference to the current let context.
@@ -259,6 +315,13 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 		Scalars:   make(map[string]types.Value),
 		Functions: make(map[string]*parser.FunctionDef),
 		Tables:    make(map[string]*types.Table),
+		// Parent = the enclosing scope's own context, if any — see
+		// LetContext's own doc comment for the real, live scoping bug
+		// this fixes. e.letContext here is still whatever was active
+		// BEFORE this call installs ctx below (prevCtx, captured just
+		// after this literal), so using it directly as Parent is
+		// correct and doesn't need its own separate variable.
+		Parent: e.letContext,
 	}
 
 	// Install the context once; it is mutated in place as bindings
@@ -435,14 +498,14 @@ func queryNeedsLetContextRestore(operators []parser.Operator) bool {
 }
 
 func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
-	// Step 1: Resolve source table (check let context first, then catalog)
-	if e.letContext != nil {
-		if letTable, ok := e.letContext.Tables[q.Source]; ok {
-			// Source is a let-bound tabular result — apply operators directly
-			result := types.NewTable(q.Source, letTable.Schema)
-			result.Rows = append(result.Rows, letTable.Rows...)
-			return e.applyPipeline(result, q.Operators)
-		}
+	// Step 1: Resolve source table (check let context first, then catalog).
+	// LookupTable walks the parent chain, not just e.letContext's own
+	// local map — see LetContext's own doc comment for why.
+	if letTable, ok := e.letContext.LookupTable(q.Source); ok {
+		// Source is a let-bound tabular result — apply operators directly
+		result := types.NewTable(q.Source, letTable.Schema)
+		result.Rows = append(result.Rows, letTable.Rows...)
+		return e.applyPipeline(result, q.Operators)
 	}
 
 	// Table-valued function source (csv, json, ndjson, vortex)

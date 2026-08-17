@@ -537,9 +537,6 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 // ANY user function shadow ANY built-in) is a bigger, separate change
 // with its own test implications not audited here.
 func userFuncOverridesBuiltinName(name string) bool {
-	if activeLetContext == nil {
-		return false
-	}
-	_, ok := activeLetContext.Functions[name]
+	_, ok := activeLetContext.LookupFunction(name)
 	return ok
 }

@@ -569,9 +569,10 @@ func (e *Engine) applyUnion(input *types.Table, op *parser.UnionOp) (*types.Tabl
 	tables := []*types.Table{input}
 
 	for _, src := range op.Sources {
-		// Check let-bound tables first
-		if len(src.Operators) == 0 && e.letContext != nil {
-			if letTable, ok := e.letContext.Tables[src.Source]; ok {
+		// Check let-bound tables first — LookupTable walks the parent
+		// chain, not just e.letContext's own local map.
+		if len(src.Operators) == 0 {
+			if letTable, ok := e.letContext.LookupTable(src.Source); ok {
 				tables = append(tables, letTable)
 				continue
 			}

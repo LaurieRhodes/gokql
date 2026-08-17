@@ -612,28 +612,43 @@ func TestLetBoundTableAsTabularArgument(t *testing.T) {
 // *parser.CompoundStatement here, not a bare *parser.Query) that must
 // be fixed identically for the case that doesn't ALSO require
 // cross-scope resolution.
-//
-// Deliberately does NOT test a nested let referencing an OUTER-scope
-// name (e.g. an inner "let y = 1; MyTable | where x > y" trying to see
-// a MyTable bound in the caller's own outer scope) — that combination
-// hits a genuinely separate, deeper, pre-existing limitation found
-// while writing this test: LetContext isn't lexically scoped/chained
-// at all. Every executeCompound call installs a completely isolated
-// fresh context with no fallback to any enclosing scope, so a nested
-// compound argument's own Lets can never see an outer let-bound name,
-// regardless of this session's PrecomputedTable fix (which only
-// addresses the CALLER-to-CALLEE single-level handoff, not general
-// lexical nesting). Real, worth fixing eventually, but a materially
-// bigger architectural change (a parent-context chain touching every
-// LetContext-reading call site) than this session's actual scope --
-// documented here rather than silently worked around or claimed as
-// covered.
 func TestLetBoundTableWithOwnLetsAsTabularArgument(t *testing.T) {
 	eng := storedFunctionsTestScope(t)
 	diskExec(t, eng, `.create-or-alter function DoubleIt(T:(x:long)) { T | extend x2 = x * 2 }`)
 
 	tbl := diskQuery(t, eng, `DoubleIt((let y = 1; datatable(x:long)[1,2,3] | where x > y))`)
 	expectRows(t, tbl, 2) // x=2,3 (x>1)
+}
+
+// TestNestedLetSeesOuterScopeTable guards a real, deeper limitation
+// found while writing the test above and fixed later the same session
+// (2026-08-17): LetContext previously wasn't lexically scoped/chained
+// at all — every executeCompound call installed a completely isolated
+// fresh context with no fallback to any enclosing scope, so a nested
+// compound argument's own inner `let` bindings could never see an
+// outer let-bound name (e.g. an inner "let y = 1; MyTable | where x >
+// y" trying to see a MyTable bound in the CALLER's own outer scope),
+// even though the simpler caller-to-callee single-level handoff
+// (TestLetBoundTableAsTabularArgument, above) already worked via the
+// PrecomputedTable fix (Sprint 12). Fixed via a genuine parent-context
+// chain (LetContext.Parent + LookupScalar/LookupTable/LookupFunction,
+// engine.go) rather than a copy-down snapshot at context-creation
+// time, so the chain also correctly reflects any later change to an
+// outer binding, not just a one-time copy of it.
+func TestNestedLetSeesOuterScopeTable(t *testing.T) {
+	eng := storedFunctionsTestScope(t)
+	diskExec(t, eng, `.create-or-alter function DoubleIt(T:(x:long)) { T | extend x2 = x * 2 }`)
+
+	tbl := diskQuery(t, eng, `let MyTable = datatable(x:long)[1,2,3]; DoubleIt((let y = 1; MyTable | where x > y))`)
+	expectRows(t, tbl, 2) // x=2,3 (x>1) — MyTable resolved from the OUTER scope, inside the inner let's own body
+	x2Idx := tbl.Schema.ColumnIndex("x2")
+	want := []int64{4, 6}
+	for i, w := range want {
+		got, ok := tbl.Rows[i][x2Idx].(int64)
+		if !ok || got != w {
+			t.Errorf("row %d x2 = %v, want %d", i, tbl.Rows[i][x2Idx], w)
+		}
+	}
 }
 
 // TestStoredFunctionIntLiteralWidensToRealParameter guards a real bug

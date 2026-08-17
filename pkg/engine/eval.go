@@ -262,11 +262,10 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		if idx >= 0 {
 			return row[idx], nil
 		}
-		// Check scalar let bindings
-		if activeLetContext != nil {
-			if val, ok := activeLetContext.Scalars[e.Name]; ok {
-				return val, nil
-			}
+		// Check scalar let bindings — walks the parent chain, not
+		// just the innermost context's own local map.
+		if val, ok := activeLetContext.LookupScalar(e.Name); ok {
+			return val, nil
 		}
 		return nil, fmt.Errorf("column %q not found", e.Name)
 
@@ -313,20 +312,20 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		colStr := fmt.Sprintf("%v", colVal)
 
 		if e.TableRef != "" {
-			// Check against a let-bound table's first column
-			if activeLetContext != nil {
-				if tbl, ok := activeLetContext.Tables[e.TableRef]; ok {
-					for _, row := range tbl.Rows {
-						if len(row) > 0 {
-							rowStr := fmt.Sprintf("%v", row[0])
-							if e.CaseInsensitive {
-								found = strings.EqualFold(colStr, rowStr)
-							} else {
-								found = colStr == rowStr
-							}
-							if found {
-								break
-							}
+			// Check against a let-bound table's first column — walks
+			// the parent chain, not just the innermost context's own
+			// local map.
+			if tbl, ok := activeLetContext.LookupTable(e.TableRef); ok {
+				for _, row := range tbl.Rows {
+					if len(row) > 0 {
+						rowStr := fmt.Sprintf("%v", row[0])
+						if e.CaseInsensitive {
+							found = strings.EqualFold(colStr, rowStr)
+						} else {
+							found = colStr == rowStr
+						}
+						if found {
+							break
 						}
 					}
 				}
