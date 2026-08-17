@@ -61,3 +61,14 @@ func TestPrecededByOddBackslashesParity(t *testing.T) {
 	}
 }
 
+// The 9 remaining call sites left over from Sprint 7's own backslash-
+// parity fix (findMatchingParen, findMatchingBracket, findMatchingBrace,
+// isTabularExpression, tryParseFunctionDef, splitStatements,
+// findTopLevelKeyword, splitDataTableValues, assignmentEqIndex) were
+// swept 2026-08-17. End-to-end regression tests for these live in
+// pkg/engine (backslash_parity_sweep_test.go) rather than here, since
+// most of these functions are only reachable through full query
+// execution (print, datatable, multi-statement let chains), which
+// this package's own test harness (parser-only, no engine) can't
+// exercise directly.
+

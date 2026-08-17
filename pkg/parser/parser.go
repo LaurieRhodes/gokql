@@ -182,7 +182,7 @@ func isTabularExpression(s string) bool {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if inQuote != 0 {
-			if ch == inQuote && (i == 0 || s[i-1] != '\\') {
+			if ch == inQuote && !precededByOddBackslashes(s, i) {
 				inQuote = 0
 			}
 			continue
@@ -248,7 +248,7 @@ func tryParseFunctionDef(s string) (*FunctionDef, bool, error) {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if inQuote != 0 {
-			if ch == inQuote && s[i-1] != '\\' {
+			if ch == inQuote && !precededByOddBackslashes(s, i) {
 				inQuote = 0
 			}
 			continue
@@ -339,7 +339,7 @@ func splitStatements(s string) []string {
 		ch := s[i]
 		if inQuote != 0 {
 			current.WriteByte(ch)
-			if ch == inQuote && (i == 0 || s[i-1] != '\\') {
+			if ch == inQuote && !precededByOddBackslashes(s, i) {
 				inQuote = 0
 			}
 			continue
@@ -889,7 +889,7 @@ func findMatchingBrace(s string, start int) int {
 	depth := 0
 	inStr := false
 	for i := start; i < len(s); i++ {
-		if s[i] == '"' && (i == 0 || s[i-1] != '\\') {
+		if s[i] == '"' && !precededByOddBackslashes(s, i) {
 			inStr = !inStr
 		}
 		if inStr {
@@ -1977,7 +1977,7 @@ func findTopLevelKeyword(s, keyword string) int {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if inStr != 0 {
-			if ch == inStr && (i == 0 || s[i-1] != '\\') {
+			if ch == inStr && !precededByOddBackslashes(s, i) {
 				inStr = 0
 			}
 			continue
@@ -2156,7 +2156,7 @@ func findMatchingParen(s string, start int) int {
 	depth := 0
 	inStr := false
 	for i := start; i < len(s); i++ {
-		if s[i] == '"' && (i == 0 || s[i-1] != '\\') {
+		if s[i] == '"' && !precededByOddBackslashes(s, i) {
 			inStr = !inStr
 		}
 		if inStr {
@@ -2179,7 +2179,7 @@ func findMatchingBracket(s string, start int) int {
 	depth := 0
 	inStr := false
 	for i := start; i < len(s); i++ {
-		if s[i] == '"' && (i == 0 || s[i-1] != '\\') {
+		if s[i] == '"' && !precededByOddBackslashes(s, i) {
 			inStr = !inStr
 		}
 		if inStr {
@@ -2240,7 +2240,7 @@ func splitDataTableValues(s string) []string {
 	bracketDepth := 0
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
-		if ch == '"' && (i == 0 || s[i-1] != '\\') {
+		if ch == '"' && !precededByOddBackslashes(s, i) {
 			inStr = !inStr
 			current.WriteByte(ch)
 			continue
@@ -2584,7 +2584,7 @@ func assignmentEqIndex(s string) int {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if inQuote != 0 {
-			if ch == inQuote && (i == 0 || s[i-1] != '\\') {
+			if ch == inQuote && !precededByOddBackslashes(s, i) {
 				inQuote = 0
 			}
 			continue
