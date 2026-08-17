@@ -399,3 +399,62 @@ func parseTableFunc(source string) *TableFunc {
 	}
 	return nil
 }
+
+// normalizeLeadingKeywordWhitespace collapses whatever whitespace run
+// (if any) immediately follows a segment's own leading keyword-shaped
+// token (letters/digits/hyphens — matching "where", "project-away",
+// "make-series", "sample-distinct", and every other operator keyword
+// this parser recognizes) down to a single space character.
+//
+// Every operator/statement dispatch in this parser (parseOperator,
+// and the union/print/search special-cases in parseQuery) is written
+// as `strings.HasPrefix(lower, "keyword ")` — a literal single-space
+// check. That's correct for the overwhelmingly common case (keyword
+// immediately followed by its own first argument on the same line),
+// but genuinely wrong whenever a query is formatted with a line break
+// right after the keyword instead — `where\n  x > 1`, `extend\n  y =
+// x+1`, `print\n  r = 1` all failed outright ("unknown operator" /
+// "table \"print\\n...\" not found") before this fix, since a literal
+// "\n" or "\t" right after the keyword never matches a literal " ".
+// Found and fixed 2026-08-17, while investigating what first looked
+// like a print-specific quirk and turned out to be systemic across
+// essentially every keyword-prefixed check in this parser (confirmed
+// live: where and extend have the identical failure) — rather than
+// patching each of the 40+ individual `HasPrefix(lower, "keyword ")`
+// sites one at a time (a large, repetitive, error-prone sweep), this
+// single, shared normalization runs once at each of the two real
+// entry points (parseOperator for pipe-segment operators, parseQuery
+// for the union/print/search first-segment special-cases) before any
+// keyword check happens, so every existing and future keyword-prefix
+// check downstream benefits without needing its own fix.
+//
+// Deliberately conservative: only touches whitespace RIGHT AFTER the
+// leading keyword token, nowhere else in the segment — a newline
+// inside a later string literal, a later clause, or a nested
+// subquery is completely untouched, since this only ever looks at the
+// very start of the string before the first non-identifier character.
+func normalizeLeadingKeywordWhitespace(s string) string {
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' {
+			i++
+			continue
+		}
+		break
+	}
+	if i == 0 || i >= len(s) {
+		return s // no leading keyword-shaped token, or nothing follows it
+	}
+	j := i
+	for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r') {
+		j++
+	}
+	if j == i {
+		return s // keyword isn't followed by any whitespace at all
+	}
+	if j-i == 1 && s[i] == ' ' {
+		return s // already exactly a single space — the common case, no allocation needed
+	}
+	return s[:i] + " " + s[j:]
+}

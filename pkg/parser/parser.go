@@ -1082,6 +1082,7 @@ func parseQuery(input string) (Statement, error) {
 	if source == "" {
 		return nil, fmt.Errorf("expected table name")
 	}
+	source = normalizeLeadingKeywordWhitespace(source)
 
 	// Standalone union: "union T1, T2, T3 | where ..."
 	if strings.HasPrefix(strings.ToLower(source), "union ") {
@@ -1211,6 +1212,7 @@ func parseQuery(input string) (Statement, error) {
 }
 
 func parseOperator(seg string) (Operator, error) {
+	seg = normalizeLeadingKeywordWhitespace(seg)
 	lower := strings.ToLower(seg)
 
 	// | count
