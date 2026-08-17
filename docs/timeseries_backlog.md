@@ -1,5 +1,26 @@
 # Time Series (`make-series` + `series_*`) Backlog
 
+**Status update (2026-08-17): Tiers 1-3 are now DONE** — 31 of the 49
+`series_*` functions closed (26 in the first pass: all of Tier 1's
+element-wise arithmetic/comparison/unary-math/trig plus all 4 of Tier
+2's gap-filling functions; 5 more in a second pass: series_sum,
+series_product, series_magnitude, series_pearson_correlation,
+series_stats_dynamic). `series_stats` itself (the multi-COLUMN
+sibling of series_stats_dynamic) is deliberately NOT implemented — its
+real syntax, `extend (Name, ...) = series_stats(series, ...)`, expands
+to multiple output columns via destructuring-assignment grammar
+(`(a,b,c) = expr`) that doesn't exist anywhere in this engine's
+project/extend parser, a real, separate, bigger gap than one more
+function. A real, separate bug was found and fixed while verifying
+series_pearson_correlation against its own real-ADX worked example:
+make_list/make_set (and their _if/_with_nulls variants) stringified
+every element before JSON-marshaling, silently breaking any downstream
+consumer expecting real JSON types — see `pkg/engine/aggregation.go`'s
+own updated comments for the full fix. 18 functions remain, all in
+Tiers 4-5 (curve fitting, signal processing), already flagged LOW
+priority for this project's own use cases — there is no MED-priority
+work left in this backlog.
+
 **Status update (2026-08-17): Tier 1 + Tier 2 are now DONE** — 26 of
 the 49 `series_*` functions closed in one pass (all of Tier 1's
 element-wise arithmetic/comparison/unary-math/trig, plus all 4 of
@@ -12,9 +33,6 @@ the function family, not one). Two real, separate bugs in unrelated
 conversion functions were found and fixed along the way, while wiring
 up the actual make-series + series_fill_forward integration path end
 to end — see `pkg/engine/func_convert.go`'s own updated comments.
-23 functions remain: Tier 3 (summary statistics, 6 functions) is the
-natural next step; Tiers 4-5 (curve fitting, signal processing) were
-already flagged LOW priority for this project's own use cases.
 
 **Status update (2026-08-15): `make-series` itself is now DONE** — see
 `docs/kql_coverage.md`'s own Implemented table and Sprint 8 entry for
@@ -36,8 +54,10 @@ enumeration (make-series + 51 `series_*` names) provided directly.
 similarity work); `make-series` itself (2026-08-15, main syntax only —
 see `docs/kql_coverage.md`'s own scope note for exactly which parts of
 real ADX's documented grammar this covers); all of Tier 1 (22
-functions) and Tier 2 (4 functions) below, closed 2026-08-17.
-**Confirmed genuinely missing**: the 23 functions in Tiers 3-5.
+functions), Tier 2 (4 functions), and Tier 3 minus `series_stats`
+itself (5 of 6 functions) below, all closed 2026-08-17.
+**Confirmed genuinely missing**: `series_stats` (deliberately, see the
+status note above) plus the 18 functions in Tiers 4-5.
 
 ---
 
@@ -148,7 +168,7 @@ intended companion to `make-series default=double(null)`, so building
 
 ---
 
-## Tier 3 — summary statistics over one array (🟡 MED)
+## Tier 3 — summary statistics over one array — ✅ MOSTLY COMPLETE (2026-08-17, series_stats itself deferred — see status note at top of document)
 
 `series_stats` (multiple summary stats packed into one dynamic
 result), `series_stats_dynamic` (same, but as a proper nested dynamic

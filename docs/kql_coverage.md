@@ -2,8 +2,8 @@
 
 Based on Microsoft's official [Kusto-Query-Language](https://github.com/microsoft/Kusto-Query-Language) repository (ANTLR grammar + symbol definitions), cross-checked function-by-function and operator-by-operator against the actual source, not assumed from a prior pass.
 
-**Last updated:** 2026-08-17 (Sprint 13: series_* Tier 1 + Tier 2 closed)
-**Project stats:** 30,536 lines Go, 66 source files, 545 tests across 49 test files (verified fresh this session, not carried over)
+**Last updated:** 2026-08-17 (Sprint 14: series_* Tier 3 closed, minus series_stats)
+**Project stats:** 30,830 lines Go, 66 source files, 554 tests across 49 test files (verified fresh this session, not carried over)
 
 This rewrite corrects a significant amount of drift in the previous version (dated 2026-02-28): several operators, comparison forms, and aggregation functions listed as "not yet implemented" or "out of scope" were already implemented — some before that version was even written, some added across sessions since without this document being updated. Several entire capability areas (stored functions, materialized views, federation, automatic ingest-time timestamping, host-embedding extension points, vector similarity) were built since and never documented here at all. Every claim below was checked directly against the source or with a live query before being written down.
 
@@ -253,9 +253,9 @@ Vector similarity as native KQL, no external vector database required.
 
 Also see `.embed-into` under Management Commands for bulk embedding of an entire column at ingest time.
 
-#### Time Series — `func_series.go` (26 functions, 2026-08-17)
+#### Time Series — `func_series.go` (31 functions, 2026-08-17)
 
-Element-wise array math and gap-filling — the operations `make-series`'s own output array is for. Full detail, exact verification against real ADX's own docs, and two real bugs found and fixed while building these: [`docs/timeseries_backlog.md`](./timeseries_backlog.md).
+Element-wise array math, gap-filling, and summary statistics — the operations `make-series`'s own output array is for. Full detail, exact verification against real ADX's own docs, and every real bug found and fixed while building these: [`docs/timeseries_backlog.md`](./timeseries_backlog.md).
 
 | Family | Functions | Notes |
 | --- | --- | --- |
@@ -264,6 +264,7 @@ Element-wise array math and gap-filling — the operations `make-series`'s own o
 | Unary math | series_abs, series_sign, series_ceiling, series_floor, series_log, series_exp | series_log/series_exp use the natural base, matching this engine's own already-correct scalar log()/exp() |
 | Trig | series_sin, series_cos, series_tan, series_asin, series_acos, series_atan | |
 | Gap filling | series_fill_forward, series_fill_backward, series_fill_const, series_fill_linear | series_fill_backward verified exactly against its own real-ADX worked example; series_fill_linear's fill_edges default (true) is an explicitly flagged assumption, not confirmed from available sources |
+| Summary statistics | series_sum, series_product, series_magnitude, series_pearson_correlation, series_stats_dynamic | series_pearson_correlation's null rule verified STRICTER than the arithmetic family's own: any non-numeric element or length mismatch nulls the whole scalar result, not just one position. `series_stats` (the multi-column sibling of series_stats_dynamic) deliberately NOT implemented — needs destructuring-assignment grammar (`extend (a,b,c) = expr`) this engine doesn't have anywhere |
 
 #### Window Functions (via serialize)
 
@@ -653,11 +654,19 @@ Tabular operators: 41/53 implemented, 0 gaps remaining, 12 deliberately out of s
 
 Scalar functions: ~178 entry points implemented (was ~150). 23 `series_*` functions remain: Tier 3 (summary statistics, 6 functions, MED priority) is the natural next step; Tiers 4-5 (curve fitting, signal processing, 14 functions) stay LOW priority per this project's own use cases.
 
+### ✅ Sprint 14: series_* Tier 3 (minus series_stats) — COMPLETE (2026-08-17)
+
+1. ✅ **5 functions**: series_sum, series_product, series_magnitude, series_pearson_correlation, series_stats_dynamic. Verified exactly against real ADX's own worked examples where fetched (series_sum, series_stats_dynamic — every field of its 9-field object checked); series_pearson_correlation's null rule confirmed stricter than the Tier 1 arithmetic family's own (a whole-result null, not per-position). `series_stats` itself (the multi-column sibling) deliberately not implemented — its real syntax needs destructuring-assignment grammar (`extend (a,b,c) = expr`) that doesn't exist anywhere in this engine's parser, a real, separate, bigger gap documented inline rather than faked.
+2. ✅ **A real, separate bug found and fixed while verifying series_pearson_correlation against its own real-ADX worked example** (summarize make_list(...), that function's own documented calling pattern): make_list/make_set — and their `_if`/`_with_nulls` variants, 6 case blocks total, each needing the same fix separately since none of them shared the logic — stringified every element before JSON-marshaling, so make_list(LongColumn) silently produced a JSON array of quoted strings instead of numbers. Fixed by storing each element's native typed value (reusing valueForJSONArray from make_series.go for correct datetime/long/real JSON encoding). make_set's own sort.Strings call (silently wrong for numeric sets) was removed in the same pass — real ADX documents make_set as unordered, so sorting was never a real requirement.
+3. ✅ 10 new tests, full suite (555 tests) passes with `-race`, `go vet` clean, verified against all three real production scopes.
+
+Scalar functions: ~183 entry points implemented. `series_*`: 31/49 implemented (`series_stats` deliberately deferred, documented above). 18 functions remain, all in Tiers 4-5 (curve fitting, signal processing) — already LOW priority, no MED-priority time-series work left.
+
 ### Future
 
 1. **hll / hll_if / hll_merge, tdigest / tdigest_merge** — sketch structures; low priority for a single-node engine
 2. **buildschema, percentilesw / percentilesw_array** — niche aggregation gaps
-3. **series_* functions** — now the main open item; 49 of 51 missing (2 already implemented for vector-similarity work), unblocked by `make-series` (Sprint 8) — see `docs/timeseries_backlog.md` for the full, prioritized list and suggested build order
+3. **series_* Tiers 4-5** — 18 functions remain, all curve-fitting (`series_fit_line`, `series_fit_poly`, etc.) and signal-processing/anomaly-detection (`series_decompose`, `series_fft`, `series_outliers`, etc.) — already LOW priority per this project's own use cases; see `docs/timeseries_backlog.md` for the full list. No MED-priority time-series work remains.
 4. **query parameters** — `declare query_parameters(...)`
 5. **Known follow-up, not yet scheduled**: the backslash-parity bug fixed in `splitPipe`/`splitRespectingParens`/`findKeyword` this session (see Sprint 7 above) still exists in 9 other call sites in `parser.go` (grep for `s[i-1] != '\\'` / `s[i-1] == '\\'`) — a future session should sweep these with dedicated test coverage per site rather than a single blanket change.
 6. **LetContext lexical scoping** — see Sprint 12 item 4 above; a nested compound tabular argument's own `let` bindings can't see an outer scope's names. Would need a parent-context chain touching every LetContext-reading call site, a materially bigger change than any single fix in this session.
@@ -671,7 +680,7 @@ Scalar functions: ~178 entry points implemented (was ~150). 23 `series_*` functi
 | ---------------------------- | ----------- | --------- | -------- | -------------------------------------- |
 | Tabular operators                | 41          | 53        | 77%      | 41 implemented + 0 not-yet-implemented + 12 out-of-scope = 53, a full, cross-checked enumeration (2026-08-14/15), not the earlier, incomplete 47 |
 | Comparison operators                | 22          | 35        | 63%*     | Effectively complete in practice — 0 known gaps; the 35 denominator counts individual grammar symbols, this row counts table rows (see methodology note above) |
-| Scalar functions                       | ~178        | 420       | 42%      | 300+ are geo/series/obscure; series_* Tier 1+2 (26 functions) closed 2026-08-17 |
+| Scalar functions                       | ~183        | 420       | 44%      | 300+ are geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
 | Aggregation functions                     | 24          | 61        | 39%*     | All common + conditional variants covered — remaining gap is entirely the sketch/niche family (hll, tdigest, buildschema, weighted percentiles); denominator counts symbols, this row counts table rows |
 | File formats                                 | 4           | —         | —        | CSV, JSON, NDJSON, Parquet (xlsx deliberately removed 2026-08-15, see File-Based Querying section) |
 | **Practical coverage**                          | —           | —         | **~93%** | **Of security analyst queries, plus a real, persisted-function/materialized-view/federation layer beyond raw language coverage** |
