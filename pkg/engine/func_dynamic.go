@@ -14,6 +14,66 @@ import (
 // evalDynamicFunc handles dynamic, array, and bag functions.
 func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
+	case "dynamic":
+		// dynamic(Expr) — the RUNTIME form, for any argument shape
+		// other than a bare JSON array/object literal ([...]/{...}),
+		// which is handled entirely at PARSE time instead (see
+		// tryConsumeBareJSONLiteral, expr.go) by converting directly
+		// to a Literal, never reaching this function at all. Found
+		// missing entirely 2026-08-17: dynamic(null) and
+		// dynamic("a string") both failed with "unsupported function:
+		// dynamic" — real, valid KQL (real ADX's own dynamic data
+		// type docs: "A dynamic value holding the value of the inner
+		// scalar data type" and, separately, "Represents the null
+		// value") that this engine's parser happily produced a
+		// FuncCall for, with no evaluator anywhere in the dispatch
+		// chain to actually run it.
+		//
+		// null input: dynamic(null) is real ADX's own documented way
+		// to write a literal null, not a special "non-null dynamic
+		// wrapping a null" state — propagated as Go nil here, matching
+		// every other null-propagating function in this engine (not
+		// the 4-character JSON text "null"), so it displays and
+		// compares identically to an ordinary null cell.
+		//
+		// Already-dynamic input (e.g. dynamic(SomeDynamicColumn),
+		// wrapping an expression that's already a raw dynamic value
+		// under this engine's own JSON-text-string convention): passed
+		// through completely unchanged. Re-encoding it would double-
+		// encode a real array/object into a JSON STRING containing
+		// that array/object's text, which is wrong.
+		//
+		// Any other scalar (string/long/real/bool/datetime/timespan/
+		// guid): converted to its dynamic JSON representation via
+		// valueForJSONArray (make_series.go) — the SAME helper already
+		// used for make-series's own array/aggregate columns and
+		// make_list/make_set's own elements, reused here rather than
+		// writing a fourth, potentially-drifting copy of the same
+		// long/real/datetime-aware conversion — then JSON-marshaled,
+		// matching real ADX's own documented rule that a type JSON
+		// can't natively represent (datetime, long, real, timespan,
+		// guid) gets serialized as a JSON string.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("dynamic requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		argType := inferExprType(fc.Args[0], schema)
+		if argType == types.TypeDynamic {
+			return val, true, nil
+		}
+		converted := valueForJSONArray(val, argType)
+		b, err := json.Marshal(converted)
+		if err != nil {
+			return nil, true, err
+		}
+		return string(b), true, nil
+
 	case "array_length":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("array_length requires 1 argument")
