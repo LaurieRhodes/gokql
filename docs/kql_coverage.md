@@ -194,6 +194,9 @@ Functions are organized across focused source files.
 | pi                                  | Pi constant                                                    |
 | sign                                | Sign (-1, 0, 1)                                                |
 | isnan / isinf / isfinite            | Float special value tests                                      |
+| sin / cos / tan / asin / acos / atan | Trigonometry, radian in/out; added 2026-08-17 (Sprint 15), shares implementation with series_sin/series_cos/etc |
+| atan2                                 | Angle in radians between axes; (y,x) argument order verified against real ADX worked example; added 2026-08-17 (Sprint 15) |
+| degrees / radians                      | Angle unit conversion; added 2026-08-17 (Sprint 15)             |
 
 #### Dynamic (JSON/Array/Bag) — `func_dynamic.go` (24 functions)
 
@@ -218,16 +221,25 @@ Functions are organized across focused source files.
 | treepath                                              | Get all paths in a dynamic object                                              |
 | parse_csv                                              | Parse a single CSV record (RFC4180-style quoting) into a string array; only the first record is taken for multi-line input |
 
-#### Network, Encoding & Hashing — `func_net.go` (18 functions)
+#### Network, Encoding & Hashing — `func_net.go` (27 functions)
 
 | Function               | Notes                                                         |
 | ----------------------- | ----------------------------------------------------------------- |
 | parse_ipv4               | IP to long representation                                          |
-| ipv4_is_private            | RFC 1918 check                                                       |
-| ipv4_is_in_range            | CIDR range membership                                                |
-| has_ipv4                     | Check if text contains IPv4 (exact or CIDR match)                    |
-| ipv4_compare                  | Compare IPs with optional prefix mask (-1, 0, 1)                      |
-| format_ipv4                    | Format IP with optional prefix mask (subnet extraction)                |
+| ipv4_is_private            | RFC 1918 check; embedded-prefix bug fixed 2026-08-17 (see Sprint 15) |
+| ipv4_is_in_range            | CIDR range membership; equal-IPs-no-range bug fixed 2026-08-17 (see Sprint 15) |
+| has_ipv4                     | Check if text contains IPv4 (exact or CIDR match); delimiting bug fixed 2026-08-17 (see Sprint 15) |
+| ipv4_compare                  | Compare IPs with optional prefix mask (-1, 0, 1); embedded-prefix bug fixed 2026-08-17 (see Sprint 15) |
+| format_ipv4                    | Format IP with optional prefix mask (subnet extraction); embedded-prefix bug fixed 2026-08-17 (see Sprint 15) |
+| has_any_ipv4                     | Added 2026-08-17 (Sprint 15) — text search for any of several IPs, variadic or dynamic-array form |
+| has_ipv4_prefix                   | Added 2026-08-17 (Sprint 15) — text search for an IPv4 address prefix |
+| has_any_ipv4_prefix                 | Added 2026-08-17 (Sprint 15) — text search for any of several IPv4 prefixes |
+| ipv4_is_in_any_range                  | Added 2026-08-17 (Sprint 15) — CIDR range membership against several ranges |
+| ipv4_is_match                           | Added 2026-08-17 (Sprint 15) — min-of-embedded-and-explicit-prefix match |
+| ipv4_range_to_cidr_list                  | Added 2026-08-17 (Sprint 15) — largest-fitting-aligned-block CIDR splitting |
+| ipv4_netmask_suffix                       | Added 2026-08-17 (Sprint 15) — extract embedded prefix, default 32 |
+| format_ipv4_mask                           | Added 2026-08-17 (Sprint 15) — format_ipv4 plus CIDR-notation suffix |
+| parse_ipv4_mask                             | Added 2026-08-17 (Sprint 15) — ip+prefix to masked long |
 | hash_sha256                     | SHA-256 hash                                                            |
 | hash_md5                         | MD5 hash                                                                 |
 | hash_sha1                         | SHA-1 hash                                                                |
@@ -662,7 +674,23 @@ Scalar functions: ~178 entry points implemented (was ~150). 23 `series_*` functi
 
 Scalar functions: ~183 entry points implemented. `series_*`: 31/49 implemented (`series_stats` deliberately deferred, documented above). 18 functions remain, all in Tiers 4-5 (curve fitting, signal processing) — already LOW priority, no MED-priority time-series work left.
 
-### Future
+### ✅ Sprint 15: scalar trigonometry + IPv4 text-match/range/mask family — IN PROGRESS (2026-08-17)
+
+1. ✅ **Scalar trigonometry (9 functions)**: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `degrees`, `radians` (`func_convert.go`), each verified against real ADX's own worked examples (`atan2(1,1)=Pi/4` etc; `degrees(pi()/4)=45` etc; `radians(90)=1.5707963267949` etc). The pre-existing `series_sin`/`series_cos`/etc family (`func_series.go`) previously called `math.Sin`/`math.Cos`/etc directly with no scalar counterpart to share logic with — refactored both families onto six shared `trigXxx` helpers so they can't silently drift apart, verified directly with a scalar-vs-series parity test.
+2. ✅ **IPv4 text-match/range/mask family (9 new functions)**: `has_any_ipv4`, `has_ipv4_prefix`, `has_any_ipv4_prefix`, `ipv4_is_in_any_range`, `ipv4_is_match`, `ipv4_range_to_cidr_list`, `ipv4_netmask_suffix`, `format_ipv4_mask`, `parse_ipv4_mask` (`func_net.go`), each verified against real ADX's own worked-example tables — including `ipv4_range_to_cidr_list` hand-traced bit-by-bit against its exact 3-block worked example before trusting the algorithm.
+3. ✅ **Five real, pre-existing bugs found and fixed in already-implemented sibling IPv4 functions**, all reproduced live before fixing, not hypothetical:
+   - `has_ipv4`'s own comment claimed "word boundary aware" but the implementation was a plain `strings.Contains` with no boundary check at all — an IP glued directly to preceding digits (real ADX's own documented "improperly delimited" case) matched when it must not.
+   - `format_ipv4` couldn't parse an address argument carrying its own embedded `/prefix` at all (`net.ParseIP` fails outright on the literal suffix), and neither it nor the new `format_ipv4_mask` combined an embedded prefix with an explicit one via MIN — real ADX's own 4-row worked-example table requires both fixes together (`format_ipv4('192.168.1.1/24', 32)` must be `"192.168.1.0"`, not null).
+   - `ipv4_compare` had the identical embedded-prefix parsing failure — 3 of 4 rows in its own first real worked-example table returned null instead of the documented `0`.
+   - `ipv4_is_private` called `net.ParseIP` directly, failing on an embedded `/prefix` suffix.
+   - `ipv4_is_in_range` called `net.ParseCIDR` directly on the range argument, which requires a `/N` suffix to be present at all — the documented "equal IPs, no range notation" case (implicit /32) returned null instead of true.
+   All five now route through a new shared `parseIPv4WithPrefix` helper plus, where real semantics call for it, a min-of-all-supplied-prefixes rule — the same pattern already correct in `ipv4_is_match`, applied consistently instead of each function inventing its own parsing.
+4. ✅ 18 new tests across two files (`func_trig_test.go`, `func_ipv4_test.go`) — one worked-example test per new function plus a dedicated regression test per bug found — full suite passes with `-race`, `go vet` clean, verified against all three real production scopes.
+5. **Still open in this sprint**: the IPv6 half of the same backlog item (`ipv6_compare`, `ipv6_is_in_range`, `ipv6_is_in_any_range`, `ipv6_is_match`, `parse_ipv6`, `parse_ipv6_mask`), `parse_user_agent`/`parse_command_line`, and the `covariance`/`covarianceif`/`covariancep`/`covariancepif` aggregation family — not started yet, tracked in `scalar_function_backlog.md`.
+
+Scalar functions: ~192 entry points implemented (was ~183).
+
+
 
 1. **hll / hll_if / hll_merge, tdigest / tdigest_merge** — sketch structures; low priority for a single-node engine
 2. **buildschema, percentilesw / percentilesw_array** — niche aggregation gaps

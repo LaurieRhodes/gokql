@@ -38,8 +38,13 @@ given what's actually needed at the time.
 These sit directly alongside code that already exists and works; each
 is a small, contained addition following an established pattern.
 
-### Trigonometry (`func_convert.go`, alongside `pow`/`sqrt`/`log`/`exp`)
-`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `degrees`, `radians`
+### Trigonometry — CLOSED 2026-08-17
+`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `degrees`,
+`radians` are all implemented in `func_convert.go`, verified against
+real ADX worked examples, and share their underlying implementation
+with the pre-existing `series_sin`/`series_cos`/etc family (which
+previously called `math.Sin`/`math.Cos` directly with no scalar
+counterpart) — see `kql_coverage.md` for full detail.
 
 ### Statistics — covariance (`aggregation.go`, alongside `variance`/`stdev`)
 `covariance`, `covarianceif`, `covariancep`, `covariancepif` — sample
@@ -92,12 +97,17 @@ wrapper rather than new logic), `datetime_local_to_utc`,
 `unixtime_microseconds_todatetime`, `unixtime_nanoseconds_todatetime`
 
 ### IPv4 / IPv6 (`func_net.go`, alongside the existing ipv4 family)
-`has_any_ipv4`, `has_any_ipv4_prefix`, `has_ipv4_prefix`,
-`ipv4_is_in_any_range`, `ipv4_is_match`, `ipv4_range_to_cidr_list`,
-`ipv4_netmask_suffix`, `format_ipv4_mask`, `parse_ipv4_mask` — plus a
+**IPv4 half CLOSED 2026-08-17**: `has_any_ipv4`, `has_any_ipv4_prefix`,
+`has_ipv4_prefix`, `ipv4_is_in_any_range`, `ipv4_is_match`,
+`ipv4_range_to_cidr_list`, `ipv4_netmask_suffix`, `format_ipv4_mask`,
+`parse_ipv4_mask` are all implemented and verified against real ADX
+worked examples — see `kql_coverage.md`'s own entry for full detail,
+including 5 real bugs found and fixed in already-implemented sibling
+functions (`has_ipv4`, `format_ipv4`, `ipv4_compare`,
+`ipv4_is_private`, `ipv4_is_in_range`) along the way. Still open: a
 whole IPv6 family this engine has none of yet: `ipv6_compare`,
 `ipv6_is_in_range`, `ipv6_is_in_any_range`, `ipv6_is_match`,
-`parse_ipv6`, `parse_ipv6_mask`
+`parse_ipv6`, `parse_ipv6_mask`.
 
 ### Parse functions (`func_string.go` / `func_net.go`)
 `parse_command_line`, `parse_user_agent`, `parse_version`, `parse_xml`,
