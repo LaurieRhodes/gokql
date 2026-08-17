@@ -239,39 +239,68 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		return int64(len(seen)), nil
 
 	case "make_set":
-		// make_set(expr) — returns JSON array of distinct values
+		// make_set(expr) — returns JSON array of distinct values.
+		// Native-typed elements (not stringified) since 2026-08-17 —
+		// found and fixed live: the previous version collected every
+		// value via fmt.Sprintf("%v", val), so make_set(LongColumn)
+		// produced a JSON array of QUOTED STRINGS ("1","2","3"), not
+		// numbers ([1,2,3]) — silently wrong for any downstream
+		// consumer expecting real JSON types (confirmed live: this
+		// directly broke series_pearson_correlation fed via
+		// summarize make_list(...), real ADX's own documented calling
+		// pattern for that function — see func_series.go). The
+		// string-keyed dedup map is kept as-is for the EQUALITY check
+		// (a reasonable, type-agnostic way to detect "same value"),
+		// but the value actually stored and emitted is now the
+		// original typed value, run through valueForJSONArray
+		// (make_series.go) for datetime/long/real-correct JSON
+		// encoding — the same helper make-series's own axis/aggregate
+		// arrays already use, reused rather than duplicated.
+		// Sorting switched from sort.Strings (silently wrong for
+		// numeric sets: "10" < "2" lexicographically) to first-
+		// encountered order — real ADX documents make_set as an
+		// unordered SET with no guaranteed output order at all, so
+		// sort.Strings was never a real correctness requirement, just
+		// an incidental default that happened to also be wrong.
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("make_set requires 1 argument")
 		}
+		argType := inferExprType(agg.Args[0], schema)
 		seen := make(map[string]bool)
-		var values []string
+		var values []interface{}
 		for _, row := range rows {
 			val, err := evalExpr(agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
-			s := fmt.Sprintf("%v", val)
-			if !seen[s] {
-				seen[s] = true
-				values = append(values, s)
+			key := fmt.Sprintf("%v", val)
+			if !seen[key] {
+				seen[key] = true
+				values = append(values, valueForJSONArray(val, argType))
 			}
 		}
-		sort.Strings(values)
 		b, _ := json.Marshal(values)
 		return string(b), nil
 
 	case "make_list":
-		// make_list(expr) — returns JSON array of all values (with duplicates)
+		// make_list(expr) — returns JSON array of all values (with
+		// duplicates). Native-typed elements since 2026-08-17, same
+		// fix and same reasoning as make_set immediately above (this
+		// was the more commonly hit of the two in practice, since
+		// summarize make_list(...) is real ADX's own documented way
+		// to feed a column into series_pearson_correlation and other
+		// series_* functions).
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("make_list requires 1 argument")
 		}
-		var values []string
+		argType := inferExprType(agg.Args[0], schema)
+		var values []interface{}
 		for _, row := range rows {
 			val, err := evalExpr(agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
-			values = append(values, fmt.Sprintf("%v", val))
+			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
 		return string(b), nil
@@ -282,16 +311,16 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// within the group, INCLUDING null values" — the one, precise
 		// difference from make_list immediately above, which silently
 		// drops a null row entirely rather than keeping a null slot in
-		// the output array. Mirrors make_list's own existing value-
-		// formatting behavior exactly for consistency between the two
-		// (each element stored as its string form before JSON-
-		// marshaling, a pre-existing characteristic of make_list not
-		// changed or fixed here, out of scope for this addition) — the
-		// only actual behavioral difference is not skipping a nil
-		// value at all.
+		// the output array. Native-typed elements since 2026-08-17,
+		// same fix and reasoning as make_list/make_set above (this
+		// previously mirrored make_list's own pre-fix stringified
+		// behavior deliberately, for consistency between the two —
+		// now mirrors make_list's own FIXED behavior instead, for the
+		// same reason).
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("make_list_with_nulls requires 1 argument")
 		}
+		argType := inferExprType(agg.Args[0], schema)
 		values := make([]interface{}, 0, len(rows))
 		for _, row := range rows {
 			val, err := evalExpr(agg.Args[0], schema, row)
@@ -302,18 +331,24 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 				values = append(values, nil)
 				continue
 			}
-			values = append(values, fmt.Sprintf("%v", val))
+			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
 		return string(b), nil
 
 	case "make_set_if":
-		// make_set_if(expr, predicate) — distinct values where predicate is true
+		// make_set_if(expr, predicate) — distinct values where
+		// predicate is true. Native-typed elements since 2026-08-17,
+		// same fix as make_set above (was missed initially since this
+		// conditional variant duplicates make_set's own logic rather
+		// than calling it, so the bug had to be fixed here separately
+		// too, not automatically inherited).
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("make_set_if requires 2 arguments")
 		}
+		argType := inferExprType(agg.Args[0], schema)
 		seen := make(map[string]bool)
-		var values []string
+		var values []interface{}
 		for _, row := range rows {
 			predVal, err := evalExpr(agg.Args[1], schema, row)
 			if err != nil {
@@ -326,22 +361,25 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			s := fmt.Sprintf("%v", val)
-			if !seen[s] {
-				seen[s] = true
-				values = append(values, s)
+			key := fmt.Sprintf("%v", val)
+			if !seen[key] {
+				seen[key] = true
+				values = append(values, valueForJSONArray(val, argType))
 			}
 		}
-		sort.Strings(values)
 		b, _ := json.Marshal(values)
 		return string(b), nil
 
 	case "make_list_if":
-		// make_list_if(expr, predicate)
+		// make_list_if(expr, predicate). Native-typed elements since
+		// 2026-08-17, same fix as make_list above, same reason as
+		// make_set_if immediately above (duplicated logic, fixed
+		// separately here too).
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("make_list_if requires 2 arguments")
 		}
-		var values []string
+		argType := inferExprType(agg.Args[0], schema)
+		var values []interface{}
 		for _, row := range rows {
 			predVal, err := evalExpr(agg.Args[1], schema, row)
 			if err != nil {
@@ -354,7 +392,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			values = append(values, fmt.Sprintf("%v", val))
+			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
 		return string(b), nil

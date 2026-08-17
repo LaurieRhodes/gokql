@@ -66,8 +66,264 @@ func evalSeriesFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		return evalSeriesFillConst(fc, schema, row)
 	case "series_fill_linear":
 		return evalSeriesFillLinear(fc, schema, row)
+
+	// --- Tier 3: summary statistics ---
+	case "series_sum":
+		return evalSeriesSum(fc, schema, row)
+	case "series_product":
+		return evalSeriesProduct(fc, schema, row)
+	case "series_magnitude":
+		return evalSeriesMagnitude(fc, schema, row)
+	case "series_pearson_correlation":
+		return evalSeriesPearsonCorrelation(fc, schema, row)
+	case "series_stats_dynamic":
+		return evalSeriesStatsDynamic(fc, schema, row)
+
+	// series_stats (NOT series_stats_dynamic) is deliberately NOT
+	// implemented — see this file's own Tier 3 section comment below
+	// for why: its real syntax, `extend (Name, ...) = series_stats(
+	// series [, ignore_nonfinite])`, expands to MULTIPLE output
+	// columns from one function call, needing destructuring-
+	// assignment grammar support (`(a, b, c) = expr`) that doesn't
+	// exist anywhere in this engine's project/extend parser — a real,
+	// separate, bigger gap than adding one more function, not
+	// something to fake by returning a single dynamic value under
+	// the same name (which would silently NOT match real ADX's own
+	// documented multi-column output shape).
 	}
 	return nil, false, nil
+}
+
+// --- Tier 3: summary statistics over one (or two) arrays ---
+//
+// series_stats (plural output columns) is out of scope — see the
+// comment inline in evalSeriesFunc's own switch above for the precise
+// reason (a real grammar gap, not a value judgment about the
+// function's usefulness). series_stats_dynamic (this tier's single-
+// value sibling, returning the same statistics packed into one
+// dynamic property bag) is implemented below and verified exactly
+// against real ADX's own worked example.
+//
+// series_sum and series_pearson_correlation are each verified against
+// their own real-ADX worked example ([1,2,3,4] -> 10; a perfectly
+// correlated pair -> 1.0). series_product has no fetched worked
+// example (none found in the sources checked while researching this)
+// but is mathematically unambiguous — the natural analog of
+// series_sum with multiplication in place of addition — so it's
+// implemented with the same confidence level as series_sum rather
+// than flagged as an assumption.
+//
+// Null/non-numeric ELEMENT handling for the three single-array
+// reduction functions (sum/product/magnitude) is an explicit,
+// documented assumption, not confirmed from any fetched source: null
+// or non-numeric elements are SKIPPED (not counted, not propagating a
+// whole-result null) — matching how this engine's own summarize
+// aggregations already skip nulls by default elsewhere, and how a
+// numeric-reduction function most commonly behaves in comparable
+// libraries. This is a real, deliberate choice under genuine
+// ambiguity, not a verified fact — flagged here plainly in case a
+// future session finds real ADX actually propagates a single null
+// element to the whole result (matching series_pearson_correlation's
+// own explicitly documented "yields a null result" rule for arrays of
+// different sizes) instead.
+
+func evalSeriesSum(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, true, nil
+	}
+	var sum float64
+	for _, el := range arr {
+		if f, ok := seriesElementToFloat(el); ok {
+			sum += f
+		}
+	}
+	return sum, true, nil
+}
+
+func evalSeriesProduct(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, true, nil
+	}
+	product := 1.0
+	for _, el := range arr {
+		if f, ok := seriesElementToFloat(el); ok {
+			product *= f
+		}
+	}
+	return product, true, nil
+}
+
+// evalSeriesMagnitude implements series_magnitude(series) — "the
+// square root of the dot product of the series with itself," verified
+// directly against real ADX's own docs before writing this as
+// math.Sqrt(sum of squares) rather than assumed from the function
+// name alone.
+func evalSeriesMagnitude(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, true, nil
+	}
+	var sumSq float64
+	for _, el := range arr {
+		if f, ok := seriesElementToFloat(el); ok {
+			sumSq += f * f
+		}
+	}
+	return math.Sqrt(sumSq), true, nil
+}
+
+// evalSeriesPearsonCorrelation implements series_pearson_correlation
+// (series1, series2) — the standard Pearson correlation coefficient.
+// Verified against real ADX's own documented null rule, which is
+// STRICTER than the single-array reduction functions above: "Any
+// non-numeric element or nonexisting element (arrays of different
+// sizes) yields a null RESULT" — the whole scalar result, not a
+// per-element skip — so mismatched lengths or any non-numeric element
+// anywhere fails the whole computation closed, matching that wording
+// exactly rather than reusing the single-array functions' own
+// skip-nulls assumption.
+func evalSeriesPearsonCorrelation(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	a, b, ok, err := evalSeriesTwoArrayArgs(fc, schema, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, true, nil
+	}
+	if len(a) != len(b) {
+		return nil, true, nil
+	}
+	n := len(a)
+	xs := make([]float64, n)
+	ys := make([]float64, n)
+	for i := 0; i < n; i++ {
+		xf, xok := seriesElementToFloat(a[i])
+		yf, yok := seriesElementToFloat(b[i])
+		if !xok || !yok {
+			return nil, true, nil
+		}
+		xs[i] = xf
+		ys[i] = yf
+	}
+	if n == 0 {
+		return nil, true, nil
+	}
+	var sumX, sumY float64
+	for i := 0; i < n; i++ {
+		sumX += xs[i]
+		sumY += ys[i]
+	}
+	meanX := sumX / float64(n)
+	meanY := sumY / float64(n)
+	var num, denX, denY float64
+	for i := 0; i < n; i++ {
+		dx := xs[i] - meanX
+		dy := ys[i] - meanY
+		num += dx * dy
+		denX += dx * dx
+		denY += dy * dy
+	}
+	den := math.Sqrt(denX * denY)
+	if den == 0 {
+		return nil, true, nil
+	}
+	return num / den, true, nil
+}
+
+// evalSeriesStatsDynamic implements series_stats_dynamic(series[,
+// ignore_nonfinite]) — verified exactly against real ADX's own worked
+// example: x=[23,46,23,87,4,8,3,75,2,56,13,75,32,16,29] ->
+// {"min":2,"min_idx":8,"max":87,"max_idx":3,"avg":32.8,
+// "stdev":28.503633853548269,"variance":812.45714285714291,
+// "sum":492,"len":15}. variance is SAMPLE variance (divide by n-1,
+// matching this engine's own already-implemented aggregation-level
+// "variance"), min_idx/max_idx are the 0-based index of the FIRST
+// occurrence.
+//
+// ignore_nonfinite is accepted but not yet meaningfully implemented —
+// this engine's own JSON-decoded array elements are either a finite
+// float64 or already-absent (null/non-numeric skipped, same
+// convention as the reduction functions above); there's no live NaN/
+// Inf value that could appear in a dynamic array through this
+// engine's own normal arithmetic paths to exercise the parameter's
+// real distinction against, so it's accepted syntactically (to avoid
+// a hard error on a real, valid call) without changing behavior.
+func evalSeriesStatsDynamic(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, true, nil
+	}
+
+	var vals []float64
+	var idxs []int
+	for i, el := range arr {
+		if f, fok := seriesElementToFloat(el); fok {
+			vals = append(vals, f)
+			idxs = append(idxs, i)
+		}
+	}
+	if len(vals) == 0 {
+		return nil, true, nil
+	}
+
+	minV, maxV := vals[0], vals[0]
+	minIdx, maxIdx := idxs[0], idxs[0]
+	var sum float64
+	for i, v := range vals {
+		sum += v
+		if v < minV {
+			minV = v
+			minIdx = idxs[i]
+		}
+		if v > maxV {
+			maxV = v
+			maxIdx = idxs[i]
+		}
+	}
+	n := float64(len(vals))
+	avg := sum / n
+	var sumSqDiff float64
+	for _, v := range vals {
+		d := v - avg
+		sumSqDiff += d * d
+	}
+	var variance, stdev float64
+	if len(vals) > 1 {
+		variance = sumSqDiff / (n - 1) // sample variance, matching
+		// this engine's own aggregation-level "variance" already.
+		stdev = math.Sqrt(variance)
+	}
+
+	obj := map[string]interface{}{
+		"min":      minV,
+		"min_idx":  minIdx,
+		"max":      maxV,
+		"max_idx":  maxIdx,
+		"avg":      avg,
+		"variance": variance,
+		"stdev":    stdev,
+		"sum":      sum,
+		"len":      len(arr),
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return nil, true, err
+	}
+	return string(b), true, nil
 }
 
 // --- shared helpers ---

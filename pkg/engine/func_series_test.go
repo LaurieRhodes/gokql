@@ -221,3 +221,148 @@ func TestSeriesWrongArgCountRejected(t *testing.T) {
 	queryError(t, `print r = series_abs(dynamic([1,2]), dynamic([3,4]))`)
 }
 
+// TestSeriesSumWorkedExample guards real ADX's own series_sum worked
+// example exactly: [1,2,3,4] -> 10.
+func TestSeriesSumWorkedExample(t *testing.T) {
+	result := queryResult(t, `print arr=dynamic([1,2,3,4]) | extend series_sum=series_sum(arr)`)
+	sIdx := result.Schema.ColumnIndex("series_sum")
+	if result.Rows[0][sIdx].(float64) != 10 {
+		t.Errorf("series_sum([1,2,3,4]) = %v, want 10", result.Rows[0][sIdx])
+	}
+}
+
+// TestSeriesProduct guards the natural, unambiguous product analog of
+// series_sum (no fetched real-ADX worked example found for this one
+// specifically — see func_series.go's own Tier 3 comment for why that
+// doesn't reduce confidence here).
+func TestSeriesProduct(t *testing.T) {
+	result := queryResult(t, `print r = series_product(dynamic([1,2,3,4]))`)
+	if result.Rows[0][0].(float64) != 24 {
+		t.Errorf("series_product([1,2,3,4]) = %v, want 24", result.Rows[0][0])
+	}
+}
+
+// TestSeriesMagnitude guards series_magnitude against a simple 3-4-5
+// right-triangle case (sqrt(3^2+4^2) = 5) — verified against real
+// ADX's own documented definition ("square root of the dot product of
+// the series with itself") rather than assumed from the name alone.
+func TestSeriesMagnitude(t *testing.T) {
+	result := queryResult(t, `print r = series_magnitude(dynamic([3,4]))`)
+	if result.Rows[0][0].(float64) != 5 {
+		t.Errorf("series_magnitude([3,4]) = %v, want 5", result.Rows[0][0])
+	}
+}
+
+// TestSeriesPearsonCorrelationWorkedExample guards real ADX's own
+// series_pearson_correlation worked example exactly: a perfectly
+// linearly correlated pair (s2 = 2*s1) yields a correlation
+// coefficient of 1. This is also the regression test for a real,
+// separate bug this feature surfaced and fixed: make_list/make_set
+// previously stringified every element before JSON-marshaling
+// ("1","2",... instead of 1,2,...), which silently broke this exact
+// real-ADX-documented calling pattern (summarize make_list(...) then
+// feeding the result into a series_* function) — see aggregation.go's
+// own updated make_list/make_set comments for the full fix.
+func TestSeriesPearsonCorrelationWorkedExample(t *testing.T) {
+	result := queryResult(t, `range s1 from 1 to 5 step 1
+		| extend s2 = 2 * s1
+		| summarize s1 = make_list(s1), s2 = make_list(s2)
+		| extend correlation_coefficient = series_pearson_correlation(s1, s2)`)
+	cIdx := result.Schema.ColumnIndex("correlation_coefficient")
+	got := result.Rows[0][cIdx].(float64)
+	if d := got - 1.0; d > 1e-9 || d < -1e-9 {
+		t.Errorf("correlation_coefficient = %v, want 1 (perfect linear correlation)", got)
+	}
+}
+
+// TestSeriesPearsonCorrelationMismatchedLengthYieldsNull guards real
+// ADX's own documented rule for this function specifically — stricter
+// than the Tier 1 arithmetic family's per-position null: "Any
+// non-numeric element or nonexisting element (arrays of different
+// sizes) yields a null RESULT" (the whole scalar result, not a
+// per-element skip).
+func TestSeriesPearsonCorrelationMismatchedLengthYieldsNull(t *testing.T) {
+	result := queryResult(t, `print r = series_pearson_correlation(dynamic([1,2,3]), dynamic([1,2]))`)
+	if result.Rows[0][0] != nil {
+		t.Errorf("series_pearson_correlation with mismatched lengths = %v, want nil", result.Rows[0][0])
+	}
+}
+
+// TestSeriesStatsDynamicWorkedExample guards real ADX's own
+// series_stats_dynamic worked example exactly (allowing tiny
+// floating-point last-digit tolerance on stdev/variance).
+func TestSeriesStatsDynamicWorkedExample(t *testing.T) {
+	result := queryResult(t, `print x=dynamic([23, 46, 23, 87, 4, 8, 3, 75, 2, 56, 13, 75, 32, 16, 29])
+		| project stats=series_stats_dynamic(x)`)
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Rows[0][0].(string)), &stats); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	checks := map[string]float64{
+		"min": 2, "min_idx": 8, "max": 87, "max_idx": 3,
+		"avg": 32.8, "sum": 492, "len": 15,
+	}
+	for k, want := range checks {
+		got, ok := stats[k].(float64)
+		if !ok {
+			t.Fatalf("stats[%q] missing or not a number: %v", k, stats[k])
+		}
+		if got != want {
+			t.Errorf("stats[%q] = %v, want %v", k, got, want)
+		}
+	}
+	if d := stats["stdev"].(float64) - 28.503633853548269; d > 1e-6 || d < -1e-6 {
+		t.Errorf("stats[stdev] = %v, want ~28.5036...", stats["stdev"])
+	}
+	if d := stats["variance"].(float64) - 812.457142857143; d > 1e-6 || d < -1e-6 {
+		t.Errorf("stats[variance] = %v, want ~812.457...", stats["variance"])
+	}
+}
+
+// TestMakeListPreservesNativeTypes and TestMakeSetPreservesNativeTypes
+// are the direct regression guards for the make_list/make_set fix
+// itself: JSON array elements must be genuine JSON numbers/booleans
+// for a numeric/bool column, not quoted strings.
+func TestMakeListPreservesNativeTypes(t *testing.T) {
+	result := queryResult(t, `datatable(x:long)[1,2,3] | summarize make_list(x)`)
+	arr := seriesJSONArray(t, result.Rows[0][0].(string))
+	for i, want := range []float64{1, 2, 3} {
+		got, ok := arr[i].(float64)
+		if !ok {
+			t.Fatalf("elem %d is %T, not a JSON number: %v", i, arr[i], arr[i])
+		}
+		if got != want {
+			t.Errorf("elem %d = %v, want %v", i, got, want)
+		}
+	}
+}
+
+func TestMakeSetPreservesNativeTypes(t *testing.T) {
+	result := queryResult(t, `datatable(x:long)[3,1,2,1] | summarize make_set(x)`)
+	arr := seriesJSONArray(t, result.Rows[0][0].(string))
+	if len(arr) != 3 {
+		t.Fatalf("expected 3 distinct values, got %d: %v", len(arr), arr)
+	}
+	for i, v := range arr {
+		if _, ok := v.(float64); !ok {
+			t.Fatalf("elem %d is %T, not a JSON number: %v", i, v, v)
+		}
+	}
+}
+
+// TestMakeListDatetimeFormatsCorrectly confirms the fix's type-aware
+// conversion (via valueForJSONArray, reused from make_series.go)
+// applies to make_list too — a datetime column must format as an ISO
+// string, not a raw UnixNano integer.
+func TestMakeListDatetimeFormatsCorrectly(t *testing.T) {
+	result := queryResult(t, `datatable(t:datetime)[datetime(2020-01-01)] | summarize make_list(t)`)
+	arr := seriesJSONArray(t, result.Rows[0][0].(string))
+	s, ok := arr[0].(string)
+	if !ok {
+		t.Fatalf("elem 0 is %T, not a string: %v", arr[0], arr[0])
+	}
+	if s != "2020-01-01T00:00:00.0000000Z" {
+		t.Errorf("elem 0 = %q, want 2020-01-01T00:00:00.0000000Z", s)
+	}
+}
+
