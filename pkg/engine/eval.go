@@ -707,7 +707,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "datetime_diff", "dayofmonth", "getmonth", "getyear",
 			"hourofday", "monthofyear", "strlen", "toint", "tolong":
 			return types.TypeLong
-		case "todouble", "toreal", "series_cosine_similarity", "series_dot_product":
+		case "todouble", "toreal", "series_cosine_similarity", "series_dot_product", "array_sum":
 			return types.TypeReal
 		case "tolower", "toupper", "tostring", "strcat", "format_datetime",
 			"substring", "replace_string", "replace_regex", "trim", "trim_start", "trim_end",
@@ -723,7 +723,8 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "array_concat", "array_reverse", "array_slice",
 			"array_sort_asc", "array_sort_desc", "bag_keys",
 			"pack", "pack_array", "set_difference", "set_intersect",
-			"set_union", "treepath":
+			"set_union", "treepath", "array_rotate_left", "array_rotate_right",
+			"array_split", "array_iff", "array_iif":
 			return types.TypeDynamic
 		case "isnull", "isnotnull", "isempty", "isnotempty",
 			"ipv4_is_private", "ipv4_is_in_range", "bag_has_key":

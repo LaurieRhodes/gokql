@@ -53,9 +53,17 @@ worked example, with pairwise null exclusion and an auto-generated
 output column name that (unlike `variance`) includes both argument
 names — see `kql_coverage.md` for full detail.
 
-### Array functions (`func_dynamic.go`, alongside the existing `array_*` family)
+### Array functions — CLOSED 2026-08-18
 `array_sum`, `array_split`, `array_rotate_left`, `array_rotate_right`,
-`array_iff`
+`array_iff`/`array_iif` are all implemented in `func_dynamic.go`,
+verified against real ADX's own worked examples (every function had
+at least one, most had 2-4 covering distinct behavior branches — see
+`kql_coverage.md`'s Sprint 22 entry for full detail, including one
+genuinely undocumented-by-example edge case decided by direct
+inference: `array_sum`'s "non-numeric" exclusion is read as also
+excluding JSON booleans, not just strings/objects, since the docs'
+own phrasing is about JSON type, and no worked example tests a
+boolean array element either way).
 
 ### Bag/dynamic functions (`func_dynamic.go`)
 `bag_zip` (build a bag from a keys array + a values array — the
