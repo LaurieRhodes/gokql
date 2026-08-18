@@ -342,6 +342,36 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		b, _ := json.Marshal(result)
 		return string(b), true, nil
 
+	case "repeat":
+		// repeat(value, count) — verified against real ADX's own
+		// docs before implementing, its own worked example checked
+		// exactly: repeat(1, 3) == [1, 1, 1]. Real ADX's own
+		// documented edge cases: count == 0 returns an empty array;
+		// count < 0 returns null (not an error, not an empty array —
+		// checked directly against the docs' own wording, "a null
+		// value is returned").
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("repeat requires 2 arguments (value, count)")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		countVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		count := types.ToInt64(countVal)
+		if count < 0 {
+			return nil, true, nil
+		}
+		result := make([]interface{}, count)
+		for i := int64(0); i < count; i++ {
+			result[i] = val
+		}
+		b, _ := json.Marshal(result)
+		return string(b), true, nil
+
 	case "zip":
 		// zip(arr1, arr2, ..., arrN) — verified against real ADX's own
 		// zip() docs before implementing: accepts 2-16 dynamic arrays,

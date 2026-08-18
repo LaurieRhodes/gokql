@@ -170,12 +170,18 @@ example and a direct round-trip test) and real ADX's documented
 zlib decompress functions, followed exactly rather than defaulted to
 this codebase's more common null-on-failure convention.
 
-### String functions (`func_string.go`)
-`repeat` (verify this isn't just `strrep` under a different name before
-building a second implementation), `regex_quote`, `replace_strings`
-(multi-pattern variant of the already-implemented `replace_string`),
-`unicode_codepoints_from_string`, `unicode_codepoints_to_string`,
-`isascii`, `isutf8`
+### String functions — CLOSED 2026-08-18
+**`repeat`, `regex_quote`, `replace_strings`, `unicode_codepoints_from_string`/`to_utf8`,
+`unicode_codepoints_to_string`, `isascii`, `isutf8` all implemented**
+— see `kql_coverage.md`'s Sprint 27 entry for full detail, including a
+correction to this list's own earlier assumption: `repeat()` is NOT
+"just `strrep` under a different name" — it generates a dynamic ARRAY
+of repeated VALUES (any scalar type), unrelated to `strrep()`'s own
+string-repetition-with-delimiter behavior. `replace_strings()`'s own
+real algorithm (sequential, order-dependent passes with match
+protection) was reverse-engineered from its own worked examples, not
+assumed from the name — a naive single-scan priority algorithm does
+NOT reproduce real ADX's own documented order-reversal example.
 
 ### Datetime (`func_datetime.go`, alongside the existing, large datetime family)
 `datetime_part` (verify against the real docs — likely a single

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -390,6 +391,173 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		goRewrite := kqlRewritePatternToGo(fmt.Sprintf("%v", rewriteVal))
 		return re.ReplaceAllString(fmt.Sprintf("%v", sourceVal), goRewrite), true, nil
+
+	case "regex_quote":
+		// regex_quote(string) — verified against real ADX's own docs
+		// before implementing, its own worked example checked
+		// exactly: regex_quote('(so$me.Te^xt)') ==
+		// `\(so\$me\.Te\^xt\)`. Matches Go's own regexp.QuoteMeta
+		// exactly, confirmed directly against this exact input rather
+		// than assumed from the two functions sharing a similar name
+		// — both escape the RE2/PCRE-common special character set
+		// (\.+*?()|[]{}^$) identically.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("regex_quote requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		return regexp.QuoteMeta(fmt.Sprintf("%v", val)), true, nil
+
+	case "replace_strings":
+		// replace_strings(text, lookups, rewrites) — verified against
+		// real ADX's own docs before implementing, ALL FOUR of its
+		// own worked examples checked with exact values. The actual
+		// algorithm is genuinely non-obvious and was reverse-
+		// engineered from the worked examples themselves, not
+		// assumed from the name: lookups are applied as SEQUENTIAL,
+		// ORDER-DEPENDENT full passes over the text (not a single
+		// simultaneous priority scan) — lookups[0] is fully applied
+		// first (all its own non-overlapping matches found and
+		// replaced/protected), THEN lookups[1] is applied, but only
+		// against whatever text is still UNPROTECTED (i.e., text that
+		// wasn't already consumed by an earlier lookup's own match,
+		// whether that match was replaced or kept unchanged due to a
+		// non-string rewrite). This "protect already-matched spans
+		// from later lookups" rule is what makes real ADX's own two
+		// order-reversal worked examples (identical lookups/rewrites,
+		// reversed order, giving genuinely different outputs: "This
+		// was..." vs "Thwas was...") come out correctly — a naive
+		// "try each lookup at each position, first match wins"
+		// single-scan algorithm does NOT reproduce both of those
+		// examples (confirmed by hand-tracing before choosing this
+		// design). Non-string lookup array elements are skipped
+		// entirely (never matched); non-string rewrite elements still
+		// consume/protect the matched span but leave the original
+		// text there unchanged (verified against the docs' own
+		// "Nonstring replacement" example).
+		if len(fc.Args) != 3 {
+			return nil, true, fmt.Errorf("replace_strings requires 3 arguments (text, lookups, rewrites)")
+		}
+		textVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if textVal == nil {
+			return nil, true, nil
+		}
+		lookupsVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		rewritesVal, err := evalExpr(fc.Args[2], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		lookupsArr, lOk := parseJSONArray(lookupsVal)
+		if !lOk {
+			return nil, true, fmt.Errorf("replace_strings: lookups must be a dynamic array")
+		}
+		rewritesArr, rOk := parseJSONArray(rewritesVal)
+		if !rOk {
+			return nil, true, fmt.Errorf("replace_strings: rewrites must be a dynamic array")
+		}
+		return replaceStringsSequential(fmt.Sprintf("%v", textVal), lookupsArr, rewritesArr), true, nil
+
+	case "unicode_codepoints_from_string", "to_utf8":
+		// unicode_codepoints_from_string(value) — verified against
+		// real ADX's own docs before implementing, all 3 of its own
+		// worked examples checked with exact values, including
+		// non-ASCII text ("קוסטו - Kusto" -> [1511,1493,1505,1496,
+		// 1493,32,45,32,75,117,115,116,111]). Codepoints, not bytes —
+		// implemented via Go's own []rune conversion, which already
+		// decodes UTF-8 into Unicode codepoints one rune at a time,
+		// matching this function's own documented semantics directly.
+		// to_utf8() is real ADX's own documented deprecated alias,
+		// routed here identically.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		runes := []rune(fmt.Sprintf("%v", val))
+		codepoints := make([]int64, len(runes))
+		for i, r := range runes {
+			codepoints[i] = int64(r)
+		}
+		b, _ := json.Marshal(codepoints)
+		return string(b), true, nil
+
+	case "unicode_codepoints_to_string":
+		// unicode_codepoints_to_string(array) — the documented inverse
+		// of unicode_codepoints_from_string(), verified via round trip
+		// against real ADX's own third worked example
+		// (unicode_codepoints_to_string(unicode_codepoints_from_string(
+		// "Kusto")) == "Kusto").
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("unicode_codepoints_to_string requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		arr, ok := parseJSONArray(val)
+		if !ok {
+			return nil, true, nil
+		}
+		runes := make([]rune, len(arr))
+		for i, el := range arr {
+			runes[i] = rune(int64(types.ToFloat64(el)))
+		}
+		return string(runes), true, nil
+
+	case "isascii":
+		// isascii(value) — verified against real ADX's own docs:
+		// "returns true if the argument is a valid ASCII string" —
+		// every byte in [0x00, 0x7F].
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("isascii requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		s := fmt.Sprintf("%v", val)
+		for i := 0; i < len(s); i++ {
+			if s[i] > 0x7F {
+				return false, true, nil
+			}
+		}
+		return true, true, nil
+
+	case "isutf8":
+		// isutf8(value) — verified against real ADX's own docs:
+		// "returns true if the argument is a valid UTF8 string" —
+		// implemented via Go's own utf8.ValidString, the standard
+		// library's own UTF-8 validity check.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("isutf8 requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		return utf8.ValidString(fmt.Sprintf("%v", val)), true, nil
 
 	case "trim":
 		if len(fc.Args) != 2 {
@@ -868,4 +1036,74 @@ func kqlRewritePatternToGo(pattern string) string {
 		}
 	}
 	return b.String()
+}
+
+// strSegment is one piece of replaceStringsSequential's own working
+// representation of the text being transformed: either UNPROTECTED
+// (still eligible to be matched by a later lookup) or PROTECTED
+// (already consumed by an earlier lookup's own match — whether that
+// match was replaced with a rewrite or, for a non-string rewrite,
+// left as the original matched text — either way it's now off limits
+// to every subsequent lookup).
+type strSegment struct {
+	text      string
+	protected bool
+}
+
+// replaceStringsSequential implements replace_strings()'s own real,
+// reverse-engineered algorithm — see that case's own doc comment in
+// evalStringFunc for the full worked-example verification story.
+// lookups/rewrites are walked as parallel JSON arrays (via
+// parseJSONArray's own []interface{} element type); a non-string
+// element in either array is detected via a Go type assertion on
+// that raw JSON-decoded value.
+func replaceStringsSequential(text string, lookups, rewrites []interface{}) string {
+	segments := []strSegment{{text: text, protected: false}}
+	for i, lookupRaw := range lookups {
+		lookup, isStr := lookupRaw.(string)
+		if !isStr || lookup == "" {
+			// Non-string lookup elements are ignored entirely (never
+			// matched); an empty-string lookup is also skipped as a
+			// defensive measure against an infinite/zero-width-match
+			// loop, an undocumented edge case.
+			continue
+		}
+		var rewrite string
+		rewriteIsStr := false
+		if i < len(rewrites) {
+			rewrite, rewriteIsStr = rewrites[i].(string)
+		}
+		var newSegments []strSegment
+		for _, seg := range segments {
+			if seg.protected {
+				newSegments = append(newSegments, seg)
+				continue
+			}
+			remaining := seg.text
+			for {
+				idx := strings.Index(remaining, lookup)
+				if idx < 0 {
+					if remaining != "" {
+						newSegments = append(newSegments, strSegment{text: remaining, protected: false})
+					}
+					break
+				}
+				if idx > 0 {
+					newSegments = append(newSegments, strSegment{text: remaining[:idx], protected: false})
+				}
+				replacement := lookup // non-string rewrite: keep original matched text
+				if rewriteIsStr {
+					replacement = rewrite
+				}
+				newSegments = append(newSegments, strSegment{text: replacement, protected: true})
+				remaining = remaining[idx+len(lookup):]
+			}
+		}
+		segments = newSegments
+	}
+	var sb strings.Builder
+	for _, seg := range segments {
+		sb.WriteString(seg.text)
+	}
+	return sb.String()
 }

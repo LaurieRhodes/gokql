@@ -730,13 +730,15 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"url_encode_component", "url_encode", "strcat_array",
 			"base64_encode_fromarray", "gzip_compress_to_base64_string",
 			"gzip_decompress_from_base64_string", "zlib_compress_to_base64_string",
-			"zlib_decompress_from_base64_string":
+			"zlib_decompress_from_base64_string", "regex_quote", "replace_strings",
+			"unicode_codepoints_to_string":
 			return types.TypeString
 		case "base64_decode_toarray":
 			return types.TypeDynamic
 		case "base64_decode_toguid":
 			return types.TypeGUID
-		case "split", "extract_all", "parse_url", "parse_urlquery", "parse_path", "embed_text":
+		case "split", "extract_all", "parse_url", "parse_urlquery", "parse_path", "embed_text",
+			"unicode_codepoints_from_string", "to_utf8", "repeat":
 			return types.TypeDynamic
 		case "extract", "extract_json", "extractjson":
 			return types.TypeString
@@ -764,7 +766,8 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "dynamic_to_json":
 			return types.TypeString
 		case "isnull", "isnotnull", "isempty", "isnotempty",
-			"ipv4_is_private", "ipv4_is_in_range", "bag_has_key", "set_has_element":
+			"ipv4_is_private", "ipv4_is_in_range", "bag_has_key", "set_has_element",
+			"isascii", "isutf8":
 			return types.TypeBool
 		case "iff", "iif", "case", "coalesce", "max_of", "min_of":
 			// Return type depends on arguments — default to string

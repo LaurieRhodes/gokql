@@ -121,7 +121,7 @@ None known — the previous version's "hasprefix/hassuffix" and "like/!like" ent
 
 Functions are organized across focused source files.
 
-#### String — `func_string.go` (28 functions)
+#### String — `func_string.go` (35 functions)
 
 | Function                     | Notes                                         |
 | ----------------------------- | ------------------------------------------------ |
@@ -146,6 +146,12 @@ Functions are organized across focused source files.
 | reverse                         | String reversal                                    |
 | isempty / isnotempty            | Empty/null string tests                            |
 | url_decode                      | URL percent-decoding                               |
+| regex_quote                      | Regex metacharacter escaping via Go's `regexp.QuoteMeta`; verified against real ADX's own worked example; added 2026-08-18 (Sprint 27) |
+| replace_strings                   | Multi-pattern replacement; sequential, order-dependent passes with match protection (reverse-engineered from real ADX's own worked examples, not assumed from the name); added 2026-08-18 (Sprint 27) |
+| unicode_codepoints_from_string / to_utf8 | String to array of Unicode codepoints; `to_utf8` is real ADX's own documented deprecated alias; verified against real ADX's own worked examples including non-ASCII/mixed-script text; added 2026-08-18 (Sprint 27) |
+| unicode_codepoints_to_string       | Inverse of unicode_codepoints_from_string; verified by round trip against real ADX's own worked example; added 2026-08-18 (Sprint 27) |
+| isascii                             | ASCII validity test (every byte in 0x00-0x7F); added 2026-08-18 (Sprint 27) |
+| isutf8                               | UTF-8 validity test via Go's `utf8.ValidString`; added 2026-08-18 (Sprint 27) |
 
 #### Datetime — `func_datetime.go` (41 entry points / ~33 unique)
 
@@ -205,7 +211,7 @@ Functions are organized across focused source files.
 | ----------- | ---------------------------------------------------------------------- |
 | parse_xml    | XML-to-JSON conversion per real ADX's own 7-row conversion table (element/attribute/text/repeated-child-array rules); dispatch case lives in `func_convert.go`, implementation in its own dedicated file; added 2026-08-18 (Sprint 21) |
 
-#### Dynamic (JSON/Array/Bag) — `func_dynamic.go` (37 functions)
+#### Dynamic (JSON/Array/Bag) — `func_dynamic.go` (38 functions)
 
 | Function                                   | Notes                                                                    |
 | --------------------------------------------- | --------------------------------------------------------------------------- |
@@ -225,6 +231,7 @@ Functions are organized across focused source files.
 | bag_has_key                                         | Check property exists                                                          |
 | bag_pack / pack                                     | Create JSON object from key-value pairs                                        |
 | pack_array                                          | Create JSON array from arguments                                               |
+| repeat                                               | Array of a value repeated N times; count=0 empty array, count<0 null; verified against real ADX's own worked example; added 2026-08-18 (Sprint 27) |
 | pack_dictionary                                     | Create JSON object from alternating keys/values                                |
 | bag_merge                                            | Merge 2–64 property bags; leftmost argument's key wins on collision            |
 | bag_remove_keys                                       | Remove top-level keys, or nested keys via `$.key.prop` JSONPath                |
@@ -872,6 +879,21 @@ Closes the "Base64 / compression" item from `scalar_function_backlog.md`'s Mediu
 7. ✅ New tests — `pkg/engine/func_base64_compress_test.go`: the `base64_decode_toarray` worked example, the `base64_encode_fromarray` round trip, `base64_encode_fromguid`'s own directly-confirmed worked example (deliberately NOT asserting against `base64_decode_toguid`'s own suspected-typo literal value), a full guid round-trip test, both functions' own invalid-input handling (including `base64_encode_fromguid`'s own deliberate simplification — this engine returns null for an unparseable guid argument where real ADX's docs describe a hard runtime error, matching this codebase's established convention rather than adding per-argument static type-checking for one function alone), and both compression families' round trips plus their empty-string-on-failure contract.
 8. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
 
+### ✅ Sprint 27: String function family — repeat, regex_quote, replace_strings, unicode_codepoints_*, isascii, isutf8 — COMPLETE (2026-08-18)
+
+Closes the "String functions" item from `scalar_function_backlog.md`'s Medium-priority tier — seven functions, including one (`replace_strings`) whose real algorithm had to be reverse-engineered from its own worked examples rather than assumed from the name.
+
+1. **Correction to this project's own backlog note before implementing**: `repeat()` is NOT "just `strrep` under a different name" as the backlog had flagged for verification — it generates a dynamic ARRAY of a repeated VALUE (any of `bool`/`int`/`long`/`real`/`datetime`/`string`/`timespan`), unrelated to `strrep()`'s own string-repeated-with-delimiter behavior. Implemented in `func_dynamic.go` (not `func_string.go`) accordingly. Verified against real ADX's own worked example (`repeat(1, 3) == [1, 1, 1]`) plus both documented edge cases (`count == 0` → empty array, `count < 0` → null).
+2. ✅ **`regex_quote(string)`** (`func_string.go`): verified exactly against real ADX's own worked example — matches Go's own `regexp.QuoteMeta` byte-for-byte, confirmed directly rather than assumed from the two functions sharing a similar purpose.
+3. **`replace_strings(text, lookups, rewrites)`** (`func_string.go`) — the hard one this sprint. Its real algorithm is genuinely non-obvious and was reverse-engineered from all FOUR of real ADX's own worked examples, not assumed from the name or from `replace_string()`'s own simpler single-pattern behavior: lookups are applied as SEQUENTIAL, order-dependent passes over the text — each lookup's own non-overlapping matches are found and replaced (or left unchanged, for a non-string rewrite) in one full pass, and that matched span is then PROTECTED from every later lookup. This is what makes real ADX's own order-reversal worked example (identical lookups/rewrites, reversed array order, producing genuinely different output — `"This was..."` vs `"Thwas was..."`) come out correctly. A naive "try each lookup at each position, first match wins" single simultaneous scan was tried by hand first and does NOT reproduce both directions of that example — confirmed before choosing the sequential-passes-with-protection design actually implemented (`replaceStringsSequential`, a new helper using a `strSegment` protected/unprotected token list). Non-string lookup array elements are skipped entirely (never matched, per the docs' own stated rule); non-string rewrite elements still consume/protect the matched span but leave the original text unchanged there (verified against the docs' own dedicated "Nonstring replacement" example).
+4. ✅ **`unicode_codepoints_from_string(value)` / `to_utf8(value)`** (`func_string.go`, `to_utf8` being real ADX's own documented deprecated alias, routed identically): verified against both of the doc's own worked examples, including non-ASCII symbol and mixed-script (Hebrew + Latin) text. Implemented via Go's own `[]rune` conversion, which already decodes UTF-8 into Unicode codepoints one rune at a time — exactly this function's own documented semantics, not approximated via raw bytes.
+5. ✅ **`unicode_codepoints_to_string(array)`**, the documented inverse: verified by round trip against the doc's own third worked example.
+6. ✅ **`isascii(value)`** (`func_string.go`): every byte in `[0x00, 0x7F]`, verified true/false against a plain-ASCII and a mixed-script string.
+7. ✅ **`isutf8(value)`** (`func_string.go`): implemented via Go's own `utf8.ValidString`, verified against the doc's own worked example.
+8. ✅ `inferExprType` (`eval.go`) updated: `regex_quote`/`replace_strings`/`unicode_codepoints_to_string` → `TypeString`, `unicode_codepoints_from_string`/`to_utf8`/`repeat` → `TypeDynamic`, `isascii`/`isutf8` → `TypeBool`.
+9. ✅ New tests — `pkg/engine/func_string_misc_test.go`: 14 tests total, one per worked-example value across all seven functions, including a dedicated test for `replace_strings`'s own order-reversal case (the single most important behavior to guard, since it's the one a naive re-implementation would most likely get wrong) and its non-string-rewrite case.
+10. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
+
 ### Not Yet Implemented (notable gaps)
 
 1. **hll / hll_if / hll_merge, tdigest / tdigest_merge** — sketch structures; low priority for a single-node engine
@@ -891,7 +913,7 @@ Closes the "Base64 / compression" item from `scalar_function_backlog.md`'s Mediu
 | ---------------------------- | ----------- | --------- | -------- | -------------------------------------- |
 | Tabular operators                | 41          | 53        | 77%      | 41 implemented + 0 not-yet-implemented + 12 out-of-scope = 53, a full, cross-checked enumeration (2026-08-14/15), not the earlier, incomplete 47 |
 | Comparison operators                | 22          | 35        | 63%*     | Effectively complete in practice — 0 known gaps; the 35 denominator counts individual grammar symbols, this row counts table rows (see methodology note above) |
-| Scalar functions                       | ~228        | 420       | 54%      | Row was stale at ~183 (last recomputed pre-Sprint 15); corrected 2026-08-18 — Sprint 15 brought it to ~200 (trig, IPv4/IPv6, parse_command_line, parse_user_agent), Sprints 18-19 added 3 more (indexof_regex, extract_json, extractjson), Sprint 21 added parse_xml, Sprint 22 added 6 more (array_rotate_left/right, array_split, array_sum, array_iff/array_iif), Sprint 23 added 5 more (bag_zip, bag_set_key, bag_pack_columns, dynamic_to_json, set_has_element), Sprint 24 added hash/hash_xxhash64, Sprint 25 added toguid/tohex/gettype, Sprint 26 added 8 more (base64 array/guid + gzip/zlib). 300+ of the remaining gap is geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
+| Scalar functions                       | ~236        | 420       | 56%      | Row was stale at ~183 (last recomputed pre-Sprint 15); corrected 2026-08-18 — Sprint 15 brought it to ~200 (trig, IPv4/IPv6, parse_command_line, parse_user_agent), Sprints 18-19 added 3 more (indexof_regex, extract_json, extractjson), Sprint 21 added parse_xml, Sprint 22 added 6 more (array_rotate_left/right, array_split, array_sum, array_iff/array_iif), Sprint 23 added 5 more (bag_zip, bag_set_key, bag_pack_columns, dynamic_to_json, set_has_element), Sprint 24 added hash/hash_xxhash64, Sprint 25 added toguid/tohex/gettype, Sprint 26 added 8 more (base64 array/guid + gzip/zlib), Sprint 27 added 8 more (repeat, regex_quote, replace_strings, unicode_codepoints_*, isascii, isutf8). 300+ of the remaining gap is geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
 | Aggregation functions                     | 24          | 61        | 39%*     | All common + conditional variants covered — remaining gap is entirely the sketch/niche family (hll, tdigest, buildschema, weighted percentiles); denominator counts symbols, this row counts table rows |
 | File formats                                 | 4           | —         | —        | CSV, JSON, NDJSON, Parquet (xlsx deliberately removed 2026-08-15, see File-Based Querying section) |
 | **Practical coverage**                          | —           | —         | **~93%** | **Of security analyst queries, plus a real, persisted-function/materialized-view/federation layer beyond raw language coverage** |
