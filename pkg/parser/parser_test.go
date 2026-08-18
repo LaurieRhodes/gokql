@@ -377,7 +377,7 @@ func TestParseParseOperator(t *testing.T) {
 	}{
 		{"simple", `T | parse S with "Error: " Code " " Message`},
 		{"relaxed", `T | parse kind=relaxed S with "Error: " Code`},
-		{"regex", `T | parse kind=regex S with "(?P<Code>\\d+)"`},
+		{"regex", `T | parse kind=regex S with "Code: " Code:long`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

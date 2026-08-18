@@ -52,9 +52,19 @@ func TestParseWhereVsParseRowCount(t *testing.T) {
 // TestParseWhereKindRegex confirms kind=regex works the same as it does
 // for plain parse — parse-where shares the full pattern grammar, not
 // just the simple/relaxed kinds.
+//
+// Query updated 2026-08-18: the previous version used
+// `"id-(?P<num>[0-9]+)"` as a single named-group regex literal — that
+// was testing this engine's OLD, incorrect kind=regex model (a single
+// hand-written regex with named capture groups), which real ADX's own
+// docs confirm is not real KQL syntax at all; real kind=regex uses the
+// exact same fragment syntax as kind=simple (`with "str" col ...`),
+// just interpreting each literal fragment as a regex snippet instead
+// of exact text — see operators.go's applyParseCore for the full
+// rewrite this test now exercises correctly.
 func TestParseWhereKindRegex(t *testing.T) {
 	result := queryResult(t, `datatable(X:string) ["id-42", "nope"]
-		| parse-where kind=regex X with "id-(?P<num>[0-9]+)"
+		| parse-where kind=regex X with "id-" num
 		| project num`)
 	if result.RowCount() != 1 {
 		t.Fatalf("expected 1 row, got %d", result.RowCount())

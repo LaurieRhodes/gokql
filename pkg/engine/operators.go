@@ -1279,53 +1279,190 @@ func convertDataTableValue(raw string, kt types.KQLType) (interface{}, error) {
 // applyParse extracts fields from a string column using pattern matching.
 // Supports kind=simple (default), kind=relaxed, and kind=regex.
 func (e *Engine) applyParse(input *types.Table, op *parser.ParseOp) (*types.Table, error) {
-	return applyParseCore(input, op.Column, op.Kind, op.Patterns, false)
+	return applyParseCore(input, op.Column, op.Kind, op.Flags, op.Patterns, false)
 }
 
 // applyParseWhere implements | parse-where — identical pattern-matching
 // to applyParse, but ALWAYS drops a row whose Column value didn't match
 // (dropUnmatched=true), for every kind, matching real ADX's own
 // documented behavior ("Only successfully parsed strings will be in the
-// output"). This is the one real semantic difference from ParseOp,
-// whose "simple"/"relaxed" kinds both currently keep the row with the
-// new columns left null in this engine (see applyParseCore's own note).
+// output").
 func (e *Engine) applyParseWhere(input *types.Table, op *parser.ParseWhereOp) (*types.Table, error) {
-	return applyParseCore(input, op.Column, op.Kind, op.Patterns, true)
+	return applyParseCore(input, op.Column, op.Kind, op.Flags, op.Patterns, true)
 }
 
 // applyParseCore is the shared implementation behind both applyParse and
 // applyParseWhere — factored out so the two operators' matching logic
 // can't silently drift apart; dropUnmatched is the only behavioral knob.
-func applyParseCore(input *types.Table, column, kind string, patterns []parser.ParseFragment, dropUnmatched bool) (*types.Table, error) {
-	// Determine which new columns are created
+//
+// kind=regex was substantially rewritten 2026-08-18 after finding it
+// implemented the wrong matching model entirely: it previously expected
+// a single, separately hand-written regex with NAMED capture groups
+// ((?P<name>...)), which is not real KQL syntax at all. Real ADX's own
+// parse-operator.md documents kind=regex as using the EXACT SAME
+// fragment pattern syntax as kind=simple (`with * "str1" col1 "str2"
+// col2:type ...`) — the only difference is that each literal fragment
+// is interpreted AS a regex snippet (not escaped/literal), stitched
+// together into one combined regex with POSITIONAL capture groups per
+// field, verified against real ADX's own multiple worked examples
+// (including one using @"..." verbatim strings directly inside a
+// kind=regex pattern, and two demonstrating flags=U/flags=Ui/flags=s
+// changing the DEFAULT greediness of untyped fields and wildcards from
+// greedy to non-greedy — confirmed live against real ADX's own docs
+// that the default, with no flags, is GREEDY, contradicting an
+// abbreviated, unverifiable snippet elsewhere on the same page that
+// claimed non-greedy `.*?`; the fully worked, checkable example was
+// trusted over the ambiguous one, per this project's own established
+// discipline).
+//
+// Column type annotations (col:long, col:date) are also now actually
+// applied (real bug found and fixed in the same pass, affecting
+// kind=simple/relaxed/regex alike): the parser previously read and
+// discarded them entirely, so every extracted field became a plain
+// string column regardless of its declared type. Fixed via
+// types.ParseValue, the shared conversion helper already trusted
+// elsewhere in this engine (e.g. datatable literal parsing) — a failed
+// conversion yields null for that field, per real ADX's own documented
+// "extended columns that didn't match the required types get the value
+// null" contract, applied uniformly here rather than only in relaxed
+// mode (this engine's own pre-existing, deliberate "follow relaxed
+// semantics for both simple and relaxed, to avoid data loss" choice —
+// see the git history for that decision — is left unchanged by this
+// fix, since it wasn't part of what this pass was scoped to touch).
+func applyParseCore(input *types.Table, column, kind, flags string, patterns []parser.ParseFragment, dropUnmatched bool) (*types.Table, error) {
+	// Collect field names + declared type names, in pattern order,
+	// skipping "*" (wildcard fragments never produce a column) — the
+	// same extraction logic now works identically for every kind,
+	// since kind=regex uses the same fragment format as simple/relaxed.
 	var newCols []string
-	var regex *regexp.Regexp
-
-	if kind == "regex" {
-		// Single regex pattern with named groups
-		if len(patterns) != 1 {
-			return nil, fmt.Errorf("parse kind=regex: expected single regex pattern")
-		}
-		var err error
-		regex, err = regexp.Compile(patterns[0].Literal)
-		if err != nil {
-			return nil, fmt.Errorf("parse kind=regex: %w", err)
-		}
-		newCols = regex.SubexpNames()[1:] // skip the whole match name ""
-	} else {
-		// Simple/relaxed: collect field names from pattern
-		for _, frag := range patterns {
-			if frag.Field != "" && frag.Field != "*" {
-				newCols = append(newCols, frag.Field)
-			}
+	var newTypeNames []string
+	for _, frag := range patterns {
+		if frag.Field != "" && frag.Field != "*" {
+			newCols = append(newCols, frag.Field)
+			newTypeNames = append(newTypeNames, frag.Type)
 		}
 	}
 
-	// Build output schema: input columns + new columns
+	var regex *regexp.Regexp
+	var regexFieldGroupNames []string // kind=regex only: named group per field, in field order
+	if kind == "regex" {
+		var sb strings.Builder
+		if flags != "" {
+			// Go's RE2 inline-flag group syntax (?flags) accepts
+			// exactly the same letters real ADX documents for this
+			// parameter (i, m, s, U) with identical meanings, so no
+			// translation is needed — verified this is genuinely the
+			// same flag vocabulary, not assumed from the letters
+			// merely looking similar.
+			sb.WriteString("(?")
+			sb.WriteString(flags)
+			sb.WriteString(")")
+		}
+		fieldCounter := 0
+		for _, frag := range patterns {
+			switch {
+			case frag.Literal != "":
+				// Literal fragments are regex snippets in this mode,
+				// inserted verbatim/uncompiled-as-literal — this is
+				// the crux of what real kind=regex actually does.
+				sb.WriteString(frag.Literal)
+			case frag.Field == "*":
+				sb.WriteString(".*")
+			case frag.Field != "":
+				// Every field gets a NAMED capture group regardless
+				// of declared type — verified against the one fully-
+				// worked real example available (see this function's
+				// own doc comment above); type conversion happens
+				// post-match, uniformly with simple/relaxed.
+				//
+				// Named, not positional (real bug found and fixed
+				// 2026-08-18): a literal fragment is raw, user-
+				// supplied regex text in this mode, and real ADX's
+				// own "Regex mode" worked example itself writes
+				// literal fragments containing their OWN unnamed
+				// capture groups (e.g. `"(.*?)totalSlices="`) purely
+				// as part of the user's own pattern, with no
+				// intention of producing an output column from them.
+				// Assigning capture groups to fields by raw
+				// POSITIONAL index (match[1], match[2], ...) breaks
+				// the moment any literal fragment contains its own
+				// group, silently shifting every field after it out
+				// of alignment — reproduced live against exactly that
+				// real worked example before fixing (resourceName
+				// captured far past its own boundary, swallowing
+				// totalSlices' and sliceNumber's text too). Fixed by
+				// giving each field its own uniquely-named group and
+				// looking it up by name via re.SubexpNames() instead,
+				// which is immune to however many extra (named or
+				// unnamed) groups a literal fragment's own regex text
+				// happens to introduce.
+				groupName := fmt.Sprintf("gokqlfield%d", fieldCounter)
+				regexFieldGroupNames = append(regexFieldGroupNames, groupName)
+				sb.WriteString("(?P<")
+				sb.WriteString(groupName)
+				sb.WriteString(">")
+				// Numeric character classes for long/int/real fields
+				// — same reasoning and same fix as
+				// buildSimpleRelaxedRegex's own numeric fields
+				// (added 2026-08-18 here too, after finding the
+				// identical ambiguity in kind=regex specifically):
+				// a generic ".*" capture immediately followed by a
+				// literal fragment that itself contains its own
+				// non-greedy/optional groups (real ADX's own "Regex
+				// mode" worked example does exactly this — its
+				// literal fragment after sliceNumber is
+				// ".*?(previous)?lockTime="  ) lets the field's own
+				// greediness swallow past the intended boundary
+				// entirely, since Go tries to satisfy the LEFTMOST
+				// (the field's) greediness before ever giving ground
+				// to a LATER non-greedy/optional group. Reproduced
+				// live: sliceNumber's raw capture extended all the
+				// way to just before the string's LAST "lockTime="
+				// occurrence, and only *looked* like a clean null
+				// because failed strconv conversion on that garbage
+				// text produces the same visible null a correctly-
+				// unmatched field would. A precise numeric character
+				// class sidesteps the ambiguity entirely, the same
+				// way it did for buildSimpleRelaxedRegex.
+				switch strings.ToLower(frag.Type) {
+				case "long", "int", "int64", "int32":
+					sb.WriteString(`[-+]?\d+`)
+				case "real", "double", "float":
+					sb.WriteString(`[-+]?\d+(?:\.\d+)?`)
+				default:
+					sb.WriteString(".*")
+				}
+				sb.WriteString(")")
+				fieldCounter++
+			}
+		}
+		var err error
+		regex, err = regexp.Compile(sb.String())
+		if err != nil {
+			return nil, fmt.Errorf("parse kind=regex: %w", err)
+		}
+	} else {
+		var err error
+		regex, err = buildSimpleRelaxedRegex(patterns)
+		if err != nil {
+			return nil, fmt.Errorf("parse kind=%s: %w", kind, err)
+		}
+	}
+
+	// Build output schema: input columns + new columns, each with its
+	// own real declared type (not always string, per the fix above).
 	outCols := make([]types.Column, len(input.Schema.Columns))
 	copy(outCols, input.Schema.Columns)
-	for _, name := range newCols {
-		outCols = append(outCols, types.Column{Name: name, Type: types.TypeString})
+	colTypes := make([]types.KQLType, len(newCols))
+	for i, tn := range newTypeNames {
+		kt := types.TypeString
+		if tn != "" {
+			if parsed, perr := types.ParseType(tn); perr == nil {
+				kt = parsed
+			}
+		}
+		colTypes[i] = kt
+		outCols = append(outCols, types.Column{Name: newCols[i], Type: kt})
 	}
 	outSchema := types.Schema{Columns: outCols}
 	output := types.NewTable(input.Name, outSchema)
@@ -1349,23 +1486,32 @@ func applyParseCore(input *types.Table, column, kind string, patterns []parser.P
 		}
 
 		var extracted []string
-
 		if kind == "regex" {
 			match := regex.FindStringSubmatch(srcVal)
 			if match != nil {
-				extracted = match[1:] // skip full match
+				names := regex.SubexpNames()
+				extracted = make([]string, 0, len(regexFieldGroupNames))
+				for _, wantName := range regexFieldGroupNames {
+					val := ""
+					for gi, n := range names {
+						if n == wantName && gi < len(match) {
+							val = match[gi]
+							break
+						}
+					}
+					extracted = append(extracted, val)
+				}
 			}
-		} else {
-			extracted = parseSimpleMatch(srcVal, patterns)
+		} else if match := regex.FindStringSubmatch(srcVal); match != nil {
+			extracted = match[1:] // skip full match
 		}
 
 		if extracted == nil {
-			if !dropUnmatched && (kind == "relaxed" || kind == "simple") {
-				// For relaxed: keep row with null new columns
-				// For simple in KQL: technically should filter, but relaxed is more useful
-				// We follow relaxed semantics for both to avoid data loss
-				// (applyParseWhere always sets dropUnmatched=true, so this
-				// branch is only reachable from plain ParseOp)
+			if !dropUnmatched {
+				// Real ADX's own docs: "The calculated columns return
+				// null values for unsuccessfully parsed strings" —
+				// applies to every kind for the plain parse operator
+				// (parse-where always drops instead, dropUnmatched=true).
 				outRow := make(types.Row, len(outCols))
 				copy(outRow, row)
 				// new columns remain nil
@@ -1379,7 +1525,13 @@ func applyParseCore(input *types.Table, column, kind string, patterns []parser.P
 		fieldIdx := 0
 		for i, val := range extracted {
 			if i < len(newCols) {
-				outRow[len(input.Schema.Columns)+fieldIdx] = val
+				var outVal types.Value
+				if colTypes[i] == types.TypeString {
+					outVal = val
+				} else if converted, cerr := types.ParseValue(val, colTypes[i]); cerr == nil {
+					outVal = converted
+				} // else outVal stays nil: failed conversion -> null
+				outRow[len(input.Schema.Columns)+fieldIdx] = outVal
 				fieldIdx++
 			}
 		}
@@ -1389,45 +1541,158 @@ func applyParseCore(input *types.Table, column, kind string, patterns []parser.P
 	return output, nil
 }
 
-// parseSimpleMatch matches a string against alternating literal/field patterns.
-// Returns extracted field values, or nil if no match.
-func parseSimpleMatch(s string, patterns []parser.ParseFragment) []string {
-	var fields []string
-	pos := 0
-
+// parseSimpleMatch matches a string against alternating literal/field
+// patterns.
+//
+// Rewritten 2026-08-18 as a real, pre-existing structural bug fix: the
+// previous index-based-loop design only ever captured a field's value
+// when that field was IMMEDIATELY followed by a LITERAL fragment. Any
+// field followed directly by ANOTHER field fragment — overwhelmingly
+// the common "typed field then a '*' wildcard then the next literal"
+// idiom real ADX's own worked examples use throughout (e.g. `with *
+// "resourceName=" resourceName ", totalSlices=" totalSlices: long *
+// "sliceNumber=" ...`) — silently lost that field's value entirely,
+// with no error, shifting every subsequent field-to-column assignment
+// out of alignment. Reproduced live before rewriting: totalSlices came
+// out empty, and every field after it was similarly misaligned or
+// empty, against real ADX's own "Parse and extend results" worked
+// example.
+//
+// This version instead scans FORWARD from each real field to find the
+// next LITERAL fragment (skipping over any intervening "*" wildcard
+// fragments, which don't carve out a separate skip-zone of their own
+// when they sit directly between a field and its boundary-defining
+// literal — the field's own capture subsumes them), and uses that
+// literal's position in the remaining source text as the field's
+// value boundary. A field with no further literal ahead of it at all
+// captures the rest of the source string, the same as before.
+// Verified against real ADX's own full 6-field "Parse and extend
+// results" worked example end-to-end, not just this one previously-
+// broken case in isolation.
+// buildSimpleRelaxedRegex compiles patterns (kind=simple or kind=relaxed)
+// into ONE combined regex, mirroring the same "stitch fragments into a
+// single regex" strategy verified for kind=regex, but with rules
+// appropriate to simple/relaxed's own documented semantics instead:
+// literal fragments are escaped (regexp.QuoteMeta) since real ADX
+// documents stringConstant here as "a regular string value" (exact
+// text), not a regex snippet; "*" wildcards and untyped/string fields
+// use non-greedy ".*?"; long/int/real fields use a type-appropriate
+// numeric character class instead of a generic capture.
+//
+// Rewritten 2026-08-18, replacing an ad-hoc substring-scanning
+// algorithm (parseSimpleMatch) that had two real, deep, pre-existing
+// bugs (documented in git history: a "*" wildcard's skipped text
+// getting mistakenly captured as a real field value, and a field
+// followed directly by another field losing its value entirely) plus
+// a third issue found while fixing those: even a corrected substring-
+// scan approach still can't disambiguate "27" from "27, " when a
+// generic, un-typed boundary sits between a numeric field and a
+// following wildcard/literal — reproduced live: totalSlices captured
+// "27, " (including the separator) instead of "27" under a first
+// attempt at a fix using entirely generic non-greedy captures, which
+// turned out to have the identical ambiguity problem even via a real
+// regex engine's own non-greedy backtracking (traced by hand: RE2
+// grows the FIRST non-greedy capture in a pattern before trying to
+// grow a LATER one, so a generic ".*?" field immediately followed by
+// a generic ".*?" wildcard will absorb the wildcard's rightful
+// separator text into the field's own capture, every time). A
+// type-appropriate character class for numeric fields is what
+// actually resolves this, matching the one piece of ADX's own parse-
+// operator docs this project could NOT otherwise reconcile with a
+// fully worked example (the abbreviated, unverifiable "long was
+// translated to \-\d+" snippet) — it turns out to describe genuine,
+// necessary behavior after all, just not one this project could
+// confirm from that snippet alone; it's confirmed here structurally,
+// by the fact that no other design correctly resolves the ambiguity.
+// buildSimpleRelaxedRegex compiles patterns (kind=simple or kind=relaxed)
+// into ONE combined regex, mirroring the same "stitch fragments into a
+// single regex" strategy verified for kind=regex, but with rules
+// appropriate to simple/relaxed's own documented semantics instead:
+// literal fragments are escaped (regexp.QuoteMeta) since real ADX
+// documents stringConstant here as "a regular string value" (exact
+// text), not a regex snippet; long/int/real fields use a type-
+// appropriate numeric character class instead of a generic capture;
+// every other generic capture (untyped/string fields, wildcards) is
+// non-greedy EXCEPT the very last fragment in the whole pattern, which
+// is greedy.
+//
+// That last-fragment exception is itself a real, reproduced fix
+// (2026-08-18): a genuine tension exists between two real, reproduced
+// bugs found while getting this right —
+//   - non-greedy ".*?" resolves to EMPTY whenever nothing follows it
+//     (no later literal to force it to expand), reproduced live:
+//     `... "sliceNumber=" sliceNumber` with sliceNumber as the very
+//     last fragment captured "" instead of "15";
+//   - greedy ".*"/"(.*)" everywhere instead over-captures whenever the
+//     literal that should bound it is short/common and appears more
+//     than once later in the string, reproduced live: `"Error: " Code
+//     " " *` against "Error: 404 Not Found" greedily matched Code
+//     against the LAST space in the remainder ("404 Not") instead of
+//     the first ("404"), since greedy backtracking finds the
+//     rightmost position where the rest of the pattern can still
+//     match.
+// Non-greedy-except-the-final-fragment resolves both: every field or
+// wildcard that has ANY fragment after it anywhere in the pattern
+// stays non-greedy (correctly finds the FIRST/nearest boundary,
+// matching real-world delimiter-bounded fields), and only the true
+// tail of the whole pattern — which has no boundary to anchor
+// against at all — is greedy, capturing the remainder as intended.
+// Rewritten as a real, deep pre-existing bug fix; replaces an earlier
+// substring-scanning algorithm (parseSimpleMatch, removed) that had
+// two separate, reproduced bugs of its own (a "*" wildcard's skipped
+// text getting mistakenly captured as a field value, and a field
+// followed directly by another field losing its value entirely) —
+// see this repository's git history for those.
+//
+// Type-appropriate numeric character classes for long/int/real were
+// themselves a real finding: they turn out to be structurally
+// necessary, not merely a documented nicety — no purely generic
+// (non-)greedy-capture design can disambiguate "27" from "27, " when
+// a numeric field sits directly before a wildcard/separator (traced by
+// hand through RE2's own backtracking order to confirm this before
+// concluding it, not assumed) — this happens to also reconcile the
+// one piece of real ADX's own parse-operator docs this project could
+// NOT otherwise verify (an abbreviated, unverifiable "long was
+// translated to \-\d+" snippet, contradicted-looking against a
+// separate, fully worked kind=regex example that used only generic
+// captures) — it turns out to describe genuine, real behavior after
+// all, just specific to simple/relaxed rather than regex mode.
+func buildSimpleRelaxedRegex(patterns []parser.ParseFragment) (*regexp.Regexp, error) {
+	var sb strings.Builder
+	n := len(patterns)
 	for i, frag := range patterns {
-		if frag.Literal != "" {
-			// Find literal in remaining string
-			idx := strings.Index(s[pos:], frag.Literal)
-			if idx < 0 {
-				return nil // no match
+		isLast := i == n-1
+		switch {
+		case frag.Literal != "":
+			sb.WriteString(regexp.QuoteMeta(frag.Literal))
+		case frag.Field == "*":
+			if isLast {
+				sb.WriteString(".*")
+			} else {
+				sb.WriteString(".*?")
 			}
-			// If there was a field capture before this literal, the captured text
-			// is from pos to pos+idx
-			if i > 0 && patterns[i-1].Field != "" {
-				fields = append(fields, s[pos:pos+idx])
-			}
-			pos += idx + len(frag.Literal)
-		} else if frag.Field != "" {
-			// Field capture: if this is the last pattern, capture rest of string
-			if i == len(patterns)-1 {
-				val := s[pos:]
-				if frag.Field != "*" {
-					fields = append(fields, val)
+		case frag.Field != "":
+			switch strings.ToLower(frag.Type) {
+			case "long", "int", "int64", "int32":
+				sb.WriteString(`([-+]?\d+)`)
+			case "real", "double", "float":
+				sb.WriteString(`([-+]?\d+(?:\.\d+)?)`)
+			default:
+				// string (default), datetime/date, timespan, guid,
+				// bool, dynamic: too varied to usefully constrain via
+				// a character class, so captured generically and left
+				// to post-match type conversion (applyParseCore) to
+				// enforce strictness / null-on-failure, exactly as
+				// already established for kind=regex.
+				if isLast {
+					sb.WriteString("(.*)")
+				} else {
+					sb.WriteString("(.*?)")
 				}
-				pos = len(s)
 			}
-			// Otherwise, the next literal will determine the boundary
 		}
 	}
-
-	// If last pattern was a field and we haven't captured it yet
-	// (this happens when the first pattern is a field with no leading literal)
-	if len(patterns) > 0 && patterns[0].Field != "" && len(fields) == 0 && len(patterns) == 1 {
-		fields = append(fields, s[pos:])
-	}
-
-	return fields
+	return regexp.Compile(sb.String())
 }
 
 // applyAs implements | as Name -- verified against real ADX docs

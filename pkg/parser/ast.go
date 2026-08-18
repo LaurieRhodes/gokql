@@ -284,6 +284,7 @@ type MakeSeriesAggregation struct {
 type ParseOp struct {
 	Column   string
 	Kind     string          // "simple" (default), "regex", "relaxed"
+	Flags    string          // regexFlags (kind=regex only): U/m/s/i, real KQL's "flags=..." clause
 	Patterns []ParseFragment // alternating literals and field captures
 }
 
@@ -293,6 +294,7 @@ func (*ParseOp) operatorNode() {}
 type ParseFragment struct {
 	Literal string // non-empty for literal text
 	Field   string // non-empty for field capture (column name or * for skip)
+	Type    string // declared column type for a Field fragment (e.g. "long", "date"), "" = string (default)
 }
 
 // ParseWhereOp: | parse-where [kind=simple|regex|relaxed] Column with Pattern...
@@ -312,6 +314,7 @@ type ParseFragment struct {
 type ParseWhereOp struct {
 	Column   string
 	Kind     string
+	Flags    string
 	Patterns []ParseFragment
 }
 
