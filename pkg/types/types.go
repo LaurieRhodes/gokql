@@ -277,6 +277,30 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 			"2006-01-02T15:04",
 			"2006-01-02 15:04",
 			"2006-01-02",
+			// M/d/yyyy (US-culture short-date) forms -- NOT in real ADX's
+			// own documented "Supported formats" table (that table only
+			// lists ISO 8601 / RFC 822 / RFC 850 / Sortable, none of
+			// which are numeric month-first), but confirmed live against
+			// real ADX's own "Parse and extend results" worked example
+			// (parse-operator.md / parse-where-operator.md): the source
+			// data's lockTime/previousLockTime/releaseTime values
+			// ("02/17/2016 08:40:01") parse successfully there into
+			// real, non-null datetime columns -- only the deliberately
+			// malformed "nonValidDateTime"/"invalid_datetime" sentinel
+			// values in that same example produce null. That means real
+			// ADX's actual todatetime()/datetime() parser is more
+			// permissive than its own published format table (almost
+			// certainly .NET's culture-aware DateTime.TryParse under the
+			// hood, not a fixed format list) -- verified here, not
+			// assumed. Go's "1/2/2006" layout verb accepts both the
+			// zero-padded ("02/17/2016") and unpadded ("2/17/2016") forms
+			// of month/day, confirmed directly, so one layout per
+			// time-component variant covers both. Month-before-day only
+			// (US convention) -- the worked example's "02/17" (day 17)
+			// is unambiguous evidence for this ordering, not day/month.
+			"1/2/2006 15:04:05",
+			"1/2/2006 15:04",
+			"1/2/2006",
 		} {
 			if t, err := time.Parse(layout, s); err == nil {
 				return t.UnixNano(), nil

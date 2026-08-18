@@ -1,6 +1,10 @@
 package engine
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/LaurieRhodes/gokql/pkg/types"
+)
 
 // parse_operator_rewrite_test.go — the parse/parse-where operators,
 // substantially rewritten 2026-08-18. Guards real ADX's own worked
@@ -18,13 +22,16 @@ import "testing"
 // numeric values — all three were real, separately reproduced bugs
 // before this rewrite (see git history: colon-in-fieldname bug,
 // wildcard-captured-as-field bug, field-followed-by-field bug).
-// releaseTime/previousLockTime are declared :date in the real example
-// but deliberately NOT asserted here as converted values — this
-// engine's own datetime parser doesn't yet support the MM/DD/YYYY
-// format the real example's data uses (todatetime("02/17/2016
-// 08:40:01") fails independently of parse entirely, confirmed live
-// before writing this test — a separate, pre-existing, out-of-scope
-// gap, not something this rewrite introduced or was scoped to fix).
+// releaseTime/previousLockTime are declared :date in the real example.
+// This engine's datetime parser previously didn't support the
+// MM/DD/YYYY format the real example's data uses (todatetime("02/17/2016
+// 08:40:01") failed independently of parse entirely) -- that gap was
+// closed in types.ParseValue (pkg/types/types.go) after confirming
+// live against real ADX's own worked example that "02/17/2016 08:40:01"
+// converts to a real, non-null datetime there (only the example's
+// deliberately-malformed sentinel values produce null) -- see
+// datetime_mmddyyyy_test.go for the dedicated unit tests. Now asserted
+// here as real converted datetime values, not just left unchecked.
 func TestParseSimpleWorkedExample(t *testing.T) {
 	result := queryResult(t, `let Traces = datatable(EventText: string)
 		[
@@ -33,7 +40,7 @@ func TestParseSimpleWorkedExample(t *testing.T) {
 		];
 		Traces
 		| parse EventText with * "resourceName=" resourceName ", totalSlices=" totalSlices: long * "sliceNumber=" sliceNumber: long * "lockTime=" lockTime ", releaseTime=" releaseTime: date "," * "previousLockTime=" previousLockTime: date ")" *
-		| project resourceName, totalSlices, sliceNumber, lockTime`)
+		| project resourceName, totalSlices, sliceNumber, lockTime, releaseTime, previousLockTime`)
 	if len(result.Rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
 	}
@@ -41,6 +48,8 @@ func TestParseSimpleWorkedExample(t *testing.T) {
 	wantTotalSlices := int64(27)
 	wantSliceNumbers := []int64{23, 15}
 	wantLockTimes := []string{"02/17/2016 08:40:01", "02/17/2016 08:40:00"}
+	wantReleaseTimes := []string{"2016-02-17T08:40:01Z", "2016-02-17T08:40:00Z"}
+	wantPreviousLockTimes := []string{"2016-02-17T08:39:01Z", "2016-02-17T08:39:00Z"}
 	for i := range result.Rows {
 		if got := result.Rows[i][0]; got != wantResourceName {
 			t.Errorf("row %d resourceName = %v, want %v", i, got, wantResourceName)
@@ -53,6 +62,12 @@ func TestParseSimpleWorkedExample(t *testing.T) {
 		}
 		if got := result.Rows[i][3]; got != wantLockTimes[i] {
 			t.Errorf("row %d lockTime = %v, want %v", i, got, wantLockTimes[i])
+		}
+		if got := types.FormatValue(result.Rows[i][4], types.TypeDatetime); got != wantReleaseTimes[i] {
+			t.Errorf("row %d releaseTime = %v, want %v", i, got, wantReleaseTimes[i])
+		}
+		if got := types.FormatValue(result.Rows[i][5], types.TypeDatetime); got != wantPreviousLockTimes[i] {
+			t.Errorf("row %d previousLockTime = %v, want %v", i, got, wantPreviousLockTimes[i])
 		}
 	}
 }
