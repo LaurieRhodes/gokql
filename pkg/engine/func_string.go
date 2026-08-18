@@ -124,8 +124,30 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		return string(b), true, nil
 
 	case "extract":
-		if len(fc.Args) != 3 {
-			return nil, true, fmt.Errorf("extract requires 3 arguments (regex, captureGroup, source)")
+		// extract(regex, captureGroup, source [, typeLiteral])
+		//
+		// Two real bugs found and fixed 2026-08-18, both reproduced
+		// live before fixing:
+		//   1. No-match (or out-of-range captureGroup) returned ""
+		//      (empty string), but real ADX's own docs are explicit:
+		//      "If there's no match, or the type conversion fails:
+		//      null." — confirmed live: extract("xyz([0-9]+)", 1, "no
+		//      numbers here") returned "" with isnull()==false, not
+		//      the documented null.
+		//   2. The optional 4th typeLiteral argument (real syntax:
+		//      extract(regex, group, source, typeof(long))) was
+		//      entirely unsupported — a 4th argument hard-errored.
+		//      Added alongside typeof() parser support (expr.go).
+		//      Verified against real ADX's own worked example:
+		//      extract(@"-(\d{2})-", 1, DateString, typeof(int)) over
+		//      "15-12-2024"/"21-07-2023"/"10-03-2022" -> 12/7/3 as
+		//      actual int values (via types.ParseValue, the same
+		//      conversion helper already trusted elsewhere in this
+		//      engine, e.g. datatable literal parsing) — a failed
+		//      conversion (or invalid typeLiteral) returns null too,
+		//      per the same documented contract.
+		if len(fc.Args) < 3 || len(fc.Args) > 4 {
+			return nil, true, fmt.Errorf("extract requires 3-4 arguments (regex, captureGroup, source [, typeLiteral])")
 		}
 		regexVal, err := evalExpr(fc.Args[0], schema, row)
 		if err != nil {
@@ -148,22 +170,77 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		group := int(types.ToInt64(groupVal))
 		matches := re.FindStringSubmatch(fmt.Sprintf("%v", sourceVal))
-		if group >= 0 && group < len(matches) {
-			return matches[group], true, nil
+		if group < 0 || group >= len(matches) {
+			return nil, true, nil
 		}
-		return "", true, nil
+		matched := matches[group]
+		if len(fc.Args) == 4 {
+			typeVal, err := evalExpr(fc.Args[3], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if typeVal == nil {
+				return nil, true, nil
+			}
+			kt, terr := types.ParseType(fmt.Sprintf("%v", typeVal))
+			if terr != nil {
+				return nil, true, nil
+			}
+			converted, cerr := types.ParseValue(matched, kt)
+			if cerr != nil {
+				return nil, true, nil
+			}
+			return converted, true, nil
+		}
+		return matched, true, nil
 
 	case "extract_all":
-		if len(fc.Args) != 2 {
-			return nil, true, fmt.Errorf("extract_all requires 2 arguments")
+		// extract_all(regex [, captureGroups], source)
+		//
+		// Real bug found and fixed 2026-08-18: this case only ever
+		// accepted 2 arguments (regex, source) — the optional
+		// captureGroups selector argument real ADX's own docs
+		// document was entirely unsupported (a 3-arg call would hard
+		// error). It also used re.FindAllString, which returns the
+		// WHOLE regex match text, not the capture group's own
+		// content — for extract_all(@"a=(\d+)", "a=123") real ADX
+		// returns ["123"] (the group content), this returned
+		// ["a=123"] (the whole match) instead. Reproduced live before
+		// fixing.
+		//
+		// Rewritten to implement real ADX's own documented shape
+		// exactly, verified against all 4 of its own worked examples
+		// on the GUID "82b8be2d-dfa7-4bd1-8f63-24ad26d31449": a
+		// single-group regex with no captureGroups arg returns a 1-D
+		// array of that group's matched values across all matches; a
+		// multi-group regex (with or without an explicit captureGroups
+		// selector, which may reference groups by 1-based numeric
+		// index OR by name) returns a 2-D array, one sub-array per
+		// match, in the requested group order; no match at all
+		// returns null (not an empty array).
+		if len(fc.Args) < 2 || len(fc.Args) > 3 {
+			return nil, true, fmt.Errorf("extract_all requires 2-3 arguments")
 		}
 		regexVal, err := evalExpr(fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		sourceVal, err := evalExpr(fc.Args[1], schema, row)
-		if err != nil {
-			return nil, true, err
+		var captureGroupsVal types.Value
+		var sourceVal types.Value
+		if len(fc.Args) == 3 {
+			captureGroupsVal, err = evalExpr(fc.Args[1], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			sourceVal, err = evalExpr(fc.Args[2], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+		} else {
+			sourceVal, err = evalExpr(fc.Args[1], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
 		}
 		if regexVal == nil || sourceVal == nil {
 			return nil, true, nil
@@ -172,8 +249,76 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if err != nil {
 			return nil, true, nil
 		}
-		allMatches := re.FindAllString(fmt.Sprintf("%v", sourceVal), -1)
-		b, _ := json.Marshal(allMatches)
+
+		var selected []int
+		if captureGroupsVal != nil {
+			arr, ok := parseJSONArray(captureGroupsVal)
+			if !ok {
+				return nil, true, fmt.Errorf("extract_all: captureGroups must be a dynamic array")
+			}
+			names := re.SubexpNames()
+			for _, el := range arr {
+				switch v := el.(type) {
+				case float64:
+					selected = append(selected, int(v))
+				case string:
+					found := -1
+					for i, n := range names {
+						if n == v {
+							found = i
+							break
+						}
+					}
+					if found < 0 {
+						return nil, true, fmt.Errorf("extract_all: unknown capture group name %q", v)
+					}
+					selected = append(selected, found)
+				default:
+					return nil, true, fmt.Errorf("extract_all: invalid captureGroups element %v", el)
+				}
+			}
+		} else {
+			for i := 1; i <= re.NumSubexp(); i++ {
+				selected = append(selected, i)
+			}
+		}
+		if len(selected) == 0 {
+			return nil, true, nil
+		}
+
+		matches := re.FindAllStringSubmatch(fmt.Sprintf("%v", sourceVal), -1)
+		if matches == nil {
+			return nil, true, nil
+		}
+
+		var result interface{}
+		if len(selected) == 1 {
+			arr := make([]string, 0, len(matches))
+			idx := selected[0]
+			for _, m := range matches {
+				if idx < len(m) {
+					arr = append(arr, m[idx])
+				} else {
+					arr = append(arr, "")
+				}
+			}
+			result = arr
+		} else {
+			arr := make([][]string, 0, len(matches))
+			for _, m := range matches {
+				row := make([]string, 0, len(selected))
+				for _, idx := range selected {
+					if idx < len(m) {
+						row = append(row, m[idx])
+					} else {
+						row = append(row, "")
+					}
+				}
+				arr = append(arr, row)
+			}
+			result = arr
+		}
+		b, _ := json.Marshal(result)
 		return string(b), true, nil
 
 	case "replace_string":
@@ -202,6 +347,25 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		), true, nil
 
 	case "replace_regex":
+		// replace_regex(source, lookup_regex, rewrite_pattern)
+		//
+		// Real bug found and fixed 2026-08-18: this case passed
+		// rewrite_pattern straight to Go's regexp.ReplaceAllString,
+		// which uses Go's own $0/$1/$2 backreference syntax — but
+		// real ADX's own documented syntax for this exact function is
+		// \0/\1/\2 (its own worked example is literally
+		// replace_regex(str, @'is (\d+)', @'was: \1')). A query
+		// copy-pasted straight from Microsoft's own docs previously
+		// produced the literal, unsubstituted text "was: \1" instead
+		// of "was: 1" — silently wrong, no error at all. Reproduced
+		// live before fixing (once @"..."/@'...' verbatim string
+		// support, added alongside this fix, made it possible to
+		// even write the exact real-docs query in the first place).
+		// Fixed via kqlRewritePatternToGo, which also escapes any
+		// literal '$' the caller's rewrite_pattern contains (which Go
+		// would otherwise try to interpret as ITS OWN backreference
+		// syntax) so it passes through literally, matching real KQL's
+		// own documented syntax exactly.
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("replace_regex requires 3 arguments")
 		}
@@ -224,7 +388,8 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if err != nil {
 			return nil, true, nil
 		}
-		return re.ReplaceAllString(fmt.Sprintf("%v", sourceVal), fmt.Sprintf("%v", rewriteVal)), true, nil
+		goRewrite := kqlRewritePatternToGo(fmt.Sprintf("%v", rewriteVal))
+		return re.ReplaceAllString(fmt.Sprintf("%v", sourceVal), goRewrite), true, nil
 
 	case "trim":
 		if len(fc.Args) != 2 {
@@ -579,4 +744,35 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 	default:
 		return nil, false, nil
 	}
+}
+
+// kqlRewritePatternToGo translates real KQL's replace_regex
+// rewrite_pattern backreference syntax (\0, \1, \2, ... for the whole
+// match / capture groups) to Go's regexp.ReplaceAllString syntax ($0,
+// $1, $2, ...), and escapes any literal '$' in the caller's pattern
+// (which Go's own replace syntax would otherwise try to interpret as
+// ITS OWN backreference) so it passes through literally — matching
+// real KQL's own documented syntax exactly. Added 2026-08-18
+// alongside fixing replace_regex's real backreference-syntax bug; see
+// that case's own comment in evalStringFunc for the full story.
+func kqlRewritePatternToGo(pattern string) string {
+	var b strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch {
+		case c == '$':
+			b.WriteString("$$")
+		case c == '\\' && i+1 < len(pattern) && pattern[i+1] >= '0' && pattern[i+1] <= '9':
+			j := i + 1
+			for j < len(pattern) && pattern[j] >= '0' && pattern[j] <= '9' {
+				j++
+			}
+			b.WriteByte('$')
+			b.WriteString(pattern[i+1 : j])
+			i = j - 1
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
