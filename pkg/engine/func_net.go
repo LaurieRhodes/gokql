@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -9,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net"
@@ -33,6 +37,66 @@ import (
 // and confirmed to reproduce real ADX's own documented worked example
 // exactly, not copied on faith from a single source).
 const dotnetTicksAtUnixEpoch = 621355968000000000
+
+// guidBytesLEToString converts 16 raw bytes in .NET's own internal
+// Guid byte layout (the form base64_decode_toguid's own base64
+// payload is actually encoded in) into the standard display-order
+// guid string (8-4-4-4-12). .NET's Guid struct stores Data1 (4
+// bytes) and Data2/Data3 (2 bytes each) in LITTLE-ENDIAN order
+// internally, while Data4 (the trailing 8 bytes) is stored as-is —
+// verified exactly against base64_encode_fromguid's own real worked
+// example (guidStringToBytesLE's own doc comment has the full
+// verification story, including a real discrepancy found in
+// base64_decode_toguid's own separate doc page).
+func guidBytesLEToString(b []byte) string {
+	return fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		b[3], b[2], b[1], b[0],
+		b[5], b[4],
+		b[7], b[6],
+		b[8], b[9],
+		b[10], b[11], b[12], b[13], b[14], b[15])
+}
+
+// guidStringToBytesLE is guidBytesLEToString's own exact inverse —
+// converts a standard display-order guid string into .NET's internal
+// mixed-endian 16-byte layout. Verified exactly against real ADX's
+// own base64_encode_fromguid worked example:
+// base64_encode_fromguid(toguid("ae3133f2-6e22-49ae-b06a-16e6a9b212eb"))
+// == "8jMxriJurkmwahbmqbIS6w==" — computed independently (byte-level
+// arithmetic, not copied from any single source) and confirmed to
+// reproduce that exact base64 string.
+//
+// A genuine discrepancy was found while cross-checking this same
+// algorithm against base64_decode_toguid's own SEPARATE worked
+// example on that function's own doc page: it states
+// base64_decode_toguid("JpbpECu8dUy7Pv5gbeJXAA==") produces a guid
+// whose third hex group is "754c", but decoding that exact base64
+// string through this algorithm produces "4c75" instead — a
+// two-character transposition. Since this algorithm is independently
+// confirmed self-consistent (round-trips exactly) against the SECOND
+// worked example above, and a simple transposition typo is the most
+// plausible explanation for the first page's own mismatch (rather
+// than genuinely different behavior between the two functions, which
+// are documented as exact inverses of one another), the standard,
+// internally-consistent algorithm is implemented here rather than a
+// one-off variant that would break the round trip with
+// base64_encode_fromguid.
+func guidStringToBytesLE(guidStr string) ([]byte, bool) {
+	hex32 := strings.ReplaceAll(guidStr, "-", "")
+	if len(hex32) != 32 {
+		return nil, false
+	}
+	raw, err := hex.DecodeString(hex32)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]byte, 16)
+	out[0], out[1], out[2], out[3] = raw[3], raw[2], raw[1], raw[0]
+	out[4], out[5] = raw[5], raw[4]
+	out[6], out[7] = raw[7], raw[6]
+	copy(out[8:16], raw[8:16])
+	return out, true
+}
 
 // evalNetFunc handles IP, URL, encoding, and hashing functions.
 func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
@@ -172,6 +236,283 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 			return nil, true, nil
 		}
 		return string(decoded), true, nil
+
+	case "base64_decode_toarray":
+		// base64_decode_toarray(base64_string) — verified against
+		// real ADX's own docs before implementing, its own worked
+		// example checked exactly: base64_decode_toarray("S3VzdG8=")
+		// == [75,117,115,116,111] (the raw decoded bytes of "Kusto",
+		// each byte as its own array element, unsigned 0-255, "an
+		// array of long values" per the docs' own wording). Invalid
+		// base64 input: the docs' own worked example for this case is
+		// genuinely ambiguous between null and empty string (a
+		// malformed, non-4-aligned base64 string is fed through this
+		// function and the doc's own prose separately says the
+		// DOWNSTREAM encode-back call "will return null" for the
+		// resulting empty array, but the actual output table for that
+		// same chain shows a blank cell, which could mean either) —
+		// resolved here in favor of null, matching this codebase's
+		// own established convention for every other decode/parse
+		// function on invalid input (base64_decode_tostring included,
+		// immediately above).
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("base64_decode_toarray requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		decoded, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", val))
+		if err != nil {
+			return nil, true, nil
+		}
+		arr := make([]int64, len(decoded))
+		for i, b := range decoded {
+			arr[i] = int64(b)
+		}
+		bts, _ := json.Marshal(arr)
+		return string(bts), true, nil
+
+	case "base64_encode_fromarray":
+		// base64_encode_fromarray(byte_array) — the documented
+		// inverse of base64_decode_toarray(), verified against real
+		// ADX's own worked example (round-tripping
+		// base64_decode_toarray("S3VzdG8=") back through this
+		// function reproduces "S3VzdG8=" exactly). Each array element
+		// is truncated to its low 8 bits (a byte) — real ADX's own
+		// docs state "byte is an integer type" for this parameter,
+		// consistent with the array holding long values 0-255 from
+		// base64_decode_toarray's own output.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("base64_encode_fromarray requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		arr, ok := parseJSONArray(val)
+		if !ok {
+			return nil, true, nil
+		}
+		bts := make([]byte, len(arr))
+		for i, el := range arr {
+			bts[i] = byte(int64(types.ToFloat64(el)))
+		}
+		return base64.StdEncoding.EncodeToString(bts), true, nil
+
+	case "base64_decode_toguid":
+		// base64_decode_toguid(base64_string) — verified against real
+		// ADX's own docs, INCLUDING independently cross-checking its
+		// own worked example against the separate, independently
+		// verified base64_encode_fromguid() worked example (see that
+		// case's own comment below): the raw base64-decoded bytes are
+		// NOT the guid's own display-order bytes -- they're in
+		// .NET's own internal mixed-endian Guid layout (Data1: 4
+		// bytes, little-endian; Data2: 2 bytes, little-endian; Data3:
+		// 2 bytes, little-endian; Data4: 8 bytes, as-is) --
+		// implemented via guidBytesLEToString below. A GENUINE
+		// DISCREPANCY was found in this function's own doc page: its
+		// worked example states base64_decode_toguid(
+		// "JpbpECu8dUy7Pv5gbeJXAA==") == "...-754c-..." for the third
+		// hex group, but decoding that exact base64 string through
+		// the standard .NET mixed-endian algorithm produces "...-
+		// 4c75-..." instead -- and that SAME algorithm, applied to
+		// base64_encode_fromguid's own separate worked example, round
+		// -trips EXACTLY (guid "...-49ae-..." <-> base64
+		// "8jMxriJurkmwahbmqbIS6w==", confirmed both directions).
+		// Since the algorithm is directly confirmed self-consistent
+		// (matches in both directions) against the SECOND worked
+		// example, and a plausible two-character transposition typo
+		// ("754c" vs "4c75") is the simplest explanation for the
+		// FIRST example's own mismatch, the standard algorithm is
+		// implemented here rather than a one-off inconsistent variant
+		// that would break the round trip with base64_encode_fromguid.
+		// Invalid input (wrong length after decoding, or invalid
+		// base64) returns null, matching the docs' own second example
+		// (`base64_decode_toguid("abcd1231")` -> null).
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("base64_decode_toguid requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		decoded, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", val))
+		if err != nil || len(decoded) != 16 {
+			return nil, true, nil
+		}
+		return guidBytesLEToString(decoded), true, nil
+
+	case "base64_encode_fromguid":
+		// base64_encode_fromguid(guid) — the documented inverse of
+		// base64_decode_toguid(), verified exactly against real ADX's
+		// own worked example: base64_encode_fromguid(toguid(
+		// "ae3133f2-6e22-49ae-b06a-16e6a9b212eb")) ==
+		// "8jMxriJurkmwahbmqbIS6w==" -- reproduced bit-for-bit via
+		// guidStringToBytesLE below, the exact inverse of
+		// guidBytesLEToString used by base64_decode_toguid above (see
+		// that case's own comment for the cross-verification story
+		// between the two functions' worked examples). Real ADX's own
+		// docs state passing a non-guid value "will [have] an error
+		// thrown" -- this engine returns null instead for an
+		// unparseable guid argument, the established convention this
+		// codebase uses for invalid input everywhere else, rather
+		// than introducing static per-argument type-checking (a
+		// substantial, unrelated architecture change) for this one
+		// function alone.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("base64_encode_fromguid requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		le, ok := guidStringToBytesLE(fmt.Sprintf("%v", val))
+		if !ok {
+			return nil, true, nil
+		}
+		return base64.StdEncoding.EncodeToString(le), true, nil
+
+	case "gzip_compress_to_base64_string":
+		// gzip_compress_to_base64_string(value) — verified against
+		// real ADX's own docs before implementing: standard gzip
+		// compression, base64-encoded. No worked example with exact
+		// bytes given (compressed output isn't byte-stable across
+		// implementations/compression levels), so this is verified by
+		// ROUND TRIP against gzip_decompress_from_base64_string
+		// (immediately below) rather than a fixed expected string —
+		// the standard `compress/gzip` package produces a real,
+		// valid, standards-compliant gzip stream, which is what the
+		// docs' own contract actually requires (interoperability with
+		// any standard gzip reader, not byte-identical output to a
+		// specific reference implementation).
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("gzip_compress_to_base64_string requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		var buf bytes.Buffer
+		gw := gzip.NewWriter(&buf)
+		if _, werr := gw.Write([]byte(fmt.Sprintf("%v", val))); werr != nil {
+			gw.Close()
+			return "", true, nil
+		}
+		if cerr := gw.Close(); cerr != nil {
+			return "", true, nil
+		}
+		return base64.StdEncoding.EncodeToString(buf.Bytes()), true, nil
+
+	case "gzip_decompress_from_base64_string":
+		// gzip_decompress_from_base64_string(base64_string) —
+		// verified against real ADX's own docs: decodes base64, then
+		// gzip-decompresses. Real ADX's own docs state this returns
+		// an EMPTY string (not null) on any failure ("returns an
+		// empty result if decompression or decoding failed") — a
+		// genuinely different contract from most of this codebase's
+		// other decode functions (which return null), followed
+		// exactly here rather than the more common null convention.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("gzip_decompress_from_base64_string requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return "", true, nil
+		}
+		decoded, derr := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", val))
+		if derr != nil {
+			return "", true, nil
+		}
+		gr, grerr := gzip.NewReader(bytes.NewReader(decoded))
+		if grerr != nil {
+			return "", true, nil
+		}
+		defer gr.Close()
+		out, rerr := io.ReadAll(gr)
+		if rerr != nil {
+			return "", true, nil
+		}
+		return string(out), true, nil
+
+	case "zlib_compress_to_base64_string":
+		// zlib_compress_to_base64_string(value) — verified against
+		// real ADX's own docs: standard zlib compression (window size
+		// 15, the only size real ADX documents as supported — Go's
+		// own compress/zlib always uses a 32KB window internally,
+		// matching window size 15 exactly, so no explicit parameter
+		// is needed), base64-encoded. Verified by round trip against
+		// zlib_decompress_from_base64_string, the same reasoning as
+		// gzip_compress_to_base64_string above (compressed byte
+		// output isn't stable across implementations; standards
+		// compliance, not byte-identical output, is the real
+		// contract).
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("zlib_compress_to_base64_string requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		var buf bytes.Buffer
+		zw := zlib.NewWriter(&buf)
+		if _, werr := zw.Write([]byte(fmt.Sprintf("%v", val))); werr != nil {
+			zw.Close()
+			return "", true, nil
+		}
+		if cerr := zw.Close(); cerr != nil {
+			return "", true, nil
+		}
+		return base64.StdEncoding.EncodeToString(buf.Bytes()), true, nil
+
+	case "zlib_decompress_from_base64_string":
+		// zlib_decompress_from_base64_string(base64_string) —
+		// verified against real ADX's own docs: decodes base64, then
+		// zlib-decompresses. Same "returns empty (not null) on
+		// failure" contract as the gzip decompress function above,
+		// followed exactly.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("zlib_decompress_from_base64_string requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return "", true, nil
+		}
+		decoded, derr := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", val))
+		if derr != nil {
+			return "", true, nil
+		}
+		zr, zrerr := zlib.NewReader(bytes.NewReader(decoded))
+		if zrerr != nil {
+			return "", true, nil
+		}
+		defer zr.Close()
+		out, rerr := io.ReadAll(zr)
+		if rerr != nil {
+			return "", true, nil
+		}
+		return string(out), true, nil
 
 	case "url_encode_component":
 		if len(fc.Args) != 1 {

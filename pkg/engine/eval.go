@@ -727,8 +727,15 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "tolower", "toupper", "tostring", "strcat", "format_datetime",
 			"substring", "replace_string", "replace_regex", "trim", "trim_start", "trim_end",
 			"reverse", "hash_sha256", "base64_encode_tostring", "base64_decode_tostring",
-			"url_encode_component", "url_encode", "strcat_array":
+			"url_encode_component", "url_encode", "strcat_array",
+			"base64_encode_fromarray", "gzip_compress_to_base64_string",
+			"gzip_decompress_from_base64_string", "zlib_compress_to_base64_string",
+			"zlib_decompress_from_base64_string":
 			return types.TypeString
+		case "base64_decode_toarray":
+			return types.TypeDynamic
+		case "base64_decode_toguid":
+			return types.TypeGUID
 		case "split", "extract_all", "parse_url", "parse_urlquery", "parse_path", "embed_text":
 			return types.TypeDynamic
 		case "extract", "extract_json", "extractjson":

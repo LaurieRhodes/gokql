@@ -154,11 +154,21 @@ engine has no decimal/big-integer type anywhere in `pkg/types` (the
 same gap documented in detail under `parse_version`'s own scope note
 above) — revisit both together if a `TypeDecimal` is ever added.
 
-### Base64 / compression (`func_net.go`, alongside the existing base64 pair)
-`base64_decode_toarray`, `base64_decode_toguid`,
-`base64_encode_fromarray`, `base64_encode_fromguid`,
+### Base64 / compression — CLOSED 2026-08-18
+`base64_decode_toarray`, `base64_encode_fromarray`,
+`base64_decode_toguid`, `base64_encode_fromguid`,
 `gzip_compress_to_base64_string`, `gzip_decompress_from_base64_string`,
 `zlib_compress_to_base64_string`, `zlib_decompress_from_base64_string`
+are all implemented in `func_net.go`, verified against real ADX's own
+worked examples (see `kql_coverage.md`'s Sprint 26 entry for full
+detail) — including a genuine discrepancy found and resolved in
+`base64_decode_toguid`'s own doc page (a two-character transposition
+in its third guid hex group, cross-checked against
+`base64_encode_fromguid`'s own separate, independently-verified worked
+example and a direct round-trip test) and real ADX's documented
+"returns empty string, not null, on failure" contract for the gzip/
+zlib decompress functions, followed exactly rather than defaulted to
+this codebase's more common null-on-failure convention.
 
 ### String functions (`func_string.go`)
 `repeat` (verify this isn't just `strrep` under a different name before
