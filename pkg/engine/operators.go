@@ -1729,9 +1729,10 @@ func buildSimpleRelaxedRegex(patterns []parser.ParseFragment) (*regexp.Regexp, e
 func (e *Engine) applyAs(input *types.Table, op *parser.AsOp) (*types.Table, error) {
 	if e.letContext == nil {
 		e.setLetContext(&LetContext{
-			Scalars:   make(map[string]types.Value),
-			Functions: make(map[string]*parser.FunctionDef),
-			Tables:    make(map[string]*types.Table),
+			Scalars:     make(map[string]types.Value),
+			ScalarTypes: make(map[string]types.KQLType),
+			Functions:   make(map[string]*parser.FunctionDef),
+			Tables:      make(map[string]*types.Table),
 		})
 	}
 	e.letContext.Tables[op.Name] = input

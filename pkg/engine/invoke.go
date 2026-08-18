@@ -39,9 +39,10 @@ const invokeSourceBinding = "__invoke_source__"
 func (e *Engine) applyInvoke(input *types.Table, op *parser.InvokeOp) (*types.Table, error) {
 	if e.letContext == nil {
 		e.setLetContext(&LetContext{
-			Scalars:   make(map[string]types.Value),
-			Functions: make(map[string]*parser.FunctionDef),
-			Tables:    make(map[string]*types.Table),
+			Scalars:     make(map[string]types.Value),
+			ScalarTypes: make(map[string]types.KQLType),
+			Functions:   make(map[string]*parser.FunctionDef),
+			Tables:      make(map[string]*types.Table),
 		})
 	}
 	e.letContext.Tables[invokeSourceBinding] = input

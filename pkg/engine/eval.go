@@ -675,6 +675,19 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		if idx >= 0 {
 			return schema.Columns[idx].Type
 		}
+		// Not a schema column — check for a let-bound scalar before
+		// falling back to the TypeString default. Added 2026-08-18,
+		// see LookupScalarType's own doc comment (engine.go) for the
+		// full story: this is what closes the real, documented gap
+		// where a tabular-argument parameter with a declared column
+		// type (T:(v:long)) rejected a `print v = <scalar let>`
+		// argument outright, since this exact case (a ColumnRef to a
+		// let-bound name, not a real schema column) previously always
+		// fell through to TypeString regardless of the let's actual
+		// type.
+		if t, ok := activeLetContext.LookupScalarType(e.Name); ok {
+			return t
+		}
 		return types.TypeString
 	case *parser.FuncCall:
 		switch e.Name {

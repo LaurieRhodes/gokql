@@ -24,6 +24,7 @@ import (
 // LetContext holds let-bound names during compound statement execution.
 type LetContext struct {
 	Scalars   map[string]types.Value         // Scalar let bindings: name → value
+	ScalarTypes map[string]types.KQLType     // Scalar let bindings: name → KQL type, populated alongside Scalars (see executeCompound's own ScalarExpr case) — added 2026-08-18 to fix inferExprType's own inability to resolve a let-bound scalar's type (see LookupScalarType's own doc comment for the full story).
 	Functions map[string]*parser.FunctionDef // UDF let bindings: name → definition
 	Tables    map[string]*types.Table        // Tabular let bindings: name → result table
 
@@ -60,6 +61,37 @@ func (ctx *LetContext) LookupScalar(name string) (types.Value, bool) {
 		return v, true
 	}
 	return ctx.Parent.LookupScalar(name)
+}
+
+// LookupScalarType is LookupScalar's own type-only counterpart, added
+// 2026-08-18 to close a real, documented gap: inferExprType (eval.go)
+// previously had no way at all to resolve a let-bound scalar's KQL
+// type from a bare ColumnRef (only checked the row schema, defaulting
+// to TypeString for anything not found there) — found live during the
+// Sprint 15-adjacent LetContext lexical-scoping fix (commit bed111f):
+// a tabular parameter with a declared column type (T:(v:long))
+// rejected a `print v = <scalar let>` argument outright with
+// "expected type long, argument has string".
+//
+// Deliberately does NOT infer the type from the raw types.Value stored
+// in Scalars — that's genuinely ambiguous for an int64 (could be long,
+// datetime, or timespan, all represented the same way internally; see
+// applyPrint's own doc comment, operators.go, for a previously-found,
+// real bug that exact ambiguity caused). Instead, ScalarTypes stores
+// the type inferExprType itself already computed from the let
+// binding's own EXPRESSION at bind time (executeCompound's own
+// ScalarExpr case) — the same expression-based approach applyPrint,
+// applyExtend, and applyProject already use for every other column,
+// just captured once at let-evaluation time instead of recomputed
+// per reference.
+func (ctx *LetContext) LookupScalarType(name string) (types.KQLType, bool) {
+	if ctx == nil {
+		return types.TypeString, false
+	}
+	if t, ok := ctx.ScalarTypes[name]; ok {
+		return t, true
+	}
+	return ctx.Parent.LookupScalarType(name)
 }
 
 // LookupTable is LookupScalar's own tabular-let counterpart.
@@ -312,9 +344,10 @@ func (e *Engine) setLetContext(ctx *LetContext) {
 // executeCompound evaluates let bindings in order, then executes the final statement.
 func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, error) {
 	ctx := &LetContext{
-		Scalars:   make(map[string]types.Value),
-		Functions: make(map[string]*parser.FunctionDef),
-		Tables:    make(map[string]*types.Table),
+		Scalars:     make(map[string]types.Value),
+		ScalarTypes: make(map[string]types.KQLType),
+		Functions:   make(map[string]*parser.FunctionDef),
+		Tables:      make(map[string]*types.Table),
 		// Parent = the enclosing scope's own context, if any — see
 		// LetContext's own doc comment for the real, live scoping bug
 		// this fixes. e.letContext here is still whatever was active
@@ -411,6 +444,15 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 				return nil, fmt.Errorf("let %s: %w", let.Name, err)
 			}
 			ctx.Scalars[let.Name] = val
+			// ScalarTypes captures the KQL type via the same
+			// expression-based inference applyPrint/applyExtend/
+			// applyProject already use for every other column — NOT
+			// derived from val's own Go runtime type, which is
+			// genuinely ambiguous for an int64 (long vs datetime vs
+			// timespan all share that representation internally).
+			// See LookupScalarType's own doc comment for the real,
+			// live bug this closes.
+			ctx.ScalarTypes[let.Name] = inferExprType(rewritten, &types.Schema{})
 
 		case *parser.FunctionDef:
 			// UDF: register for call resolution during expression evaluation

@@ -14,20 +14,26 @@ import "testing"
 // the same name when it does.
 //
 // All three use (*) any-schema tabular parameters rather than a
-// declared column type (e.g. T:(v:long)) — found while writing these:
-// a declared-type parameter's schema VALIDATION step rejects a
-// `print v = <scalar let>` argument with "expected type long,
-// argument has string", a separate, real, pre-existing bug (not this
-// session's own fix) in inferExprType's own ColumnRef case, which
-// can't resolve a let-bound scalar's type at all (only checks a
-// schema, defaulting to TypeString for anything else — the same class
-// of gap already found and worked around, differently, in
-// make-series's own step-unit conversion, Sprint 8). Not fixed here,
-// deliberately: inferring a KQL type from a raw Go value is genuinely
-// ambiguous for an int64 (could be long, datetime, or timespan), the
-// exact reason that fix was scoped narrowly rather than generalized
-// at the time. (*) parameters skip schema validation entirely,
-// sidestepping the issue cleanly for what these tests actually need
+// declared column type (e.g. T:(v:long)) — at the time these were
+// written, a declared-type parameter's schema VALIDATION step
+// rejected a `print v = <scalar let>` argument with "expected type
+// long, argument has string", a separate, real, pre-existing bug (not
+// this session's own fix) in inferExprType's own ColumnRef case,
+// which couldn't resolve a let-bound scalar's type at all (only
+// checked a schema, defaulting to TypeString for anything else — the
+// same class of gap already found and worked around, differently, in
+// make-series's own step-unit conversion, Sprint 8).
+//
+// RESOLVED 2026-08-18 (Sprint 20) — see LetContext.ScalarTypes and
+// LookupScalarType's own doc comment (engine.go), and
+// inferexprtype_letbound_scalar_test.go for the dedicated tests
+// guarding the fix (including the exact declared-type case these
+// tests below still deliberately avoid). (*) parameters are still
+// used below anyway — the fix doesn't change what these SPECIFIC
+// tests need to check (parent-chain scoping rules, not type
+// resolution), so there's no reason to touch working, already-correct
+// tests just because the workaround they used is no longer strictly
+// necessary.
 // to check.
 
 // TestNestedLetShadowsOuterScalar confirms an inner `let x = ...`
