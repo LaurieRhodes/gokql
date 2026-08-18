@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -589,6 +590,86 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		b, _ := json.Marshal(paths)
 		return string(b), true, nil
 
+	case "extract_json", "extractjson":
+		// extract_json(jsonPath, dataSource [, typeLiteral])
+		// extract_json() and extractjson() are documented as
+		// equivalent (extract-json-function.md) -- both routed here.
+		//
+		// Verified against real ADX's own docs before implementing:
+		// the jsonPath argument uses the documented JSONPath SUBSET
+		// (jsonpath.md) -- $ root, .prop dot-access, ['prop']/["prop"]
+		// bracket access (for property names with special characters),
+		// [n] 0-based array index. Wildcards, recursion, union,
+		// slices, and the "current object" @ notation are explicitly
+		// NOT supported by real ADX either, so this implementation
+		// doesn't attempt them. Verified against every one of the doc
+		// page's own 11 example paths run against its own worked JSON
+		// document, not just the single simplest example from
+		// extract-json-function.md's own page ($.name).
+		//
+		// This is a genuinely new, general JSONPath walker
+		// (evalJSONPath below), deliberately NOT reusing
+		// bag_remove_keys's own removeNestedKey helper -- that one
+		// only supports dotted "$.a.b" paths (explicitly, real ADX's
+		// own bag_remove_keys docs state array indexing isn't
+		// supported there), a narrower subset than extract_json needs,
+		// and is a delete-in-place mutator, not a value-returning
+		// reader -- reusing it would mean bolting bracket/index
+		// support onto code whose own doc comment specifically
+		// disclaims it.
+		//
+		// No type argument (2-arg form, confirmed optional per the
+		// Parameters table: jsonPath and dataSource are required,
+		// type is not): the extracted value's natural string form is
+		// returned -- a JSON string leaf unquoted, a number/bool via
+		// its plain textual form, an object/array re-marshaled to
+		// compact JSON text. A path that doesn't resolve (no such
+		// property, index out of range, or dataSource isn't valid
+		// JSON) returns null, matching extract()'s own established
+		// no-match convention elsewhere in this codebase.
+		if len(fc.Args) < 2 || len(fc.Args) > 3 {
+			return nil, true, fmt.Errorf("%s requires 2-3 arguments (jsonPath, dataSource [, typeLiteral])", fc.Name)
+		}
+		pathVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		dataVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if pathVal == nil || dataVal == nil {
+			return nil, true, nil
+		}
+		var root interface{}
+		if err := json.Unmarshal([]byte(fmt.Sprintf("%v", dataVal)), &root); err != nil {
+			return nil, true, nil
+		}
+		found, ok := evalJSONPath(root, fmt.Sprintf("%v", pathVal))
+		if !ok {
+			return nil, true, nil
+		}
+		text := jsonPathValueToString(found)
+		if len(fc.Args) == 3 {
+			typeVal, err := evalExpr(fc.Args[2], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if typeVal == nil {
+				return nil, true, nil
+			}
+			kt, terr := types.ParseType(fmt.Sprintf("%v", typeVal))
+			if terr != nil {
+				return nil, true, nil
+			}
+			converted, cerr := types.ParseValue(text, kt)
+			if cerr != nil {
+				return nil, true, nil
+			}
+			return converted, true, nil
+		}
+		return text, true, nil
+
 	default:
 		return nil, false, nil
 	}
@@ -625,6 +706,128 @@ func removeNestedKey(obj map[string]interface{}, parts []string) {
 		return
 	}
 	removeNestedKey(next, parts[1:])
+}
+
+// evalJSONPath walks root (the result of json.Unmarshal into
+// interface{}) through path (a real-ADX-documented JSONPath subset
+// string, jsonpath.md) and returns the resolved value plus whether
+// resolution succeeded. Supports exactly the four documented
+// constructs, nothing more:
+//
+//	$                     root object
+//	.prop                 dot property access (property has no special chars)
+//	['prop'] or ["prop"]  bracket property access (property may contain special chars)
+//	[n]                   0-based array index
+//
+// Wildcards, recursion (..), union, slices, and the current-object (@)
+// notation are explicitly not part of real ADX's own supported subset
+// and are not attempted here — an unrecognized construct falls through
+// to a parse failure (returns false), the same as a genuinely
+// unresolvable path (missing key, index out of range, or indexing
+// into a non-object/non-array value).
+func evalJSONPath(root interface{}, path string) (interface{}, bool) {
+	i := 0
+	n := len(path)
+	if i >= n || path[i] != '$' {
+		return nil, false
+	}
+	i++
+	cur := root
+	for i < n {
+		switch path[i] {
+		case '.':
+			i++
+			start := i
+			for i < n && path[i] != '.' && path[i] != '[' {
+				i++
+			}
+			if i == start {
+				return nil, false // empty property name
+			}
+			key := path[start:i]
+			obj, ok := cur.(map[string]interface{})
+			if !ok {
+				return nil, false
+			}
+			cur, ok = obj[key]
+			if !ok {
+				return nil, false
+			}
+		case '[':
+			i++
+			if i >= n {
+				return nil, false
+			}
+			if path[i] == '\'' || path[i] == '"' {
+				quote := path[i]
+				i++
+				start := i
+				for i < n && path[i] != quote {
+					i++
+				}
+				if i >= n {
+					return nil, false // unterminated quote
+				}
+				key := path[start:i]
+				i++ // consume closing quote
+				if i >= n || path[i] != ']' {
+					return nil, false
+				}
+				i++ // consume ']'
+				obj, ok := cur.(map[string]interface{})
+				if !ok {
+					return nil, false
+				}
+				cur, ok = obj[key]
+				if !ok {
+					return nil, false
+				}
+			} else {
+				start := i
+				for i < n && path[i] != ']' {
+					i++
+				}
+				if i >= n {
+					return nil, false // unterminated bracket
+				}
+				idxStr := path[start:i]
+				i++ // consume ']'
+				idx, err := strconv.Atoi(idxStr)
+				if err != nil {
+					return nil, false
+				}
+				arr, ok := cur.([]interface{})
+				if !ok || idx < 0 || idx >= len(arr) {
+					return nil, false
+				}
+				cur = arr[idx]
+			}
+		default:
+			return nil, false // unsupported construct (e.g. wildcard, recursion)
+		}
+	}
+	return cur, true
+}
+
+// jsonPathValueToString formats an evalJSONPath result the way
+// extract_json()'s own 2-arg (no typeLiteral) form does: a string
+// leaf returned unquoted, a number/bool via its plain textual form
+// (fmt's own %v, matching the same convention already used
+// throughout this file for scalar JSON values), and an object/array
+// re-marshaled to compact JSON text (so a further extract_json/
+// parse_json call against the result still works).
+func jsonPathValueToString(v interface{}) string {
+	switch tv := v.(type) {
+	case string:
+		return tv
+	case nil:
+		return ""
+	case map[string]interface{}, []interface{}:
+		b, _ := json.Marshal(tv)
+		return string(b)
+	default:
+		return fmt.Sprintf("%v", tv)
+	}
 }
 
 func parseJSONObject(val types.Value) (map[string]interface{}, bool) {

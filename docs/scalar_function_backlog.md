@@ -113,16 +113,84 @@ committed (an embedded-prefix offset decision that inspected the
 parsed byte value instead of the address's own source text).
 
 ### Parse functions (`func_string.go` / `func_net.go`)
-**`parse_command_line`, `parse_user_agent`, `indexof_regex` CLOSED
-(2026-08-17/18)** — see `kql_coverage.md` for full detail on all
-three, including `parse_user_agent`'s own reversal note (the earlier
-deferral below was based on the actual `ua-parser/uap-core` regex
-database being assumed unfetchable; it turned out to be public and
-fetchable, which removed the blocker) and `indexof_regex`'s own note
-(a real discrepancy found between two sections of its own doc page).
-Still open: `parse_version`, `parse_xml`, `extract_json` (a
-single-value shortcut over `parse_json` + dot-access — verify whether
-it's meaningfully different before building it as a new thing).
+**`parse_command_line`, `parse_user_agent`, `indexof_regex`,
+`extract_json`/`extractjson` CLOSED (2026-08-17/18)** — see
+`kql_coverage.md` for full detail on all four, including
+`parse_user_agent`'s own reversal note (the earlier deferral below was
+based on the actual `ua-parser/uap-core` regex database being assumed
+unfetchable; it turned out to be public and fetchable, which removed
+the blocker), `indexof_regex`'s own note (a real discrepancy found
+between two sections of its own doc page), and `extract_json`'s own
+note below (a second real doc discrepancy found, plus the "meaningful
+difference from parse_json" question actually resolved: it's a real,
+general JSONPath walker, not a `parse_json` + dot-access shortcut).
+Still open: `parse_version` (see its own scope note below — genuinely
+BLOCKED, not just unstarted), `parse_xml`.
+
+**`extract_json`/`extractjson`'s own scope note (2026-08-18)**:
+implemented as a real, general JSONPath walker (`evalJSONPath` in
+`func_dynamic.go`) supporting exactly real ADX's own documented subset
+(`jsonpath.md`): `$` root, `.prop` dot access, `['prop']`/`["prop"]`
+bracket access, `[n]` 0-based array index — turned out to be
+meaningfully different from a `parse_json` + dot-access shortcut after
+all, since KQL's own dot-access syntax can't express bracket/index
+paths at all. Verified against both the function's own simple worked
+example (`extract-json-function.md`) and the full JSONPath subset doc
+page's own 11-path worked example against its own JSON document. A
+second real intra-page doc discrepancy found while verifying (after
+`indexof_regex`'s own, in the same session): `jsonpath.md`'s own last
+example path, `"$.Tags[0]"`, doesn't actually resolve against the
+SAME page's own shown JSON document, where `Tags` is nested under
+`Details`, not root-level — looks like a copy-paste typo (a missing
+`Details.` prefix) rather than a real, different resolution rule.
+Confirmed by testing the doc's own literal path (returns null, as it
+should against that document) alongside the corrected path
+(`"$.Details.Tags[0]"`, resolves to `"startup"` as the other 11
+examples' own pattern would predict) — both are asserted in the test
+suite rather than silently "fixing" the doc's own mistake without
+recording it. Not implemented: type conversion is via reusing
+`types.ParseValue`, the same optional-3rd-arg pattern already
+established by `extract()`.
+
+**`parse_version`'s own scope note (2026-08-18, genuinely BLOCKED, not
+just deferred)**: verified real ADX's own worked example
+(`parse-version-function.md`) and reverse-derived the exact formula —
+`result = part1×10²⁴ + part2×10¹⁶ + part3×10⁸ + part4` (missing
+trailing parts treated as 0, each part up to 8 digits / 99999999 max)
+— confirmed against all 7 rows of the doc's own worked-example table,
+including the largest value, `1,000,000,020,000,000,300,000,004`
+(from `1.2.3.4`). That value alone is a real, structural blocker: even
+the SIMPLEST real-world case, `parse_version("1")`, evaluates to
+10²⁴ — about 5 orders of magnitude past `int64`'s own maximum
+(~9.2×10¹⁸) — so there is no version string, however ordinary, this
+function could return without overflow using this engine's existing
+numeric types. Real ADX returns this as `decimal` (128-bit); this
+codebase has NO decimal or big-integer type anywhere in `pkg/types`
+(confirmed by direct source search — no `TypeDecimal`, no `math/big`
+usage at all). A `float64`-based implementation was considered and
+rejected: at the 10²⁴ magnitude the worked examples reach, `float64`'s
+own ~15-17 significant decimal digits can't distinguish different
+`part4` values (0-99999999) at all once `part1 >= 1` — the exact
+silent-wrong-answer risk this project's own CLAUDE.md P0 backlog
+category exists to catch, not a small numeric-formatting nuance to
+wave through. A string-based decimal encoding (fixed-width
+zero-padded digits, so lexicographic comparison stays correct) was
+also considered, but the docs' own second worked example
+(`parsed_version < parse_version("1.0.0.0")`) depends on real numeric
+`<` comparison working against the result, which would need either
+new comparison-operator logic for a string-encoded-decimal special
+case or a genuine new type threaded through `ParseValue`/
+`FormatValue`/the comparison operators/aggregations — a real,
+cross-cutting type-system addition, not the "genuinely easy" scope
+this item was originally framed under (that framing was accurate for
+`indexof_regex`, whose blocker was regex-specific and already solved;
+it doesn't transfer to `parse_version`, whose blocker is an entirely
+separate, numeric-type gap). Deliberately left unimplemented rather
+than shipped with silent precision loss or a half-integrated new type.
+Revisit as a dedicated, scoped piece of work (add a real decimal/
+`math/big`-backed `TypeDecimal` to `pkg/types`, thread it through the
+same surfaces `TypeLong`/`TypeReal` already cover) rather than folded
+into a "small function addition" session.
 
 **`indexof_regex`'s own scope note (2026-08-18, superseding the
 "verify before implementing" note below since it's now done)**:
