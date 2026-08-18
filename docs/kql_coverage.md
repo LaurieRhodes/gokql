@@ -153,11 +153,12 @@ Functions are organized across focused source files.
 | isascii                             | ASCII validity test (every byte in 0x00-0x7F); added 2026-08-18 (Sprint 27) |
 | isutf8                               | UTF-8 validity test via Go's `utf8.ValidString`; added 2026-08-18 (Sprint 27) |
 
-#### Datetime — `func_datetime.go` (46 entry points / ~38 unique)
+#### Datetime — `func_datetime.go` (47 entry points / ~39 unique)
 
 | Function                                                                | Notes                                                                |
 | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | now                                                                       | Current UTC time                                                        |
+| ingestion_time                                                             | Accessor for this engine's own real, `_TimeReceived` column (analogous to real ADX's hidden `$IngestionTime`); null if the column is absent or unset for the row, per real ADX's own documented contract; added 2026-08-18 (Sprint 29) |
 | ago                                                                       | Relative time (timespan subtraction)                                    |
 | datetime / todatetime / make_datetime                                    | Datetime construction/parsing; also accepts M/d/yyyy (US short-date, e.g. `02/17/2016 08:40:01`) alongside ISO 8601 — verified against real ADX's own worked example (Sprint 17, 2026-08-18) |
 | bin / floor                                                              | Datetime and numeric binning                                            |
@@ -180,7 +181,7 @@ Functions are organized across focused source files.
 | unixtime_microseconds_todatetime / unixtime_nanoseconds_todatetime         | Unix epoch conversion (μs / ns); negative (pre-1970) input supported per real ADX's own documented contract; added 2026-08-18 (Sprint 28) |
 | datetime_local_to_utc / datetime_utc_to_local                              | IANA timezone conversion via Go's own `time.LoadLocation`; embedded `time/tzdata` for deployment portability; verified against real ADX's own worked examples including a DST-transition ambiguity case; added 2026-08-18 (Sprint 28) |
 
-#### Type Conversion, Math & Conditionals — `func_convert.go` (33 entry points / ~27 unique)
+#### Type Conversion, Math & Conditionals — `func_convert.go` (34 entry points / ~28 unique)
 
 | Function                   | Notes                                                |
 | ---------------------------- | ------------------------------------------------------ |
@@ -195,6 +196,7 @@ Functions are organized across focused source files.
 | coalesce                         | First non-null/non-empty value                               |
 | max_of / min_of                  | Scalar min/max (variadic)                                     |
 | round                             | Rounding with optional precision                              |
+| format_bytes                      | Human-readable byte size formatting, base-1024 with auto/explicit unit selection and optional precision; verified against real ADX's own 5-case worked example exactly; added 2026-08-18 (Sprint 29) |
 | abs                               | Absolute value (preserves int64 for integers)                 |
 | pow                               | Power                                                          |
 | sqrt                              | Square root                                                   |
@@ -214,7 +216,7 @@ Functions are organized across focused source files.
 | ----------- | ---------------------------------------------------------------------- |
 | parse_xml    | XML-to-JSON conversion per real ADX's own 7-row conversion table (element/attribute/text/repeated-child-array rules); dispatch case lives in `func_convert.go`, implementation in its own dedicated file; added 2026-08-18 (Sprint 21) |
 
-#### Dynamic (JSON/Array/Bag) — `func_dynamic.go` (38 functions)
+#### Dynamic (JSON/Array/Bag) — `func_dynamic.go` (39 functions)
 
 | Function                                   | Notes                                                                    |
 | --------------------------------------------- | --------------------------------------------------------------------------- |
@@ -244,6 +246,7 @@ Functions are organized across focused source files.
 | dynamic_to_json                                           | Canonical string form of a dynamic value; property-bag keys sorted alphabetically; non-dynamic scalars go through the same conversion as `tostring()`; added 2026-08-18 (Sprint 23) |
 | set_union / set_intersect / set_difference           | Set operations on arrays                                                       |
 | set_has_element                                        | Membership test on an array/set, sharing `array_index_of`'s own element-equality check; added 2026-08-18 (Sprint 23) |
+| jaccard_index                                           | Set similarity, `\|intersection\|/\|union\|`, duplicates ignored; verified against real ADX's own worked example exactly; added 2026-08-18 (Sprint 29) |
 | treepath                                              | Get all paths in a dynamic object                                              |
 | extract_json / extractjson                            | Real JSONPath walker (`$`/`.prop`/`['prop']`/`[n]`), optional `typeLiteral` conversion; verified against real ADX's own simple worked example plus the full JSONPath subset doc's 11-path worked example; added 2026-08-18 (Sprint 19) |
 | parse_csv                                              | Parse a single CSV record (RFC4180-style quoting) into a string array; only the first record is taken for multi-line input |
@@ -910,6 +913,17 @@ Closes the "Datetime" item from `scalar_function_backlog.md`'s Medium-priority t
 7. ✅ New tests — `pkg/engine/func_datetime_part_tz_test.go`: the full 12-part `datetime_part` worked example in one query, a `datepart` alias-equivalence check, both timezone functions' own worked examples, the full 4-row DST-ambiguity round-trip table, an invalid-timezone-name null case, and both new `unixtime_*` functions including the negative-pre-epoch case.
 8. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
 
+### ✅ Sprint 29: ingestion_time, jaccard_index, format_bytes — COMPLETE (2026-08-18)
+
+Closes the `_TimeReceived` accessor item and the Misc item (minus `assert`, still open) from `scalar_function_backlog.md`'s Medium-priority tier — the last three items in that tier.
+
+1. ✅ **`ingestion_time()`** (`func_datetime.go`): real ADX's own docs describe this as a function-form accessor for a HIDDEN `$IngestionTime` column, null "if there's no datetime column in the table, or the IngestionTime policy wasn't enabled." This engine's own `_TimeReceived` (`timereceived.go`) is a real, ordinary schema column internally, so this is a thin accessor reading it by name during expression evaluation. **A real discovery made while verifying this, not a bug**: `_TimeReceived` IS hidden from query OUTPUT unless referenced by name somewhere in the operator chain (`hideTimeReceivedUnlessExplicit`, `timereceived.go`) — confirmed live (a `datatable(...)` literal declaring a `_TimeReceived` column showed only 2 columns in the final result, not 3, until traced to this deliberate, already-correctly-implemented display rule). `timereceived.go`'s own header comment ("no special hidden ... mechanism was built") is now stale relative to that later addition — not fixed here, flagged for whoever next touches that file's own doc comment, since it wasn't this function's own responsibility to correct. `inferExprType` reads the real value before that later hiding step runs, so the returned VALUE matches real ADX's own null-if-absent contract exactly regardless of the display question.
+2. ✅ **`jaccard_index(set1, set2)`** (`func_dynamic.go`): verified exactly against real ADX's own worked example (`jaccard_index([1,2,3], [1,2,3,4]) == 0.75`), reusing the same string-keyed dedup-set pattern `set_union`/`set_intersect`/`set_difference` already use, per the docs' own "duplicate values are ignored" rule. The undocumented both-sets-empty (0/0) case returns null rather than a guessed 0 or 1.
+3. ✅ **`format_bytes(size [, precision [, units]])`** (`func_convert.go`): verified against ALL 5 of real ADX's own worked examples with exact string output (`format_bytes(564)` → `"564 Bytes"`, `format_bytes(10332, 1)` → `"10.1 KB"`, `format_bytes(20010332)` → `"19 MB"`, `format_bytes(20010332, 2)` → `"19.08 MB"`, `format_bytes(20010332, 0, "KB")` → `"19541 KB"`). Base-1024 scaling and unit auto-selection were derived directly from these numbers (`10332/1024 = 10.09...` rounds to `10.1`, confirming binary not decimal scaling), not assumed. An unrecognized explicit `units` argument returns null, matching this codebase's established convention for invalid input.
+4. ✅ `inferExprType` (`eval.go`) updated: `ingestion_time` → `TypeDatetime`, `jaccard_index` → `TypeReal`, `format_bytes` → `TypeString`.
+5. ✅ New tests — `pkg/engine/func_ingestion_time_test.go` (4 tests: positive/absent-column/null-row-value/argument-count cases) and `pkg/engine/func_jaccard_formatbytes_test.go` (7 tests: the worked examples for both functions plus identical-sets, disjoint-sets, and duplicates-ignored sanity cases for `jaccard_index`, and invalid-unit/null-propagation cases for `format_bytes`).
+6. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
+
 ### Not Yet Implemented (notable gaps)
 
 1. **hll / hll_if / hll_merge, tdigest / tdigest_merge** — sketch structures; low priority for a single-node engine
@@ -929,7 +943,7 @@ Closes the "Datetime" item from `scalar_function_backlog.md`'s Medium-priority t
 | ---------------------------- | ----------- | --------- | -------- | -------------------------------------- |
 | Tabular operators                | 41          | 53        | 77%      | 41 implemented + 0 not-yet-implemented + 12 out-of-scope = 53, a full, cross-checked enumeration (2026-08-14/15), not the earlier, incomplete 47 |
 | Comparison operators                | 22          | 35        | 63%*     | Effectively complete in practice — 0 known gaps; the 35 denominator counts individual grammar symbols, this row counts table rows (see methodology note above) |
-| Scalar functions                       | ~241        | 420       | 57%      | Row was stale at ~183 (last recomputed pre-Sprint 15); corrected 2026-08-18 — Sprint 15 brought it to ~200 (trig, IPv4/IPv6, parse_command_line, parse_user_agent), Sprints 18-19 added 3 more (indexof_regex, extract_json, extractjson), Sprint 21 added parse_xml, Sprint 22 added 6 more (array_rotate_left/right, array_split, array_sum, array_iff/array_iif), Sprint 23 added 5 more (bag_zip, bag_set_key, bag_pack_columns, dynamic_to_json, set_has_element), Sprint 24 added hash/hash_xxhash64, Sprint 25 added toguid/tohex/gettype, Sprint 26 added 8 more (base64 array/guid + gzip/zlib), Sprint 27 added 8 more (repeat, regex_quote, replace_strings, unicode_codepoints_*, isascii, isutf8), Sprint 28 added 5 more (datetime_part/datepart, datetime_local_to_utc/utc_to_local, unixtime_microseconds/nanoseconds_todatetime). 300+ of the remaining gap is geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
+| Scalar functions                       | ~244        | 420       | 58%      | Row was stale at ~183 (last recomputed pre-Sprint 15); corrected 2026-08-18 — Sprint 15 brought it to ~200 (trig, IPv4/IPv6, parse_command_line, parse_user_agent), Sprints 18-19 added 3 more (indexof_regex, extract_json, extractjson), Sprint 21 added parse_xml, Sprint 22 added 6 more (array_rotate_left/right, array_split, array_sum, array_iff/array_iif), Sprint 23 added 5 more (bag_zip, bag_set_key, bag_pack_columns, dynamic_to_json, set_has_element), Sprint 24 added hash/hash_xxhash64, Sprint 25 added toguid/tohex/gettype, Sprint 26 added 8 more (base64 array/guid + gzip/zlib), Sprint 27 added 8 more (repeat, regex_quote, replace_strings, unicode_codepoints_*, isascii, isutf8), Sprint 28 added 5 more (datetime_part/datepart, datetime_local_to_utc/utc_to_local, unixtime_microseconds/nanoseconds_todatetime), Sprint 29 added 3 more (ingestion_time, jaccard_index, format_bytes). 300+ of the remaining gap is geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
 | Aggregation functions                     | 24          | 61        | 39%*     | All common + conditional variants covered — remaining gap is entirely the sketch/niche family (hll, tdigest, buildschema, weighted percentiles); denominator counts symbols, this row counts table rows |
 | File formats                                 | 4           | —         | —        | CSV, JSON, NDJSON, Parquet (xlsx deliberately removed 2026-08-15, see File-Based Querying section) |
 | **Practical coverage**                          | —           | —         | **~93%** | **Of security analyst queries, plus a real, persisted-function/materialized-view/federation layer beyond raw language coverage** |

@@ -338,6 +338,73 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		mult := math.Pow(10, float64(precision))
 		return math.Round(f*mult) / mult, true, nil
 
+	case "format_bytes":
+		// format_bytes(size [, precision [, units]]) — verified
+		// against real ADX's own docs before implementing, all 5 of
+		// its own worked examples checked with exact values:
+		//   format_bytes(564)                  == "564 Bytes"
+		//   format_bytes(10332, 1)               == "10.1 KB"
+		//   format_bytes(20010332)                == "19 MB"
+		//   format_bytes(20010332, 2)              == "19.08 MB"
+		//   format_bytes(20010332, 0, "KB")         == "19541 KB"
+		// Confirms base-1024 (binary) scaling with ADX's own
+		// documented decimal-style unit NAMES ("KB" not "KiB") —
+		// derived directly from the worked examples' own numbers
+		// (10332/1024 = 10.09... rounds to 10.1; not 10332/1000),
+		// not assumed. Unit auto-selection (no explicit units
+		// argument) picks the largest unit for which the scaled value
+		// is still < 1024, matching the standard "divide by 1024
+		// repeatedly until under threshold" convention. Default
+		// precision is 0 per the docs' own stated default.
+		if len(fc.Args) < 1 || len(fc.Args) > 3 {
+			return nil, true, fmt.Errorf("format_bytes requires 1-3 arguments (size [, precision [, units]])")
+		}
+		sizeVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if sizeVal == nil {
+			return nil, true, nil
+		}
+		precision := 0
+		if len(fc.Args) >= 2 {
+			pv, err := evalExpr(fc.Args[1], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			precision = int(types.ToInt64(pv))
+		}
+		byteUnits := []string{"Bytes", "KB", "MB", "GB", "TB", "PB", "EB"}
+		v := types.ToFloat64(sizeVal)
+		unitIdx := 0
+		if len(fc.Args) == 3 {
+			uv, err := evalExpr(fc.Args[2], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			unitStr := fmt.Sprintf("%v", uv)
+			found := -1
+			for i, u := range byteUnits {
+				if u == unitStr {
+					found = i
+					break
+				}
+			}
+			if found < 0 {
+				return nil, true, nil
+			}
+			unitIdx = found
+			for i := 0; i < unitIdx; i++ {
+				v /= 1024
+			}
+		} else {
+			for unitIdx < len(byteUnits)-1 && math.Abs(v) >= 1024 {
+				v /= 1024
+				unitIdx++
+			}
+		}
+		return fmt.Sprintf("%.*f %s", precision, v, byteUnits[unitIdx]), true, nil
+
 	case "abs":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("abs requires 1 argument")

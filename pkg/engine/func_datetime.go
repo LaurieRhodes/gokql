@@ -15,6 +15,42 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 	case "now":
 		return time.Now().UTC().UnixNano(), true, nil
 
+	case "ingestion_time":
+		// ingestion_time() — real ADX's own function-form accessor
+		// for a HIDDEN $IngestionTime column, "if there's no datetime
+		// column in the table, or the IngestionTime policy wasn't
+		// enabled when a record was ingested, a null value is
+		// returned" (real ADX's own IngestionTime policy docs).
+		// This engine's own "_TimeReceived" is a real, ordinary
+		// schema column internally — verified directly against real
+		// Log Analytics/ADX export tooling before building it that
+		// real ADX's own _TimeReceived is actually an ordinary column
+		// too, not a specially-typed one — but IS hidden from query
+		// OUTPUT unless explicitly referenced by name somewhere in
+		// the operator chain (hideTimeReceivedUnlessExplicit,
+		// timereceived.go, confirmed live while adding this function:
+		// see that file's own header comment, which is now slightly
+		// stale relative to that later addition — not fixed here, out
+		// of scope for this specific function). This case reads the
+		// real underlying value during expression evaluation, BEFORE
+		// that later output-hiding step ever runs, so the VALUE
+		// returned here matches real ADX's own null-if-absent
+		// contract exactly: if the current table has no such column
+		// (schema.ColumnIndex returns -1, e.g. a scope with the
+		// feature disabled, or a table created with
+		// notimereceived=true), or the column is null for this
+		// specific row (a pre-feature row not yet rewritten, or an
+		// ingest path that didn't populate it), null is returned
+		// either way — not an error.
+		if len(fc.Args) != 0 {
+			return nil, true, fmt.Errorf("ingestion_time requires 0 arguments")
+		}
+		idx := schema.ColumnIndex(timeReceivedColumnName)
+		if idx < 0 {
+			return nil, true, nil
+		}
+		return row[idx], true, nil
+
 	case "ago":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("ago requires 1 argument (timespan)")

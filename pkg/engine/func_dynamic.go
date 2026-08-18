@@ -816,6 +816,62 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 	case "set_difference":
 		return setOperation(fc, schema, row, "difference")
 
+	case "jaccard_index":
+		// jaccard_index(set1, set2) — verified against real ADX's own
+		// docs before implementing, its own worked example checked
+		// exactly: jaccard_index([1,2,3], [1,2,3,4]) == 0.75
+		// (|intersection|=3, |union|=4, 3/4=0.75). "Duplicate values
+		// in the input arrays are ignored" per the docs — implemented
+		// via the same string-keyed dedup-set pattern setOperation
+		// above already uses for set_union/set_intersect/
+		// set_difference, not a second, separately-written dedup
+		// mechanism.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("jaccard_index requires 2 arguments (set1, set2)")
+		}
+		v1, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		v2, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		arr1, ok1 := parseJSONArray(v1)
+		arr2, ok2 := parseJSONArray(v2)
+		if !ok1 || !ok2 {
+			return nil, true, nil
+		}
+		set1 := make(map[string]struct{}, len(arr1))
+		for _, item := range arr1 {
+			set1[fmt.Sprintf("%v", item)] = struct{}{}
+		}
+		set2 := make(map[string]struct{}, len(arr2))
+		for _, item := range arr2 {
+			set2[fmt.Sprintf("%v", item)] = struct{}{}
+		}
+		union := make(map[string]struct{}, len(set1)+len(set2))
+		intersectCount := 0
+		for k := range set1 {
+			union[k] = struct{}{}
+			if _, ok := set2[k]; ok {
+				intersectCount++
+			}
+		}
+		for k := range set2 {
+			union[k] = struct{}{}
+		}
+		if len(union) == 0 {
+			// Both sets empty: 0/0 is mathematically undefined, not
+			// documented either way by real ADX's own docs (no
+			// worked example covers this). Returning null rather
+			// than guessing a specific value (0 or 1, both of which
+			// have a plausible-sounding but unconfirmed rationale)
+			// is the safer choice for a genuinely undefined case.
+			return nil, true, nil
+		}
+		return float64(intersectCount) / float64(len(union)), true, nil
+
 	case "set_has_element":
 		// set_has_element(set, value) — verified against real ADX's
 		// own docs before implementing: "determines whether the

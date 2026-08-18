@@ -696,7 +696,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"endofday", "endofweek", "endofmonth",
 			"unixtime_seconds_todatetime", "unixtime_milliseconds_todatetime",
 			"unixtime_microseconds_todatetime", "unixtime_nanoseconds_todatetime",
-			"datetime_local_to_utc", "datetime_utc_to_local":
+			"datetime_local_to_utc", "datetime_utc_to_local", "ingestion_time":
 			return types.TypeDatetime
 		case "bin", "floor":
 			// bin returns the same type as its first argument
@@ -724,7 +724,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			// works correctly once toint() is actually distinguishable
 			// from tolong() via inferExprType, not just by name.
 			return types.TypeInt
-		case "todouble", "toreal", "series_cosine_similarity", "series_dot_product", "array_sum":
+		case "todouble", "toreal", "series_cosine_similarity", "series_dot_product", "array_sum", "jaccard_index":
 			return types.TypeReal
 		case "tolower", "toupper", "tostring", "strcat", "format_datetime",
 			"substring", "replace_string", "replace_regex", "trim", "trim_start", "trim_end",
@@ -733,7 +733,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"base64_encode_fromarray", "gzip_compress_to_base64_string",
 			"gzip_decompress_from_base64_string", "zlib_compress_to_base64_string",
 			"zlib_decompress_from_base64_string", "regex_quote", "replace_strings",
-			"unicode_codepoints_to_string":
+			"unicode_codepoints_to_string", "format_bytes":
 			return types.TypeString
 		case "base64_decode_toarray":
 			return types.TypeDynamic

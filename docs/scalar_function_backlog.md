@@ -366,17 +366,22 @@ turned out to be resolvable: the database is public
 do include worked examples with exact output values once looked for
 directly rather than via a narrower search pass.)
 
-### `_TimeReceived` accessor
-`ingestion_time()` — real ADX's own function-form accessor for the
-automatic ingest-time column. Already noted as deliberately deferred
-when `_TimeReceived` itself was built this session (the column is
-reachable only by its real name today) — this is that deferred item,
-now cross-referenced here too so it isn't lost between documents.
+### `_TimeReceived` accessor — CLOSED 2026-08-18
+**`ingestion_time()` implemented** — see `kql_coverage.md`'s Sprint 29
+entry for full detail, including a real discovery made while verifying
+it: this codebase's own `_TimeReceived` column IS hidden from query
+output unless referenced by name (`hideTimeReceivedUnlessExplicit`,
+`timereceived.go`) — a later addition than that file's own header
+comment (which says "no special hidden ... mechanism was built")
+currently reflects; not fixed here, flagged for whoever next touches
+that file's own doc comment.
 
-### Misc
-`assert` (real ADX's own query-time assertion function — verify exact
-failure-mode semantics before implementing), `jaccard_index`,
-`format_bytes`
+### Misc — CLOSED 2026-08-18 (`jaccard_index`, `format_bytes`); `assert` still open
+**`jaccard_index`, `format_bytes` implemented** — see `kql_coverage.md`'s
+Sprint 29 entry for full detail. Still open: `assert` (real ADX's own
+query-time assertion function — verify exact failure-mode semantics
+before implementing; not attempted this session, no particular blocker
+found, just not yet reached).
 
 ---
 
