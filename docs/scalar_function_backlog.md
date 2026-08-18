@@ -66,13 +66,35 @@ own phrasing is about JSON type, and no worked example tests a
 boolean array element either way).
 
 ### Bag/dynamic functions (`func_dynamic.go`)
-`bag_zip` (build a bag from a keys array + a values array — the
-sibling of `zip()`, already implemented, for the bag-construction
-case), `bag_set_key`, `bag_pack_columns`, `dynamic_to_json` (should be
-close to trivial — dynamic values are already JSON-encoded strings
-internally), `set_has_element` (natural sibling of the already-
-implemented `set_union`/`set_intersect`/`set_difference`),
-`column_names_of`, `column_ifexists`
+**`bag_zip`, `bag_set_key`, `bag_pack_columns`, `dynamic_to_json`,
+`set_has_element` CLOSED 2026-08-18** — see `kql_coverage.md`'s
+Sprint 23 entry for full detail, including `bag_zip`'s own 6-case
+worked-example verification (equal-length, missing-value, extra-value,
+non-string-key-exclusion, non-array-Values, non-array-Keys) and
+`bag_set_key`'s own auto-vivification behavior for a missing
+intermediate JSONPath segment. Still open, deliberately deferred as
+a genuinely different category of work (schema-introspection, not an
+ordinary scalar function — see the note below): `column_names_of`,
+`column_ifexists`.
+
+**`column_names_of`/`column_ifexists` scope note (2026-08-18)**: NOT
+attempted this session, deliberately. Both need to inspect the row's
+own SCHEMA (a list of column names) at the point of evaluation, not
+just operate on already-evaluated values the way every other function
+in this list does — `column_ifexists(name, default)` specifically
+needs to check whether a named column exists in the current tabular
+context and fall back to a literal default if not, which is closer in
+kind to `inferExprType`'s own schema-dependent needs (or
+`project-by-names`' own existing `column_names_of` integration inside
+that operator specifically) than a typical value-in-value-out scalar
+function. Building this properly means deciding how a schema-aware
+function integrates with the general expression evaluator (which
+currently receives a `*types.Schema` alongside the row, so the
+data IS available — but no existing scalar function reads the schema
+at all, only column VALUES), not just adding a `case` to an existing
+switch. Revisit as its own scoped unit of work with that design
+question settled first, rather than folding it in alongside the five
+straightforward additions above.
 
 ### Hash functions (`func_net.go`, alongside `hash_md5`/`hash_sha1`/`hash_sha256`)
 `hash` (generic, algorithm-selectable), `hash_combine`, `hash_many`,

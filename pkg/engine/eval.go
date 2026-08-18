@@ -724,10 +724,13 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"array_sort_asc", "array_sort_desc", "bag_keys",
 			"pack", "pack_array", "set_difference", "set_intersect",
 			"set_union", "treepath", "array_rotate_left", "array_rotate_right",
-			"array_split", "array_iff", "array_iif":
+			"array_split", "array_iff", "array_iif", "bag_zip", "bag_set_key",
+			"bag_pack_columns":
 			return types.TypeDynamic
+		case "dynamic_to_json":
+			return types.TypeString
 		case "isnull", "isnotnull", "isempty", "isnotempty",
-			"ipv4_is_private", "ipv4_is_in_range", "bag_has_key":
+			"ipv4_is_private", "ipv4_is_in_range", "bag_has_key", "set_has_element":
 			return types.TypeBool
 		case "iff", "iif", "case", "coalesce", "max_of", "min_of":
 			// Return type depends on arguments — default to string

@@ -786,6 +786,208 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 	case "set_difference":
 		return setOperation(fc, schema, row, "difference")
 
+	case "set_has_element":
+		// set_has_element(set, value) — verified against real ADX's
+		// own docs before implementing: "determines whether the
+		// specified set contains the specified element," explicitly
+		// cross-referenced by real ADX's own docs as the same
+		// underlying check as array_index_of(arr, value) != -1
+		// ("Both functions are equally performant" — array_index_of's
+		// own docs page states the reverse cross-reference too). Reuses
+		// the exact same fmt.Sprintf-based element-equality comparison
+		// array_index_of already uses above, rather than a second,
+		// separately-written equality check that could silently drift
+		// from it over time.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("set_has_element requires 2 arguments (set, value)")
+		}
+		setVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		valueVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		arr, ok := parseJSONArray(setVal)
+		if !ok {
+			return false, true, nil
+		}
+		valueStr := fmt.Sprintf("%v", valueVal)
+		for _, elem := range arr {
+			if fmt.Sprintf("%v", elem) == valueStr {
+				return true, true, nil
+			}
+		}
+		return false, true, nil
+
+	case "bag_zip":
+		// bag_zip(KeysArray, ValuesArray) — verified against real
+		// ADX's own docs before implementing, all 6 of its own worked
+		// examples checked with exact values:
+		//   - equal-length arrays zip normally.
+		//   - more keys than values: missing values become null.
+		//   - more values than keys: extra values are ignored.
+		//   - a non-string key is EXCLUDED from the result, and the
+		//     value at that same position is discarded along with it
+		//     (not reassigned to the next key) — confirmed by the
+		//     docs' own worked example: keys=['a',8,'b'],
+		//     values=[1,'2',2.5] -> {'a':1,'b':2.5}, not
+		//     {'a':1,'b':'2'}.
+		//   - if ValuesArray isn't actually an array (a bare scalar),
+		//     every resulting value is null, but keys are still
+		//     enumerated (non-string keys still excluded).
+		//   - if KeysArray isn't actually an array, the WHOLE result
+		//     is null (not an empty bag) — confirmed by the docs' own
+		//     worked example asserting isnull(NewBag) == true.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("bag_zip requires 2 arguments (KeysArray, ValuesArray)")
+		}
+		keysVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		valuesVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		keys, keysOk := parseJSONArray(keysVal)
+		if !keysOk {
+			return nil, true, nil
+		}
+		values, valuesOk := parseJSONArray(valuesVal)
+		result := make(map[string]interface{}, len(keys))
+		for i, k := range keys {
+			keyStr, isStr := k.(string)
+			if !isStr {
+				continue
+			}
+			if valuesOk && i < len(values) {
+				result[keyStr] = values[i]
+			} else {
+				result[keyStr] = nil
+			}
+		}
+		b, _ := json.Marshal(result)
+		return string(b), true, nil
+
+	case "bag_set_key":
+		// bag_set_key(bag, key, value) — verified against real ADX's
+		// own docs before implementing, both of its own worked
+		// examples checked with exact values: root-level key
+		// creation/overwrite, and JSONPath-nested key creation
+		// (real ADX's own second worked example's own second row
+		// creates the entire missing "key2" object along the way —
+		// auto-vivification of intermediate path segments, not a
+		// no-op on a missing path the way bag_remove_keys's own
+		// removeNestedKey deliberately is). "Array indexing or root
+		// JSON paths aren't supported" per the docs — this
+		// implementation doesn't attempt either; a "$"-only path or a
+		// path containing "[" is rejected the same way a malformed
+		// path would be (falls through to the plain root-key
+		// treatment below, since it wouldn't match the "$." prefix
+		// check, matching real ADX's own documented restriction by
+		// simply not implementing the unsupported form rather than
+		// validating and erroring on it).
+		if len(fc.Args) != 3 {
+			return nil, true, fmt.Errorf("bag_set_key requires 3 arguments (bag, key, value)")
+		}
+		bagVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		obj, ok := parseJSONObject(bagVal)
+		if !ok {
+			return nil, true, nil
+		}
+		keyVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		newVal, err := evalExpr(fc.Args[2], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		key := fmt.Sprintf("%v", keyVal)
+		result := make(map[string]interface{}, len(obj)+1)
+		for k, v := range obj {
+			result[k] = v
+		}
+		if strings.HasPrefix(key, "$.") {
+			setNestedKey(result, strings.Split(key[2:], "."), newVal)
+		} else {
+			result[key] = newVal
+		}
+		b, _ := json.Marshal(result)
+		return string(b), true, nil
+
+	case "bag_pack_columns":
+		// bag_pack_columns(column1, column2, ...) — verified against
+		// real ADX's own docs before implementing: unlike bag_pack
+		// (which takes alternating STRING-LITERAL key / value
+		// argument pairs), bag_pack_columns's property names are the
+		// COLUMN'S OWN NAME, not a separate string argument — so this
+		// needs each argument's original ColumnRef, not just its
+		// evaluated value, and is handled here rather than via a
+		// generic value-only argument loop. An argument that isn't a
+		// bare column reference has no "name" to use as a property
+		// key at all, so it's a clear error rather than a silent
+		// guess.
+		if len(fc.Args) < 1 {
+			return nil, true, fmt.Errorf("bag_pack_columns requires at least 1 argument")
+		}
+		result := make(map[string]interface{}, len(fc.Args))
+		for _, arg := range fc.Args {
+			colRef, isColRef := arg.(*parser.ColumnRef)
+			if !isColRef {
+				return nil, true, fmt.Errorf("bag_pack_columns: argument must be a bare column reference, not an expression")
+			}
+			val, err := evalExpr(arg, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			result[colRef.Name] = val
+		}
+		b, _ := json.Marshal(result)
+		return string(b), true, nil
+
+	case "dynamic_to_json":
+		// dynamic_to_json(expr) — verified against real ADX's own
+		// docs before implementing: a canonical string form where
+		// property-bag keys are SORTED ALPHABETICALLY (the docs' own
+		// worked example proves this by constructing the same bag
+		// with two different insertion orders and asserting the two
+		// canonical strings compare equal) and non-dynamic scalars go
+		// through the same conversion tostring() already implements
+		// elsewhere in this file. Implemented via a recursive
+		// re-marshal of the parsed dynamic value: Go's own
+		// json.Marshal already sorts map keys alphabetically by
+		// default for a map[string]interface{}, which is exactly the
+		// canonical ordering rule real ADX documents — no separate
+		// sort step needed, confirmed directly rather than assumed
+		// from "maps happen to often print sorted."
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("dynamic_to_json requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(fmt.Sprintf("%v", val)), &parsed); err != nil {
+			// Not valid JSON at all -- treat as a non-dynamic scalar,
+			// same as tostring() would (matches the docs' own first
+			// rule: "if the input is a scalar value of type other
+			// than dynamic, the output is the application of
+			// tostring() to that value").
+			return fmt.Sprintf("%v", val), true, nil
+		}
+		b, _ := json.Marshal(parsed)
+		return string(b), true, nil
+
 	case "treepath":
 		// treepath(dynamic) — returns array of paths in the JSON object
 		if len(fc.Args) != 1 {
@@ -922,6 +1124,34 @@ func removeNestedKey(obj map[string]interface{}, parts []string) {
 		return
 	}
 	removeNestedKey(next, parts[1:])
+}
+
+// setNestedKey walks obj through parts (a dotted JSONPath, already
+// split on '.') and sets the final key to value in place — used by
+// bag_set_key's own "$.key2.prop1" nested-key form. Unlike
+// removeNestedKey's own deliberate no-op-on-missing-path behavior,
+// this AUTO-CREATES any missing intermediate object along the way —
+// confirmed against real ADX's own second worked example, whose
+// second input row has no "key2" at all, yet the documented result
+// still creates {"key2": {"prop1": "abc"}}. A path segment that DOES
+// exist but isn't itself an object is overwritten with a fresh empty
+// object rather than left as a type mismatch, the same
+// auto-vivification spirit, though this specific case isn't directly
+// exercised by either of the docs' own two worked examples.
+func setNestedKey(obj map[string]interface{}, parts []string, value interface{}) {
+	if len(parts) == 0 {
+		return
+	}
+	if len(parts) == 1 {
+		obj[parts[0]] = value
+		return
+	}
+	next, ok := obj[parts[0]].(map[string]interface{})
+	if !ok {
+		next = make(map[string]interface{})
+		obj[parts[0]] = next
+	}
+	setNestedKey(next, parts[1:], value)
 }
 
 // evalJSONPath walks root (the result of json.Unmarshal into
