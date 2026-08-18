@@ -705,8 +705,23 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "dayofweek":
 			return types.TypeTimespan
 		case "datetime_diff", "dayofmonth", "getmonth", "getyear",
-			"hourofday", "monthofyear", "strlen", "toint", "tolong":
+			"hourofday", "monthofyear", "strlen", "tolong":
 			return types.TypeLong
+		case "toint":
+			// Found and fixed 2026-08-18 while implementing tohex():
+			// toint() was previously grouped with tolong() here and
+			// both returned TypeLong, silently erasing the int/long
+			// distinction for anything downstream that needs the
+			// STATIC type (not just the runtime int64 value both
+			// share internally). This is exactly the kind of gap
+			// that mattered concretely for tohex()'s own real,
+			// documented behavior: a negative value's minimum
+			// two's-complement hex width depends on whether it's an
+			// `int` (32-bit, 8 hex chars) or a `long` (64-bit, 16 hex
+			// chars) -- tohex(toint(-256), 8) == "ffffff00" only
+			// works correctly once toint() is actually distinguishable
+			// from tolong() via inferExprType, not just by name.
+			return types.TypeInt
 		case "todouble", "toreal", "series_cosine_similarity", "series_dot_product", "array_sum":
 			return types.TypeReal
 		case "tolower", "toupper", "tostring", "strcat", "format_datetime",
@@ -718,6 +733,8 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			return types.TypeDynamic
 		case "extract", "extract_json", "extractjson":
 			return types.TypeString
+		case "toguid":
+			return types.TypeGUID
 		case "indexof", "indexof_regex", "countof", "parse_ipv4", "array_length", "array_index_of", "has_any_index", "hash", "hash_xxhash64":
 			return types.TypeLong
 		case "array_concat", "array_reverse", "array_slice",
@@ -725,7 +742,17 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"pack", "pack_array", "set_difference", "set_intersect",
 			"set_union", "treepath", "array_rotate_left", "array_rotate_right",
 			"array_split", "array_iff", "array_iif", "bag_zip", "bag_set_key",
-			"bag_pack_columns":
+			"bag_pack_columns", "parse_json", "todynamic":
+			// parse_json/todynamic found missing from this switch
+			// entirely 2026-08-18 while implementing gettype(): with
+			// no case here, both fell through to the FuncCall
+			// switch's own TypeString default, so
+			// gettype(parse_json(...)) always reported "string"
+			// regardless of the parsed value's own actual shape --
+			// silently wrong for every dynamic-typed case gettype()
+			// exists to distinguish (int/dictionary/array/etc), found
+			// live by testing gettype's own worked example against
+			// this engine, not hypothetically.
 			return types.TypeDynamic
 		case "dynamic_to_json":
 			return types.TypeString

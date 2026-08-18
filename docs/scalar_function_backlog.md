@@ -133,11 +133,26 @@ guessing (e.g. a future public disclosure, or a way to query a real
 ADX cluster directly to brute-force-fit candidate algorithms against
 many more input/output pairs than the one worked example provides).
 
-### Type conversion (`func_convert.go`)
-`toguid`, `tohex`, `todecimal`, `gettype` (type introspection — returns
-a value's KQL type name as a string; likely near-trivial given this
-engine's own `inferValType`/`KQLType` machinery already exists
-internally)
+### Type conversion (`func_net.go`) — CLOSED 2026-08-18
+**`toguid`, `tohex`, `gettype` CLOSED** — see `kql_coverage.md`'s
+Sprint 25 entry for full detail, including three real, pre-existing
+`inferExprType` bugs found and fixed while verifying `tohex`/`gettype`
+against real ADX's own worked examples (missing cases for
+`parse_json`/`todynamic` and `toguid`, and `toint` incorrectly grouped
+with `tolong`). Implemented in `func_net.go`, not `func_convert.go` as
+this list originally guessed — placed alongside the existing
+`hash`/`new_guid` functions since `toguid`/`tohex`/`gettype` all
+depend on the same `inferExprType`-driven static-type-resolution
+pattern `hash()` established in Sprint 24, not because of file
+organization alone.
+
+**`todecimal` scope note (2026-08-18, genuinely BLOCKED, same root
+cause as `parse_version`)**: real ADX's own docs confirm `todecimal()`
+returns a genuine `decimal` scalar (128-bit), verified via its own
+worked example (`todecimal("123.45678") == decimal(123.45678)`). This
+engine has no decimal/big-integer type anywhere in `pkg/types` (the
+same gap documented in detail under `parse_version`'s own scope note
+above) — revisit both together if a `TypeDecimal` is ever added.
 
 ### Base64 / compression (`func_net.go`, alongside the existing base64 pair)
 `base64_decode_toarray`, `base64_decode_toguid`,
