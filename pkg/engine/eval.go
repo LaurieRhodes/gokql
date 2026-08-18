@@ -718,7 +718,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			return types.TypeDynamic
 		case "extract", "extract_json", "extractjson":
 			return types.TypeString
-		case "indexof", "indexof_regex", "countof", "parse_ipv4", "array_length", "array_index_of", "has_any_index":
+		case "indexof", "indexof_regex", "countof", "parse_ipv4", "array_length", "array_index_of", "has_any_index", "hash", "hash_xxhash64":
 			return types.TypeLong
 		case "array_concat", "array_reverse", "array_slice",
 			"array_sort_asc", "array_sort_desc", "bag_keys",

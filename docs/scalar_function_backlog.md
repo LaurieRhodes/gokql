@@ -97,8 +97,41 @@ question settled first, rather than folding it in alongside the five
 straightforward additions above.
 
 ### Hash functions (`func_net.go`, alongside `hash_md5`/`hash_sha1`/`hash_sha256`)
-`hash` (generic, algorithm-selectable), `hash_combine`, `hash_many`,
-`hash_xxhash64`
+**`hash`/`hash_xxhash64` CLOSED 2026-08-18** — see `kql_coverage.md`'s
+Sprint 24 entry for full detail, including a correction to this list's
+own earlier assumption: `hash()` is NOT "generic, algorithm-
+selectable" as originally noted here — real ADX's own docs state it
+always uses xxhash64 internally (this was caught by reading the real
+docs before implementing, not carried forward as assumed). Verified
+bit-for-bit against real ADX's own worked examples, including a
+non-obvious finding for the datetime case (see the Sprint 24 entry).
+
+**`hash_combine`/`hash_many` scope note (2026-08-18, genuinely
+BLOCKED, not just unstarted)**: `hash_combine`'s own real worked
+example gives exact input/output values (`hash("Hello")=753694413698530628`,
+`hash("World")=1846988464401551951`, `combined=hash_combine(h1,h2)=-1440138333540407281`),
+but the combine algorithm producing that third value from the first
+two isn't documented anywhere, and isn't in any public source either
+— the `microsoft/Kusto-Query-Language` GitHub repo (the only public
+Kusto source) is the parser and semantic analyzer only, not the query
+execution engine that would contain this function's real
+implementation. Five standard candidate combine algorithms were tried
+directly against the real worked example and NONE matched: a
+boost-style 64-bit golden-ratio combine (both argument orders), a
+plain XOR, addition, an FNV-style multiply-and-add, and re-hashing the
+16 concatenated bytes of the two inputs (both byte orders) via
+xxhash64 again. Shipping a guessed combine algorithm that merely
+"produces a plausible-looking int64" would be a real silent-wrong-
+answer risk — anyone using `hash_combine`/`hash_many` for
+cross-system-comparable deduplication keys would get values that
+silently diverge from real ADX's own. `hash_many()`'s own docs state
+it applies `hash()` to each argument and then combines the results —
+the exact same undocumented combine step, so it's blocked for the
+identical reason, not a separate investigation. Revisit only if the
+actual combine algorithm becomes available from a source other than
+guessing (e.g. a future public disclosure, or a way to query a real
+ADX cluster directly to brute-force-fit candidate algorithms against
+many more input/output pairs than the one worked example provides).
 
 ### Type conversion (`func_convert.go`)
 `toguid`, `tohex`, `todecimal`, `gettype` (type introspection — returns

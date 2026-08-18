@@ -5,18 +5,34 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
 	"strconv"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
+
 	"github.com/LaurieRhodes/gokql/pkg/engine/uaparser"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
+
+// dotnetTicksAtUnixEpoch is the number of .NET "ticks" (100-nanosecond
+// intervals since 0001-01-01T00:00:00) at the Unix epoch
+// (1970-01-01T00:00:00) -- the well-known .NET constant
+// DateTime.UnixEpoch.Ticks. Used only by hash()/hash_xxhash64() to
+// convert this engine's own internal datetime representation
+// (nanoseconds since the UNIX epoch) into the representation real
+// ADX actually hashes (see the hash() case's own doc comment for the
+// full verification story: this constant was independently derived
+// and confirmed to reproduce real ADX's own documented worked example
+// exactly, not copied on faith from a single source).
+const dotnetTicksAtUnixEpoch = 621355968000000000
 
 // evalNetFunc handles IP, URL, encoding, and hashing functions.
 func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
@@ -977,6 +993,87 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		}
 		h := sha1.Sum([]byte(fmt.Sprintf("%v", val)))
 		return fmt.Sprintf("%x", h), true, nil
+
+	case "hash", "hash_xxhash64":
+		// hash(source [, mod]) / hash_xxhash64(source [, mod]) —
+		// verified against real ADX's own docs before implementing:
+		// both use the xxhash64 algorithm (real ADX's own hash()
+		// docs state this explicitly, noting it "may change"; this
+		// engine implements both names identically since that IS
+		// what both currently document). Genuinely bit-exact verified
+		// against real ADX's own worked examples, not just "produces
+		// A hash":
+		//   hash("World")                    == 1846988464401551951
+		//   hash("World", 100)                == 51
+		//   hash(datetime("2015-01-01"))      == 1380966698541616202
+		// The string case matches xxhash64 of the raw UTF-8 bytes
+		// directly (github.com/cespare/xxhash/v2, seed 0), confirmed
+		// exactly. The datetime case does NOT match hashing any
+		// textual form, or this engine's own internal nanoseconds-
+		// since-Unix-epoch representation directly -- it only matches
+		// the little-endian 8-byte encoding of the value converted to
+		// REAL ADX'S OWN internal representation: .NET "ticks" (100ns
+		// intervals since 0001-01-01, not 1970-01-01), independently
+		// derived (dotnetTicksAtUnixEpoch, the well-known .NET
+		// DateTime.UnixEpoch.Ticks constant) and confirmed to
+		// reproduce the exact documented value bit-for-bit.
+		//
+		// long/int/real/timespan are handled by the same
+		// little-endian-8-byte-of-the-underlying-value principle
+		// (timespan needs no epoch conversion, since this engine's
+		// own internal timespan ticks are already the same 100ns-tick
+		// unit real ADX itself uses) -- this is a REASONABLE
+		// INFERENCE from the one confirmed non-string case (datetime),
+		// not independently worked-example-verified for long/int/real/
+		// timespan specifically; no worked example for those types
+		// was found. Every other type (bool, guid, dynamic) falls
+		// back to hashing the value's own string form, the safest
+		// defensible default absent any evidence either way -- NOT
+		// claimed to match real ADX bit-for-bit for those types.
+		if len(fc.Args) < 1 || len(fc.Args) > 2 {
+			return nil, true, fmt.Errorf("%s requires 1 or 2 arguments (source [, mod])", fc.Name)
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		argType := inferExprType(fc.Args[0], schema)
+		var data []byte
+		switch argType {
+		case types.TypeDatetime:
+			ticks := types.ToInt64(val)/100 + dotnetTicksAtUnixEpoch
+			data = make([]byte, 8)
+			binary.LittleEndian.PutUint64(data, uint64(ticks))
+		case types.TypeTimespan, types.TypeLong, types.TypeInt:
+			data = make([]byte, 8)
+			binary.LittleEndian.PutUint64(data, uint64(types.ToInt64(val)))
+		case types.TypeReal:
+			data = make([]byte, 8)
+			binary.LittleEndian.PutUint64(data, math.Float64bits(types.ToFloat64(val)))
+		default:
+			data = []byte(fmt.Sprintf("%v", val))
+		}
+		h := xxhash.Sum64(data)
+		if len(fc.Args) == 2 {
+			modVal, err := evalExpr(fc.Args[1], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			mod := types.ToInt64(modVal)
+			if mod > 0 {
+				// Unsigned arithmetic throughout: h can exceed
+				// math.MaxInt64 (becoming negative once cast), and
+				// real ADX's own contract requires the result in
+				// [0, mod-1] regardless -- verified directly against
+				// hash("World", 100) == 51 (1846988464401551951 mod
+				// 100 == 51).
+				return int64(h % uint64(mod)), true, nil
+			}
+		}
+		return int64(h), true, nil
 
 	case "new_guid":
 		// Generate a v4 UUID
