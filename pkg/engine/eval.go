@@ -694,7 +694,9 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "now", "ago", "datetime", "todatetime", "make_datetime",
 			"startofday", "startofweek", "startofmonth", "startofyear",
 			"endofday", "endofweek", "endofmonth",
-			"unixtime_seconds_todatetime", "unixtime_milliseconds_todatetime":
+			"unixtime_seconds_todatetime", "unixtime_milliseconds_todatetime",
+			"unixtime_microseconds_todatetime", "unixtime_nanoseconds_todatetime",
+			"datetime_local_to_utc", "datetime_utc_to_local":
 			return types.TypeDatetime
 		case "bin", "floor":
 			// bin returns the same type as its first argument
@@ -705,7 +707,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		case "dayofweek":
 			return types.TypeTimespan
 		case "datetime_diff", "dayofmonth", "getmonth", "getyear",
-			"hourofday", "monthofyear", "strlen", "tolong":
+			"hourofday", "monthofyear", "strlen", "tolong", "datetime_part", "datepart":
 			return types.TypeLong
 		case "toint":
 			// Found and fixed 2026-08-18 while implementing tohex():

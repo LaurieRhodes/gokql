@@ -22,6 +22,15 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	_ "time/tzdata" // embed the IANA timezone database into the binary
+	// so datetime_local_to_utc()/datetime_utc_to_local() (pkg/engine/
+	// func_datetime.go) work regardless of whether the deployment
+	// environment has /usr/share/zoneinfo or equivalent system tz
+	// data available -- verified this matters (this dev environment
+	// does have system zoneinfo present, so both work either way
+	// here, but a container or minimal OS image often doesn't; this
+	// import removes that external dependency entirely, a real
+	// portability improvement, not just defensive boilerplate).
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
 	"github.com/LaurieRhodes/gokql/pkg/engine"

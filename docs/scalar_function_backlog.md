@@ -183,13 +183,30 @@ protection) was reverse-engineered from its own worked examples, not
 assumed from the name — a naive single-scan priority algorithm does
 NOT reproduce real ADX's own documented order-reversal example.
 
-### Datetime (`func_datetime.go`, alongside the existing, large datetime family)
-`datetime_part` (verify against the real docs — likely a single
-function that dispatches to the same logic already backing
-`year`/`month`/`day`/etc., worth checking whether it can be a thin
-wrapper rather than new logic), `datetime_local_to_utc`,
-`datetime_utc_to_local`, `datetime_list_timezones`,
+### Datetime (`func_datetime.go`) — CLOSED 2026-08-18, one item deferred
+**`datetime_part`/`datepart`, `datetime_local_to_utc`, `datetime_utc_to_local`,
 `unixtime_microseconds_todatetime`, `unixtime_nanoseconds_todatetime`
+all implemented** — see `kql_coverage.md`'s Sprint 28 entry for full
+detail. `datetime_part` turned out to need direct implementation
+against Go's own `time.Time` methods rather than a thin wrapper —
+checked first whether this engine had standalone `year()`/`month()`/
+etc. functions to delegate to (as the backlog's own note suggested
+checking) and found it doesn't; only differently-named aliases
+(`getyear()`, `monthofyear()`, `hourofday()`) exist.
+
+**`datetime_list_timezones` scope note (2026-08-18, deliberately
+deferred)**: Go's standard library has no clean API to enumerate the
+full IANA timezone database (no `time.Zones()` or equivalent) — the
+only portable options are parsing the raw `zone1970.tab`/`zone.tab`
+file from the system's `/usr/share/zoneinfo` directory (filesystem-
+dependent, and not guaranteed present on every deployment target even
+with `time/tzdata` embedded, since that only embeds the individual
+zone *data* files, not a separate enumerable index) or hard-coding a
+zone-name list (risky — silently drifts from the real IANA database
+over time). There's also no worked example to verify output against,
+since real ADX's own version returns a large table, not a single
+checkable value. Deferred rather than shipped as a best-effort,
+unverifiable listing.
 
 ### IPv4 / IPv6 — CLOSED 2026-08-17
 `has_any_ipv4`, `has_any_ipv4_prefix`, `has_ipv4_prefix`,

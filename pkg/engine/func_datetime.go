@@ -335,6 +335,130 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		ms := types.ToFloat64(val)
 		return int64(ms * 1e6), true, nil
 
+	case "unixtime_microseconds_todatetime":
+		// verified against real ADX's own docs before implementing:
+		// same linear-scaling family as the already-implemented
+		// seconds/milliseconds siblings, "a datetime value that
+		// occurs before the epoch time has a negative timestamp
+		// value" — negative input is a real, intended case, not an
+		// error, handled naturally by the same multiply-by-scale
+		// arithmetic already used for the sibling functions.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("unixtime_microseconds_todatetime requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		us := types.ToFloat64(val)
+		return int64(us * 1e3), true, nil
+
+	case "unixtime_nanoseconds_todatetime":
+		// verified against real ADX's own docs before implementing:
+		// this engine's own internal datetime representation IS
+		// already unix-epoch nanoseconds, so this is a direct
+		// pass-through (via types.ToInt64 rather than the
+		// float64-then-scale pattern the coarser-granularity siblings
+		// use, since no scaling multiplication is needed here and an
+		// int64->float64->int64 round trip risks losing precision at
+		// nanosecond scale for large epoch values).
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("unixtime_nanoseconds_todatetime requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		return types.ToInt64(val), true, nil
+
+	case "datetime_local_to_utc":
+		// datetime_local_to_utc(from, timezone) — verified against
+		// real ADX's own docs before implementing, all 3 rows of its
+		// own worked example checked with exact values
+		// (datetime(2020-02-02 20:02:20) local in 'Europe/Paris' ->
+		// 2020-02-02 19:02:20 UTC; in 'America/Chicago' -> 2020-02-03
+		// 02:02:20 UTC; in 'US/Pacific' -> 2020-02-03 04:02:20 UTC).
+		// Real ADX's own docs state real KQL datetime values are
+		// ALWAYS stored as UTC internally (confirmed on the datetime
+		// data type's own doc page) — so "from" here is really a raw
+		// wall-clock reading that needs to be REINTERPRETED as
+		// belonging to the named timezone, not an actual UTC instant
+		// shifted by an offset. Implemented by extracting this
+		// engine's own stored Y/M/D/H/M/S/ns components (via
+		// time.Unix(...).UTC(), which is how this engine always reads
+		// its own internal representation) and reconstructing a NEW
+		// time.Time using those exact same numbers but tagged with
+		// the target IANA location instead of UTC — Go's own
+		// time.Date does exactly this reinterpretation when given a
+		// non-UTC *time.Location, then .UTC() on the result performs
+		// the real timezone-offset conversion.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("datetime_local_to_utc requires 2 arguments (from, timezone)")
+		}
+		fromVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		tzVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if fromVal == nil {
+			return nil, true, nil
+		}
+		loc, lerr := time.LoadLocation(fmt.Sprintf("%v", tzVal))
+		if lerr != nil {
+			return nil, true, nil
+		}
+		wall := time.Unix(0, types.ToInt64(fromVal)).UTC()
+		reinterpreted := time.Date(wall.Year(), wall.Month(), wall.Day(),
+			wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc)
+		return reinterpreted.UTC().UnixNano(), true, nil
+
+	case "datetime_utc_to_local":
+		// datetime_utc_to_local(from, timezone) — the documented
+		// inverse of datetime_local_to_utc(), verified against real
+		// ADX's own worked example: real UTC instant converted to the
+		// target zone's own wall-clock reading, then that reading is
+		// RE-TAGGED as UTC (matching real ADX's own "datetime is
+		// always UTC internally, so a local reading is represented by
+		// storing its own numbers as if they were UTC" convention —
+		// same one datetime_local_to_utc's own comment above
+		// describes from the other direction). Implemented by taking
+		// this engine's own stored instant (a true UTC moment),
+		// converting to the target zone via .In(loc), then
+		// reconstructing a UTC-tagged time.Time from THAT
+		// representation's own Y/M/D/H/M/S/ns components.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("datetime_utc_to_local requires 2 arguments (from, timezone)")
+		}
+		fromVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		tzVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if fromVal == nil {
+			return nil, true, nil
+		}
+		loc, lerr := time.LoadLocation(fmt.Sprintf("%v", tzVal))
+		if lerr != nil {
+			return nil, true, nil
+		}
+		utcInstant := time.Unix(0, types.ToInt64(fromVal)).UTC()
+		local := utcInstant.In(loc)
+		relabeled := time.Date(local.Year(), local.Month(), local.Day(),
+			local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
+		return relabeled.UnixNano(), true, nil
+
 	case "datetime_add":
 		// datetime_add(part, amount, datetime)
 		if len(fc.Args) != 3 {
@@ -383,6 +507,72 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 			return nil, true, fmt.Errorf("unknown datetime_add part: %q", part)
 		}
 		return t.UnixNano(), true, nil
+
+	case "datetime_part", "datepart":
+		// datetime_part(part, datetime) — verified against real ADX's
+		// own docs before implementing, its own full 12-part worked
+		// example checked with exact values against
+		// datetime(2017-10-30 01:02:03.7654321): year=2017,
+		// quarter=4, month=10, week_of_year=44, day=30, dayOfYear=303,
+		// hour=1, minute=2, second=3, millisecond=765,
+		// microsecond=765432, nanosecond=765432100. `datepart` is
+		// real ADX's own documented deprecated alias, routed
+		// identically. week_of_year uses the same ISO 8601 week
+		// calculation (Go's own t.ISOWeek()) already established and
+		// verified for the pre-existing weekofyear/week_of_year
+		// scalar function elsewhere in this file, reused directly
+		// rather than reimplemented, so the two can't silently drift
+		// apart. Implemented directly against Go's time.Time methods
+		// rather than delegating to this engine's own year()/month()/
+		// etc functions — checked first and found those don't
+		// actually exist as standalone callable functions in this
+		// engine (only getyear()/monthofyear()/hourofday()-style
+		// named aliases do), so a "thin wrapper" as the backlog
+		// suggested checking for wasn't actually available to wrap.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("%s requires 2 arguments (part, datetime)", fc.Name)
+		}
+		partVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		dtVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if dtVal == nil {
+			return nil, true, nil
+		}
+		t := time.Unix(0, types.ToInt64(dtVal)).UTC()
+		switch strings.ToLower(fmt.Sprintf("%v", partVal)) {
+		case "year":
+			return int64(t.Year()), true, nil
+		case "quarter":
+			return int64((int(t.Month())-1)/3 + 1), true, nil
+		case "month":
+			return int64(t.Month()), true, nil
+		case "week_of_year":
+			_, week := t.ISOWeek()
+			return int64(week), true, nil
+		case "day":
+			return int64(t.Day()), true, nil
+		case "dayofyear":
+			return int64(t.YearDay()), true, nil
+		case "hour":
+			return int64(t.Hour()), true, nil
+		case "minute":
+			return int64(t.Minute()), true, nil
+		case "second":
+			return int64(t.Second()), true, nil
+		case "millisecond":
+			return int64(t.Nanosecond() / 1_000_000), true, nil
+		case "microsecond":
+			return int64(t.Nanosecond() / 1_000), true, nil
+		case "nanosecond":
+			return int64(t.Nanosecond()), true, nil
+		default:
+			return nil, true, fmt.Errorf("%s: unknown part %q", fc.Name, fmt.Sprintf("%v", partVal))
+		}
 
 	case "totimespan":
 		// totimespan(value) — convert string or number to timespan (ticks)
