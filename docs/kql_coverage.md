@@ -121,7 +121,7 @@ None known — the previous version's "hasprefix/hassuffix" and "like/!like" ent
 
 Functions are organized across focused source files.
 
-#### String — `func_string.go` (27 functions)
+#### String — `func_string.go` (28 functions)
 
 | Function                     | Notes                                         |
 | ----------------------------- | ------------------------------------------------ |
@@ -786,7 +786,7 @@ Closes the last item of the priority list: the `inferExprType` gap found (not fi
 | ---------------------------- | ----------- | --------- | -------- | -------------------------------------- |
 | Tabular operators                | 41          | 53        | 77%      | 41 implemented + 0 not-yet-implemented + 12 out-of-scope = 53, a full, cross-checked enumeration (2026-08-14/15), not the earlier, incomplete 47 |
 | Comparison operators                | 22          | 35        | 63%*     | Effectively complete in practice — 0 known gaps; the 35 denominator counts individual grammar symbols, this row counts table rows (see methodology note above) |
-| Scalar functions                       | ~183        | 420       | 44%      | 300+ are geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
+| Scalar functions                       | ~203        | 420       | 48%      | Row was stale at ~183 (last recomputed pre-Sprint 15); corrected 2026-08-18 — Sprint 15 brought it to ~200 (trig, IPv4/IPv6, parse_command_line, parse_user_agent), Sprints 18-19 added 3 more (indexof_regex, extract_json, extractjson). 300+ of the remaining gap is geo/series/obscure; series_* Tiers 1-3 (31 functions, minus series_stats) closed 2026-08-17 |
 | Aggregation functions                     | 24          | 61        | 39%*     | All common + conditional variants covered — remaining gap is entirely the sketch/niche family (hll, tdigest, buildschema, weighted percentiles); denominator counts symbols, this row counts table rows |
 | File formats                                 | 4           | —         | —        | CSV, JSON, NDJSON, Parquet (xlsx deliberately removed 2026-08-15, see File-Based Querying section) |
 | **Practical coverage**                          | —           | —         | **~93%** | **Of security analyst queries, plus a real, persisted-function/materialized-view/federation layer beyond raw language coverage** |
