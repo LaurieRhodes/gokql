@@ -123,6 +123,15 @@ fetchable, which removed the blocker). Still open: `parse_version`,
 + dot-access — verify whether it's meaningfully different before
 building it as a new thing), `indexof_regex`.
 
+**`indexof_regex` note (2026-08-18)**: this project's whole regex
+foundation (`extract`, `extract_all`, `replace_regex`, the `parse`
+operator, `@"..."` verbatim strings) was substantially audited and
+fixed this session (see `kql_coverage.md`'s Sprint 16 entry) — verify
+`indexof_regex`'s exact real-ADX return contract against its own docs
+before implementing (don't assume it mirrors `indexof`'s own semantics
+without checking), but the underlying regex infrastructure it would
+need is now confirmed solid, not a fresh unknown.
+
 **`parse_user_agent` scope note — SUPERSEDED 2026-08-18, see
 `kql_coverage.md`'s Sprint 15 entry.** (Original 2026-08-17 note,
 kept for history: real ADX's own docs state its implementation is
