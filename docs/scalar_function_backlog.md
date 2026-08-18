@@ -113,24 +113,32 @@ committed (an embedded-prefix offset decision that inspected the
 parsed byte value instead of the address's own source text).
 
 ### Parse functions (`func_string.go` / `func_net.go`)
-**`parse_command_line` and `parse_user_agent` CLOSED (2026-08-17 and
-2026-08-18)** — see `kql_coverage.md` for full detail on both,
-including `parse_user_agent`'s own reversal note (the earlier
+**`parse_command_line`, `parse_user_agent`, `indexof_regex` CLOSED
+(2026-08-17/18)** — see `kql_coverage.md` for full detail on all
+three, including `parse_user_agent`'s own reversal note (the earlier
 deferral below was based on the actual `ua-parser/uap-core` regex
 database being assumed unfetchable; it turned out to be public and
-fetchable, which removed the blocker). Still open: `parse_version`,
-`parse_xml`, `extract_json` (a single-value shortcut over `parse_json`
-+ dot-access — verify whether it's meaningfully different before
-building it as a new thing), `indexof_regex`.
+fetchable, which removed the blocker) and `indexof_regex`'s own note
+(a real discrepancy found between two sections of its own doc page).
+Still open: `parse_version`, `parse_xml`, `extract_json` (a
+single-value shortcut over `parse_json` + dot-access — verify whether
+it's meaningfully different before building it as a new thing).
 
-**`indexof_regex` note (2026-08-18)**: this project's whole regex
-foundation (`extract`, `extract_all`, `replace_regex`, the `parse`
-operator, `@"..."` verbatim strings) was substantially audited and
-fixed this session (see `kql_coverage.md`'s Sprint 16 entry) — verify
-`indexof_regex`'s exact real-ADX return contract against its own docs
-before implementing (don't assume it mirrors `indexof`'s own semantics
-without checking), but the underlying regex infrastructure it would
-need is now confirmed solid, not a fresh unknown.
+**`indexof_regex`'s own scope note (2026-08-18, superseding the
+"verify before implementing" note below since it's now done)**:
+implemented and verified exactly against real ADX's own worked example
+(`indexof-regex-function.md`), all 5 cases, exact output values (0, 3,
+-1, -1, null). A genuine discrepancy was found between two sections of
+that SAME doc page while verifying: the Parameters table's prose for
+`start` describes a negative value as offsetting the search start from
+the end of the string (this reads like boilerplate copied from
+`indexof()`'s own doc), but the Returns section states plainly "returns
+null if start is less than 0" — and the worked example's own `idx5`
+case (`start=-1`) confirms a null result, not an end-relative offset.
+Implemented per the worked example (ground truth) over the ambiguous
+prose. `occurrence < 0` and `length < -1` also return null per the same
+Returns section, though neither is exercised by the worked example's 5
+cases — taken as stated since nothing contradicts them.
 
 **`parse_user_agent` scope note — SUPERSEDED 2026-08-18, see
 `kql_coverage.md`'s Sprint 15 entry.** (Original 2026-08-17 note,

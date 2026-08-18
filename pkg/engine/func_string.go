@@ -491,6 +491,99 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		return int64(start + idx), true, nil
 
+	case "indexof_regex":
+		// indexof_regex(string, match [, start [, length [, occurrence]]])
+		// Verified against real ADX's own docs (indexof-regex-function.md)
+		// and its full worked example with exact output values, fetched
+		// directly rather than assumed to mirror indexof()'s semantics:
+		//   idx1 = indexof_regex("abcabc", @"a.c")                    -> 0
+		//   idx2 = indexof_regex("abcabcdefg", @"a.c", 0, 9, 2)       -> 3
+		//   idx3 = indexof_regex("abcabc", @"a.c", 1, -1, 2)          -> -1
+		//   idx4 = indexof_regex("ababaa", @"a.a", 0, -1, 2)          -> -1
+		//   idx5 = indexof_regex("abcabc", @"a|ab", -1)               -> null
+		// A genuine discrepancy was found between two sections of the
+		// SAME doc page while verifying this: the Parameters table's
+		// prose for `start` says "a negative value will offset the
+		// starting search position from the end of the string" (this
+		// looks like boilerplate copied from indexof()'s own doc), but
+		// the Returns section states plainly "returns null if start is
+		// less than 0" -- and the worked example's own idx5 case
+		// (start=-1) confirms a null result, not an end-relative
+		// offset. The worked example (ground truth) wins over the
+		// ambiguous/self-contradicting prose: negative start -> null
+		// here, no offset-from-end behavior implemented.
+		// occurrence < 0 or length < -1 also -> null, per the same
+		// Returns section, also unverified against a worked example
+		// (none of the 5 cases exercise those two) but taken as stated
+		// since nothing contradicts it.
+		// Matches are non-overlapping (explicitly documented), found
+		// via Go's regexp.FindAllStringIndex, which already returns
+		// successive non-overlapping leftmost matches -- the same RE2
+		// engine already used throughout this codebase for extract(),
+		// extract_all(), replace_regex(), and the parse operator, so no
+		// new regex semantics are introduced here.
+		if len(fc.Args) < 2 || len(fc.Args) > 5 {
+			return nil, true, fmt.Errorf("indexof_regex requires 2-5 arguments (string, match [, start [, length [, occurrence]]])")
+		}
+		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		matchVal, err := evalExpr(fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if sourceVal == nil || matchVal == nil {
+			return nil, true, nil
+		}
+		s := fmt.Sprintf("%v", sourceVal)
+		re, err := regexp.Compile(fmt.Sprintf("%v", matchVal))
+		if err != nil {
+			return nil, true, nil
+		}
+		start := 0
+		if len(fc.Args) >= 3 {
+			sv, err := evalExpr(fc.Args[2], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			start = int(types.ToInt64(sv))
+		}
+		length := -1
+		if len(fc.Args) >= 4 {
+			lv, err := evalExpr(fc.Args[3], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			length = int(types.ToInt64(lv))
+		}
+		occurrence := 1
+		if len(fc.Args) >= 5 {
+			ov, err := evalExpr(fc.Args[4], schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			occurrence = int(types.ToInt64(ov))
+		}
+		if start < 0 || occurrence < 0 || length < -1 {
+			return nil, true, nil
+		}
+		if start >= len(s) {
+			return int64(-1), true, nil
+		}
+		searchEnd := len(s)
+		if length != -1 {
+			if start+length < searchEnd {
+				searchEnd = start + length
+			}
+		}
+		window := s[start:searchEnd]
+		matches := re.FindAllStringIndex(window, -1)
+		if occurrence == 0 || occurrence > len(matches) {
+			return int64(-1), true, nil
+		}
+		return int64(start + matches[occurrence-1][0]), true, nil
+
 	case "has_any_index":
 		// has_any_index(source, values) — verified against real ADX's
 		// own has_any_index docs before implementing: "searches the

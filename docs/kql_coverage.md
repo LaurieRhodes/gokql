@@ -140,6 +140,7 @@ Functions are organized across focused source files.
 | replace_regex                   | Regex replacement                                  |
 | trim / trim_start / trim_end    | Regex-based trimming                               |
 | indexof                         | First occurrence index (with optional start)       |
+| indexof_regex                   | First occurrence index of a regex match, with optional start/length/occurrence; verified against real ADX's own worked example, added 2026-08-18 (Sprint 17) |
 | countof                         | Occurrence count                                   |
 | has_any_index                   | Index of the first matching item from an array, or -1 |
 | reverse                         | String reversal                                    |
@@ -729,6 +730,17 @@ Closes Sprint 16 item 9 and `kql_coverage.md`'s own former "Not Yet Implemented"
 2. ✅ **New tests** — `pkg/types/datetime_mmddyyyy_test.go`: 7 positive cases (padded/unpadded month and day, date-only, no-seconds, the real worked-example's own `previousLockTime` value), 4 negative cases confirming the new layouts don't over-match genuinely invalid input (including real ADX's own `nonValidDateTime`/`invalid_datetime` sentinels), and a regression guard that every pre-existing ISO format is unaffected.
 3. ✅ **`pkg/engine/parse_operator_rewrite_test.go`'s `TestParseSimpleWorkedExample` updated** to actually assert `releaseTime`/`previousLockTime` as real converted `:date` values (via `types.FormatValue`), closing out the test's own previous comment explaining why those columns were left unchecked.
 4. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
+
+### ✅ Sprint 18: indexof_regex — COMPLETE (2026-08-18)
+
+Closes the first item of `scalar_function_backlog.md`'s "Parse functions" section — the regex foundation audited and fixed in Sprint 16 is confirmed solid, not a fresh unknown.
+
+1. ✅ **`indexof_regex(string, match [, start [, length [, occurrence]]])`** implemented in `func_string.go`, verified exactly against real ADX's own worked example (`indexof-regex-function.md`), all 5 cases, exact output values: `0`, `3`, `-1`, `-1`, `null`.
+2. **A genuine discrepancy found between two sections of the SAME doc page** while verifying: the Parameters table's own prose for `start` describes a negative value as offsetting the search start from the end of the string (reads like boilerplate copied from `indexof()`'s own doc), but the Returns section states plainly "returns null if start is less than 0" — and the worked example's own `idx5` case (`start=-1`) confirms a null result, not an end-relative offset. Implemented per the worked example (ground truth) over the ambiguous/self-contradicting prose. `occurrence < 0` and `length < -1` also return null per the same Returns section, though neither is exercised by the worked example's 5 cases — taken as stated since nothing in the docs contradicts them.
+3. ✅ Matches are non-overlapping (explicitly documented) via Go's `regexp.FindAllStringIndex`, the same RE2 engine already used throughout this codebase for `extract()`, `extract_all()`, `replace_regex()`, and the `parse` operator — no new regex semantics introduced.
+4. ✅ New tests — `pkg/engine/func_indexof_regex_test.go`: the full worked example end to end in one query, a no-match case, null-propagation for both source and match arguments (mirroring `parse_ipv6`/`parse_command_line`'s own convention), the two undocumented-by-example-but-stated null conditions (negative occurrence, length < -1), and an occurrence-beyond-match-count case guarding against an out-of-range panic.
+5. ✅ `inferExprType` (`eval.go`) updated to return `TypeLong` for `indexof_regex`, alongside the pre-existing `indexof` entry — the same easy-to-miss step this project's own conventions call out explicitly.
+6. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
 
 
 
