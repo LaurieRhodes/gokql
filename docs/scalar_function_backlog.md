@@ -112,20 +112,55 @@ fixed in this session's own new IPv6 code before it was ever
 committed (an embedded-prefix offset decision that inspected the
 parsed byte value instead of the address's own source text).
 
-### Parse functions (`func_string.go` / `func_net.go`)
+### Parse functions (`func_string.go` / `func_net.go` / `func_xml.go`)
 **`parse_command_line`, `parse_user_agent`, `indexof_regex`,
-`extract_json`/`extractjson` CLOSED (2026-08-17/18)** — see
-`kql_coverage.md` for full detail on all four, including
+`extract_json`/`extractjson`, `parse_xml` CLOSED (2026-08-17/18)** —
+see `kql_coverage.md` for full detail on all five, including
 `parse_user_agent`'s own reversal note (the earlier deferral below was
 based on the actual `ua-parser/uap-core` regex database being assumed
 unfetchable; it turned out to be public and fetchable, which removed
 the blocker), `indexof_regex`'s own note (a real discrepancy found
-between two sections of its own doc page), and `extract_json`'s own
-note below (a second real doc discrepancy found, plus the "meaningful
+between two sections of its own doc page), `extract_json`'s own note
+below (a second real doc discrepancy found, plus the "meaningful
 difference from parse_json" question actually resolved: it's a real,
-general JSONPath walker, not a `parse_json` + dot-access shortcut).
-Still open: `parse_version` (see its own scope note below — genuinely
-BLOCKED, not just unstarted), `parse_xml`.
+general JSONPath walker, not a `parse_json` + dot-access shortcut),
+and `parse_xml`'s own note below (a full, directly-documented 7-row
+conversion table plus one worked example — this makes it the
+category's OWN item entirely unlike `parse_version`, which is
+genuinely blocked). Every item on this session's original priority
+list is now closed except `parse_version`, which remains genuinely
+BLOCKED on a missing decimal/big-integer type — see its own scope note
+below.
+
+**`parse_xml`'s own scope note (2026-08-18)**: implemented in a new
+dedicated file, `func_xml.go`, as a real XML-to-JSON walker
+(`evalParseXML`) following real ADX's own fully-documented 7-row
+conversion table exactly (`<e/>`→null, text-only, attribute-only,
+attribute+text, distinct children, repeated-children-collapse-to-array,
+mixed text+children) — every row verified individually against the
+real doc's own examples, plus the doc's own full "duration" worked
+example (an XML declaration prolog that must be skipped without
+erroring, 7 numeric-looking leaf children, retrieved via both
+`d.duration.value` dot-access and `d["duration"]["min"]` bracket-access
+exactly as the doc's own example does) checked against its exact
+stated values (118.0, 100.0). One deliberate, clearly-flagged
+inference: the conversion table itself states every leaf value as a
+bare string, but the SAME doc page's own worked example feeds numeric
+text (`"118.0"`) and shows the resulting JSON holding a genuine numeric
+value, not a quoted string — so leaf element text gets number
+coercion (int if it parses as one, else float, else left as string)
+when the text is directly an element's own content; this is NOT
+applied to attribute values, since no worked example demonstrates
+attribute-value coercion either way. Real ADX's own documented 1 MB
+(1,048,576 byte) input-length cap and "or null, if invalid" contract
+are both implemented exactly, not approximated. New tests
+(`pkg/engine/func_parse_xml_test.go`): one dedicated test per
+conversion-table row, a 3-element array-collapse extension beyond the
+table's own 2-element example, the full duration worked example
+end to end, invalid-XML-returns-null, null propagation, a
+no-attributes/no-text nested-structure case beyond the table's own 7
+rows, and the 1 MB cap enforced exactly at the byte boundary the docs
+state.
 
 **`extract_json`/`extractjson`'s own scope note (2026-08-18)**:
 implemented as a real, general JSONPath walker (`evalJSONPath` in

@@ -105,6 +105,32 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		return fmt.Sprintf("%v", val), true, nil
 
+	case "parse_xml":
+		// parse_xml(xml) — interprets a string as XML, converts to
+		// JSON, returns as dynamic. Verified against real ADX's own
+		// docs (parse-xml-function.md) before implementing: its own
+		// conversion table (7 rows) plus a full worked example
+		// ("duration" element with 7 numeric leaf children), not
+		// assumed from general XML-to-JSON familiarity. See
+		// evalParseXML (func_xml.go) for the implementation and its
+		// own detailed doc comment covering exactly which rules are
+		// directly verified vs reasonably inferred.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("parse_xml requires 1 argument")
+		}
+		val, err := evalExpr(fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if val == nil {
+			return nil, true, nil
+		}
+		result, ok := evalParseXML(fmt.Sprintf("%v", val))
+		if !ok {
+			return nil, true, nil
+		}
+		return result, true, nil
+
 	case "tostring":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("tostring requires 1 argument")
