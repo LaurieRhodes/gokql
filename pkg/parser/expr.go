@@ -703,6 +703,22 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 		return p.parseString()
 	}
 
+	// Verbatim string literal (@"..." or @'...') — added 2026-08-18.
+	// Real KQL: the backslash stands for itself (no escape processing
+	// at all) inside a verbatim string; the one exception is the
+	// enclosing quote character itself, which is escaped by doubling
+	// it (e.g. @"say ""hi""" == say "hi"), the same convention CSV
+	// uses. Verified against real KQL's own docs before implementing
+	// — this was a real, total gap: @"..." previously wasn't
+	// recognized at all ("unexpected character: @"), which blocked
+	// every regex-bearing KQL example that (like virtually all of
+	// Microsoft's own official docs examples for extract/
+	// extract_all/replace_regex/parse kind=regex) uses verbatim
+	// strings to avoid double-backslash-escaping a regex pattern.
+	if ch == '@' && p.pos+1 < len(p.input) && (p.input[p.pos+1] == '"' || p.input[p.pos+1] == '\'') {
+		return p.parseVerbatimString()
+	}
+
 	// Number literal (including negative)
 	if ch == '-' || (ch >= '0' && ch <= '9') {
 		return p.parseNumber()
@@ -714,6 +730,35 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 	}
 
 	return nil, fmt.Errorf("unexpected character: %c", ch)
+}
+
+// parseVerbatimString parses a KQL verbatim string literal (@"..." or
+// @'...'): backslash is a literal character throughout, and the only
+// escape is doubling the enclosing quote character to represent one
+// literal instance of it. See the call site above for the fuller
+// rationale and verification note.
+func (p *exprParser) parseVerbatimString() (Expr, error) {
+	p.pos++ // skip '@'
+	quote := p.input[p.pos]
+	p.pos++
+	var sb strings.Builder
+
+	for p.pos < len(p.input) {
+		ch := p.input[p.pos]
+		if ch == quote {
+			// Doubled quote == one literal quote character.
+			if p.pos+1 < len(p.input) && p.input[p.pos+1] == quote {
+				sb.WriteByte(quote)
+				p.pos += 2
+				continue
+			}
+			p.pos++
+			return &Literal{Value: sb.String(), Type: types.TypeString}, nil
+		}
+		sb.WriteByte(ch)
+		p.pos++
+	}
+	return nil, fmt.Errorf("unterminated verbatim string literal")
 }
 
 func (p *exprParser) parseString() (Expr, error) {
@@ -918,6 +963,44 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 				}
 				return p.parsePostfixAccess(lit)
 			}
+		}
+
+		// typeof(long) / typeof(datetime) / etc — added 2026-08-18,
+		// needed to support extract()'s optional 4th typeLiteral
+		// argument (real KQL syntax: extract(regex, group, source,
+		// typeof(long))). The argument is a bare KQL type name, not a
+		// normal expression — "long" used bare here would otherwise
+		// be parsed as either a zero-arg function call attempt or an
+		// unresolved column reference by the general arg-parsing loop
+		// below, the same reason dynamic(...) and toscalar(...) above
+		// need their own special-cased grammar rather than falling
+		// through to it. Real KQL's typeof() is its own scalar type
+		// with richer behavior (it can appear standalone, is used in
+		// column-type contexts, etc); this engine only needs to
+		// support it as extract()'s 4th argument, so it's represented
+		// simply as a string literal holding the canonical type name
+		// — sufficient for every real, verified use of it in this
+		// engine, but not a general-purpose typeof() implementation.
+		if lower == "typeof" {
+			typeStart := p.pos
+			for p.pos < len(p.input) && isIdentChar(p.input[p.pos]) {
+				p.pos++
+			}
+			typeName := p.input[typeStart:p.pos]
+			if typeName == "" {
+				return nil, fmt.Errorf("typeof(): expected a type name")
+			}
+			if _, terr := types.ParseType(typeName); terr != nil {
+				return nil, fmt.Errorf("typeof(%s): %w", typeName, terr)
+			}
+			p.skipWhitespace()
+			if p.pos < len(p.input) && p.input[p.pos] == ')' {
+				p.pos++
+			} else {
+				return nil, fmt.Errorf("expected ) after typeof(%s", typeName)
+			}
+			lit := &Literal{Value: strings.ToLower(typeName), Type: types.TypeString}
+			return p.parsePostfixAccess(lit)
 		}
 
 		var args []Expr
