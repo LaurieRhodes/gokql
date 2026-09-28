@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/LaurieRhodes/gokql/pkg/parser"	
+	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 

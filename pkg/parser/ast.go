@@ -243,7 +243,8 @@ type RangeOp struct {
 func (*RangeOp) operatorNode() {}
 
 // MakeSeriesOp: | make-series [kind=nonempty] [Column=]Aggregation[default=DefaultValue][, ...]
-//   on AxisColumn [from start] [to end] step step [by [Column=]GroupExpr[, ...]]
+//
+//	on AxisColumn [from start] [to end] step step [by [Column=]GroupExpr[, ...]]
 //
 // Verified against real ADX docs (make-series-operator.md) before
 // building. Only the "main syntax" is implemented (real ADX's own docs

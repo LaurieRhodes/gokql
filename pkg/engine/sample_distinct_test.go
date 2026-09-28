@@ -78,4 +78,3 @@ func TestSampleDistinctStringColumn(t *testing.T) {
 		t.Fatalf("expected 2 rows, got %d", result.RowCount())
 	}
 }
-

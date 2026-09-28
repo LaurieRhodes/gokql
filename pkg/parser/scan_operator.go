@@ -248,4 +248,3 @@ func findTopLevelArrow(s string) int {
 	}
 	return -1
 }
-

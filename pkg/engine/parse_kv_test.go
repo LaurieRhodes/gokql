@@ -154,4 +154,3 @@ func TestParseKVRegexModeUnimplemented(t *testing.T) {
 func TestParseKVNonSpecifiedDelimiterModeUnimplemented(t *testing.T) {
 	queryError(t, `print str='a:1,b:2' | parse-kv str as (a:string, b:string) with (quote='"')`)
 }
-

@@ -56,4 +56,3 @@ func TestParseCommandLineNullPropagation(t *testing.T) {
 		t.Errorf("parse_command_line(..., null) = %v, want nil", result.Rows[0][1])
 	}
 }
-

@@ -273,9 +273,9 @@ func TestPrintArithmetic(t *testing.T) {
 		{`print X = 100 - 37`, "63"},
 		{`print X = 20 / 4`, "5"},
 		{`print X = 17 % 5`, "2"},
-		{`print X = 2 + 3 * 4`, "14"},       // precedence
-		{`print X = (2 + 3) * 4`, "20"},      // parens
-		{`print X = -5 + 10`, "5"},            // unary minus
+		{`print X = 2 + 3 * 4`, "14"},                  // precedence
+		{`print X = (2 + 3) * 4`, "20"},                // parens
+		{`print X = -5 + 10`, "5"},                     // unary minus
 		{`print X = 10.0 / 3.0`, "3.3333333333333335"}, // float division
 	}
 	for _, tt := range tests {
@@ -523,7 +523,7 @@ func TestWhereHasTermBoundaries(t *testing.T) {
 		query string
 		count int
 	}{
-		{"whole term", base + ` | where S has "cmd"`, 2},        // cmd.exe splits to cmd + exe; cmdlet does not match
+		{"whole term", base + ` | where S has "cmd"`, 2}, // cmd.exe splits to cmd + exe; cmdlet does not match
 		{"phrase across separator", base + ` | where S has "cmd.exe"`, 1},
 		{"substring rejected", base + ` | where S has "cmdl"`, 0},
 		{"has_any whole term", `datatable (S: string) ["sshd login", "rdp session", "ssh attempt"] | where S has_any ("ssh", "rdp")`, 2},

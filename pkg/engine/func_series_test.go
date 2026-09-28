@@ -365,4 +365,3 @@ func TestMakeListDatetimeFormatsCorrectly(t *testing.T) {
 		t.Errorf("elem 0 = %q, want 2020-01-01T00:00:00.0000000Z", s)
 	}
 }
-

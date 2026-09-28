@@ -81,4 +81,3 @@ func TestMakeSeriesSeriesFillForwardIntegration(t *testing.T) {
 		}
 	}
 }
-

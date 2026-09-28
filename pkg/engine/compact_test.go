@@ -239,7 +239,6 @@ func TestCompactAlreadyCompactIsNoOp(t *testing.T) {
 	expectCell(t, second, 0, 0, "already compact")
 }
 
-
 // TestCompactRejectedOnCatalogMode: .compact must refuse cleanly on a
 // legacy catalog-mode database, pointing at .merge instead.
 func TestCompactRejectedOnCatalogMode(t *testing.T) {
@@ -341,7 +340,6 @@ func countGlob(t *testing.T, dir, pattern string) int {
 	}
 	return len(m)
 }
-
 
 // TestCompactWhereDropsExcludedRows: a Where clause on .compact drops
 // rows the predicate excludes, keeping only the rest, and reports

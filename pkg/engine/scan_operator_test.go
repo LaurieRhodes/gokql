@@ -115,4 +115,3 @@ func TestScanOperatorAssignmentToUndeclaredColumnRejected(t *testing.T) {
 	queryError(t, `range x from 1 to 3 step 1
 		| scan declare (c:long=0) with ( step s1: true => bogus = x; )`)
 }
-

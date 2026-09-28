@@ -114,4 +114,3 @@ func TestProjectByNamesIgnoresNonMatchingName(t *testing.T) {
 		t.Fatalf("expected only [Name], got %+v", result.Schema.Columns)
 	}
 }
-

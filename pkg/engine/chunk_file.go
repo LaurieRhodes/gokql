@@ -32,10 +32,10 @@ var headingRe = regexp.MustCompile(`^(#{1,6})\s+(.*)`)
 var sentenceSplitRe = regexp.MustCompile(`(?:[.!?])\s+`)
 
 type rawChunk struct {
-	text       string
-	heading    string
-	startLine  int
-	endLine    int
+	text      string
+	heading   string
+	startLine int
+	endLine   int
 }
 
 func (e *Engine) applyChunkFile(cmd *parser.ChunkFileCmd) (*types.Table, error) {

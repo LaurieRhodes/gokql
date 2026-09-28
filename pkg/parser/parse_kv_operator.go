@@ -6,8 +6,9 @@ import (
 )
 
 // parseParseKVOperator parses:
-//   parse-kv Expression as ( KeysList ) with ( pair_delimiter=..., kv_delimiter=...
-//     [, quote=...]* [, escape=...] [, greedy=true] )
+//
+//	parse-kv Expression as ( KeysList ) with ( pair_delimiter=..., kv_delimiter=...
+//	  [, quote=...]* [, escape=...] [, greedy=true] )
 //
 // Verified against real ADX docs (parse-kv-operator.md) before writing
 // this. Only the "specified delimiter" mode is accepted here (a query
@@ -151,7 +152,6 @@ func stripKVQuotes(s string) string {
 	}
 	return s
 }
-
 
 // findMatchingParenAnyQuote finds the ')' matching the '(' at position
 // start, treating BOTH '...' and "..." regions as opaque (paired on

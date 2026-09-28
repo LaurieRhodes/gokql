@@ -78,10 +78,10 @@ func buildInfo() string {
 
 // repl state
 type replState struct {
-	eng       *engine.Engine
-	timer     bool
-	mode      string // table, csv, json, jsonl, tsv
-	output    io.Writer
+	eng        *engine.Engine
+	timer      bool
+	mode       string // table, csv, json, jsonl, tsv
+	output     io.Writer
 	outputFile *os.File // non-nil if redirected to file
 }
 

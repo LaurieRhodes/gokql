@@ -247,4 +247,3 @@ func TestIPv4IsInRangeEqualIPsWorkedExample(t *testing.T) {
 		}
 	}
 }
-

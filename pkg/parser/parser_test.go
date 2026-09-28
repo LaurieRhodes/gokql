@@ -289,7 +289,7 @@ func TestParseExprDotAccess(t *testing.T) {
 
 func TestParseTableFunctions(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input string
 	}{
 		{"csv", `csv("file.csv") | where X > 5`},

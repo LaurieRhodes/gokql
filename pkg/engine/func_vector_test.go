@@ -117,7 +117,9 @@ func TestEmbedTextUnreachableGivesActionableError(t *testing.T) {
 // per row — against a mock server, verified end to end.
 func TestEmbedTextThenSimilarityRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input string `json:"input"` }
+		var req struct {
+			Input string `json:"input"`
+		}
 		json.NewDecoder(r.Body).Decode(&req)
 		// Distinct fake vectors per distinct input so similarity is
 		// checkable: same text -> identical vector -> similarity 1.

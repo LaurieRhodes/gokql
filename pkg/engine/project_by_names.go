@@ -112,4 +112,3 @@ func projectByNamesSpecToPatterns(val types.Value) ([]string, error) {
 	}
 	return nil, fmt.Errorf("column specifier must be a string or a dynamic array of strings, got %T", val)
 }
-

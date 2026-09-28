@@ -222,6 +222,18 @@ func (o *OpenAI) embedOnce(ctx context.Context, body []byte) (vecs [][]float64, 
 		return nil, false, fmt.Errorf("embedding request rejected (status %d): %s%s",
 			resp.StatusCode, snippet(raw), hint(resp.StatusCode, raw))
 	}
+	// Some 5xx are configuration errors, not hiccups, and retrying
+	// them just delays the message that says what to fix. Found live
+	// against llama-server: an oversized input returns 500 with
+	// "input (N tokens) is too large to process. increase the physical
+	// batch size (current batch size: 512)". That is a --ubatch-size
+	// setting, not a transient fault, and the naive 5xx rule burned
+	// four retries and ~3.7s before surfacing it. Same shape as the
+	// 501 case above.
+	if resp.StatusCode >= 500 && isPermanent5xx(raw) {
+		return nil, false, fmt.Errorf("embedding request rejected (status %d): %s%s",
+			resp.StatusCode, snippet(raw), hint(resp.StatusCode, raw))
+	}
 	if resp.StatusCode >= 500 {
 		return nil, true, fmt.Errorf("embedding server error (status %d): %s", resp.StatusCode, snippet(raw))
 	}
@@ -292,7 +304,18 @@ func (o *OpenAI) embedOnce(ctx context.Context, body []byte) (vecs [][]float64, 
 	return out, false, nil
 }
 
-// hint turns the two failure modes a first-time user actually hits
+// isPermanent5xx recognises 5xx bodies that describe a configuration
+// problem rather than a fault. Deliberately narrow: anything not
+// matched here keeps the retry behaviour, because misclassifying a
+// real hiccup as permanent would reintroduce the connection-drop
+// failures the retry policy exists for.
+func isPermanent5xx(body []byte) bool {
+	b := strings.ToLower(string(body))
+	return strings.Contains(b, "too large to process") ||
+		strings.Contains(b, "does not support embeddings")
+}
+
+// hint turns the failure modes a first-time user actually hits
 // into instructions rather than status codes.
 func hint(status int, body []byte) string {
 	b := strings.ToLower(string(body))
@@ -300,6 +323,10 @@ func hint(status int, body []byte) string {
 	case strings.Contains(b, "does not support embeddings"), status == http.StatusNotImplemented:
 		return "\nhint: llama-server must be started with --embeddings (and an explicit --pooling " +
 			"matching how the model was trained; the GGUF default is set by whoever converted it)"
+	case strings.Contains(b, "too large to process"):
+		return "\nhint: the input exceeds the server's PHYSICAL batch size. Restart with " +
+			"--ubatch-size >= your largest chunk in tokens (and -c at least as large). " +
+			"gokql's .chunk-file default of 1500 chars is roughly 375 tokens"
 	case status == http.StatusNotFound:
 		return "\nhint: check the endpoint path -- it should end in /v1/embeddings"
 	case status == http.StatusUnauthorized, status == http.StatusForbidden:

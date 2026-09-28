@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LaurieRhodes/gokql/pkg/parser"	
+	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
 // applyJoin implements hash join between the input (left) table and a right-side subquery.
 //
 // Execution:
-//   1. Execute the right-side subquery independently
-//   2. Build a hash table keyed on right join columns
-//   3. Stream left rows and probe the hash table
-//   4. Emit output rows based on join kind
+//  1. Execute the right-side subquery independently
+//  2. Build a hash table keyed on right join columns
+//  3. Stream left rows and probe the hash table
+//  4. Emit output rows based on join kind
 //
 // KQL join semantics:
 //   - Join key columns from right side are excluded from output (they duplicate left keys)
