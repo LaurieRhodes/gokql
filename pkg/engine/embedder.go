@@ -35,6 +35,15 @@ import (
 // and expects the change to take effect on the next call.
 var _ embed.ModelSwitcher = (*ollamaEmbedder)(nil)
 
+// ollamaEmbedder binds the package-level EmbedEndpoint,
+// DefaultEmbedModel, EmbedBatchSize and embedBackoff vars to
+// pkg/embed's Ollama client.
+//
+// The indirection exists because those vars are read at CALL time, not
+// construction time: the existing test suite swaps EmbedEndpoint
+// around an httptest server and expects the next call to use it.
+// Constructing a throwaway client per call is cheap (the client is a
+// plain struct over a shared http.Client) and keeps that contract.
 type ollamaEmbedder struct {
 	model string // empty means "whatever DefaultEmbedModel says right now"
 }
@@ -46,44 +55,37 @@ func (o *ollamaEmbedder) modelName() string {
 	return DefaultEmbedModel
 }
 
-// Name returns the MODEL identity only, not the backend. The same
-// model served by Ollama or by llama-server produces the same vector
-// space, so a table embedded before a server move must stay
-// comparable with one embedded after. This also keeps the stored
-// Model column byte-identical to what pre-seam runs wrote.
-func (o *ollamaEmbedder) Name() string { return o.modelName() }
-
-// Dimension is unknown until Ollama answers -- the width is a property
-// of whichever model happens to be pulled, and asking costs a round
-// trip. 0 means "can't know yet", which callers must tolerate.
-func (o *ollamaEmbedder) Dimension() int { return 0 }
-
-func (o *ollamaEmbedder) Embed(_ context.Context, text string) ([]float64, error) {
-	return embedText(text, o.modelName())
+func (o *ollamaEmbedder) client() *embed.Ollama {
+	return &embed.Ollama{
+		Endpoint: EmbedEndpoint,
+		Model:    o.modelName(),
+		Batch:    EmbedBatchSize,
+		Backoff:  embedBackoff,
+	}
 }
 
-func (o *ollamaEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]float64, error) {
-	// Ollama's /api/embed natively accepts an array and returns one
-	// embedding per input in order, so this is a real batch, not a
-	// loop. Chunked at EmbedBatchSize, matching .embed-into's existing
-	// behaviour exactly.
-	out := make([][]float64, 0, len(texts))
-	for start := 0; start < len(texts); start += EmbedBatchSize {
-		end := start + EmbedBatchSize
-		if end > len(texts) {
-			end = len(texts)
-		}
-		batch, err := embedTextsBatch(texts[start:end], o.modelName())
-		if err != nil {
-			return nil, fmt.Errorf("batch %d-%d: %w", start, end, err)
-		}
-		if len(batch) != end-start {
-			return nil, fmt.Errorf("batch %d-%d: ollama returned %d embeddings for %d inputs",
-				start, end, len(batch), end-start)
-		}
-		out = append(out, batch...)
+// Name returns the MODEL identity only, not the backend. The same
+// model served by Ollama or by llama-server produces the same vector
+// space, so a table embedded before a server move stays comparable
+// with one embedded after. This also keeps the stored Model column
+// byte-identical to what pre-seam runs wrote.
+func (o *ollamaEmbedder) Name() string   { return o.modelName() }
+func (o *ollamaEmbedder) Dimension() int { return 0 }
+
+func (o *ollamaEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
+	return o.client().Embed(ctx, text)
+}
+
+func (o *ollamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	return o.client().EmbedBatch(ctx, texts)
+}
+
+// WithModel is the optional capability embed_text(text, model) needs.
+func (o *ollamaEmbedder) WithModel(model string) (embed.Embedder, error) {
+	if model == "" {
+		return o, nil
 	}
-	return out, nil
+	return &ollamaEmbedder{model: model}, nil
 }
 
 // --- resolution ---
@@ -327,17 +329,18 @@ func (b *brokenEmbedder) EmbedBatch(context.Context, []string) ([][]float64, err
 	return nil, fmt.Errorf("GOKQL_EMBED=%q: %w", b.spec, b.err)
 }
 
-// WithModel returns a sibling embedder for a different Ollama model.
-// This is the optional capability embed_text(text, model) needs: it
-// exists on the Ollama backend, where switching models is a field in
-// the next request, and deliberately does NOT exist on a static
-// backend, where the model is loaded weights and cannot change per
-// call. embed_text() checks for it and errors clearly when absent,
-// rather than ignoring the argument and returning vectors from a
-// model the caller did not ask for.
-func (o *ollamaEmbedder) WithModel(model string) (embed.Embedder, error) {
-	if model == "" {
-		return o, nil
+// context returns the engine's cancellation context, or Background.
+//
+// A narrow, deliberate alternative to threading a context through
+// evalExpr's 319 call sites. Every BULK path (.embed-into today,
+// others later) has an *Engine receiver and can therefore be made
+// interruptible now, which covers the case that actually matters: an
+// ingest over a large corpus that previously could not be stopped at
+// all. The per-row scalar path still cannot be cancelled; that needs
+// the evaluation-context refactor.
+func (e *Engine) context() context.Context {
+	if e != nil && e.Ctx != nil {
+		return e.Ctx
 	}
-	return &ollamaEmbedder{model: model}, nil
+	return context.Background()
 }

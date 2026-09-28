@@ -18,13 +18,10 @@ package engine
 // no API key and no new service to stand up.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"time"
 
 	"github.com/LaurieRhodes/gokql/pkg/embed"
@@ -32,15 +29,23 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-// EmbedModel is the Ollama model used by embed_text(). Overridable per
-// engine instance for testing or for switching embedding models
-// without a rebuild.
+// DefaultEmbedModel and EmbedEndpoint are the zero-configuration
+// Ollama settings. Retained as package-level vars because the existing
+// test suite swaps them around an httptest server and expects the
+// change to take effect on the next call; the Ollama client itself
+// (pkg/embed) takes them as ordinary struct fields.
+//
+// Prefer Engine.SetEmbedder or GOKQL_EMBED for new code.
 var DefaultEmbedModel = "nomic-embed-text"
 
 // EmbedEndpoint is the local Ollama embeddings endpoint.
 var EmbedEndpoint = "http://localhost:11434/api/embed"
 
-var embedHTTPClient = &http.Client{Timeout: 30 * time.Second}
+// embedBackoff is the retry schedule handed to the Ollama client.
+// Overridable so tests need not wait out real backoff.
+var embedBackoff = []time.Duration{
+	200 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second, 2 * time.Second,
+}
 
 func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
@@ -162,110 +167,21 @@ func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 	return nil, false, nil
 }
 
-// embedRetries and embedBackoff govern retry behavior for transient
-// Ollama failures. Found live, reproducibly, embedding a 134-chunk
-// batch: Ollama's internal embedding subprocess drops the connection
-// ("EOF") under sustained back-to-back sequential requests, roughly
-// every ~130-150 calls, recovering on its own — not caused by any
-// particular input (confirmed: same failure point on retry with
-// identical data, and Ollama's own /api/tags stayed healthy
-// throughout). This looks like an internal idle/keepalive issue in
-// Ollama's embedding runner rather than anything on our side, so the
-// robust fix is retrying past it, not avoiding it.
-const embedRetries = 4
-
-var embedBackoff = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
-
-// embedText calls the local Ollama embeddings endpoint, retrying
-// transient failures (connection drops, 5xx) with backoff. A
-// connection failure that persists past all retries surfaces as a
-// clear error naming the endpoint, not a silent empty vector.
-func embedText(text, model string) ([]float64, error) {
-	reqBody, err := json.Marshal(map[string]interface{}{
-		"model": model,
-		"input": text,
-		// Keep the model resident between calls. Found live: batch-
-		// embedding 134 chunks failed reproducibly with the model
-		// unloading mid-batch (evidenced by a nonzero load_duration
-		// on an otherwise-healthy request) — likely evicted under
-		// memory pressure from other large local models, then the
-		// in-flight request to the old subprocess sees EOF during
-		// teardown. Default Ollama keep-alive is short; ask for
-		// longer explicitly rather than relying on retry timing to
-		// outlast an unpredictable reload.
-		"keep_alive": "10m",
-		// num_batch (per-request options, NOT the OLLAMA_NUM_BATCH
-		// server env var) -- see embed_bulk.go's own, matching fix for
-		// the full explanation: confirmed via direct testing by a
-		// different model (Kimi) that only this per-request override
-		// actually changes the runner's batch size; the server-side
-		// env var alone does not. Without it, a single input near or
-		// above ~512 tokens panics the runner outright rather than
-		// truncating or erroring cleanly.
-		"options": map[string]interface{}{"num_batch": 4096},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var lastErr error
-	for attempt := 0; attempt <= embedRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(embedBackoff[(attempt-1)%len(embedBackoff)])
-		}
-		vec, retryable, err := embedTextOnce(reqBody, model)
-		if err == nil {
-			return vec, nil
-		}
-		lastErr = err
-		if !retryable {
-			return nil, err
-		}
-	}
-	return nil, fmt.Errorf("embed_text: failed after %d attempts: %w", embedRetries+1, lastErr)
-}
-
-// embedTextOnce makes a single attempt. retryable distinguishes
-// transient failures (connection errors, 5xx — Ollama's own runner
-// hiccupping) from permanent ones (model not found, malformed
-// response) that retrying cannot fix.
-func embedTextOnce(reqBody []byte, model string) (vec []float64, retryable bool, err error) {
-	resp, err := embedHTTPClient.Post(EmbedEndpoint, "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, true, fmt.Errorf("could not reach Ollama at %s (is it running? try 'ollama serve'): %w", EmbedEndpoint, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, true, err
-	}
-	if resp.StatusCode >= 500 {
-		return nil, true, fmt.Errorf("ollama embeddings request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("ollama embeddings request failed (status %d): %s", resp.StatusCode, string(body))
-	}
-	var parsed struct {
-		Embeddings [][]float64 `json:"embeddings"`
-		Error      string      `json:"error"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, false, fmt.Errorf("parsing ollama response: %w (body: %s)", err, string(body))
-	}
-	if parsed.Error != "" {
-		return nil, false, fmt.Errorf("ollama error: %s (is model %q pulled? try 'ollama pull %s')", parsed.Error, model, model)
-	}
-	if len(parsed.Embeddings) == 0 {
-		return nil, true, fmt.Errorf("ollama returned no embeddings")
-	}
-	return parsed.Embeddings[0], false, nil
-}
-
 // parseFloatArray decodes a dynamic (JSON array) value into []float64.
 // Non-numeric elements make the whole parse fail closed (ok=false),
 // since a corrupted or mistyped vector should never silently produce a
 // wrong similarity score.
 func parseFloatArray(val types.Value) ([]float64, bool) {
+	// Compact form first: it is the common case for stored vectors and
+	// it avoids parseJSONArray's fmt.Sprintf + []interface{} round
+	// trip entirely. Falls through to JSON for vectors written before
+	// the compact encoding existed, for embed_text()'s own output, and
+	// for any array a user supplies inline.
+	if s, ok := val.(string); ok {
+		if v, ok := decodeCompactVector(s); ok {
+			return v, true
+		}
+	}
 	arr, ok := parseJSONArray(val)
 	if !ok {
 		return nil, false

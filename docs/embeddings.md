@@ -65,6 +65,31 @@ does not extend the model; setting it lower silently truncates inputs.
 A pooling-based embedding model cannot also serve chat completions on
 the same process. Embeddings is a dedicated second process.
 
+## Validated against a real server (2026-09-28)
+
+Run on a Ryzen AI 7 PRO 350, CPU only, llama-server b11223 with
+`nomic-embed-text-v1.5.f16.gguf`:
+
+```
+llama-server -m nomic-embed-text-v1.5.f16.gguf \
+  --embeddings --pooling mean -c 2048 --ubatch-size 2048 --batch-size 2048 \
+  --host 127.0.0.1 --port 8080 -t 8
+```
+
+- All five live checks pass. Semantic separation: related 0.698,
+  unrelated 0.324.
+- 281 chunks of this repo's own docs embedded in **33.5 s** (~8.4
+  chunks/s, 15 batch calls), 768 dimensions.
+- Whole database on disk: **1.5 MB**.
+- Semantic query over 281 vectors: **0.08 s** end to end, including
+  embedding the query string.
+- Re-running the same `.embed-into`: **0.01 s**, 281 rows skipped.
+
+`--ubatch-size` matters as much as `--pooling`. Left at the default
+512, an input of 1,612 tokens returns a 500 with "too large to
+process". That is the PHYSICAL batch size, and it must be at least
+your largest chunk in tokens.
+
 ## Validate before trusting
 
 Every test in `pkg/embed/openai_test.go` runs against a fake server
@@ -111,6 +136,25 @@ once returns `ErrConcurrentEmbedders` rather than silently using the
 wrong one. The durable fix is an evaluation context threaded through
 `evalExpr`'s 319 call sites.
 
+**`Id` must be unique across the whole source query.** `.chunk-file`
+numbers chunks `c001..cNNN` PER FILE, so Ids collide across files:
+six of this repo's docs produced 281 chunks with only 123 distinct
+Ids. Duplicate Ids break two things silently. The embeddings table is
+joined back on Id, so a duplicated key turns a `top 3` into a partial
+cross product (observed: three copies of one chunk's score attached to
+unrelated text). And resumption skips Ids already present, so a
+re-run after a partial failure would skip genuinely different chunks
+that merely share an Id, losing them with no error. `.embed-into`
+now refuses a source with duplicate Ids. Make them unique in the
+query:
+
+```
+.embed-into E <| Chunks | extend Id = strcat(Provenance, ":", Id) | project Id, Text, Provenance
+```
+
+Whether `.chunk-file` should emit globally unique Ids itself is an
+open question; it would be a behaviour change to that command.
+
 **The `Model` column means two things.** In `.embed-into` it is read
 as an INPUT ("use this model for this row") and written as an OUTPUT
 ("this model produced this vector"). A backend that cannot switch
@@ -122,11 +166,28 @@ separable today. Unresolved design question.
 `context.Background()`, so it cannot be interrupted either. Fine at
 pilot scale, not at corpus scale. Known gap.
 
-**Storage cost.** Vectors are stored as JSON `float64`. At 768
-dimensions that is roughly 15 KB per vector, and `json.Unmarshal`
-accounts for about 90% of ranking time (measured: ~8,000 rows/s
-single-threaded at 768 dims, ~17,000 at 384). Binary float32 is the
-fix; it is not done.
+**Storage encoding.** Stored vectors use a compact form:
+float32 little-endian, base64, behind a `kql.vec32:` prefix (the same
+convention as `kql.dictref`). At 768 dimensions that is 4,106 bytes
+against 15,077 for the old JSON array, and decoding is **35x faster**
+(3.9 us vs 135 us per vector; 1,048 MB/s vs 111 MB/s). Decoding was
+about 90% of the cost of a similarity ranking, so this is the single
+largest performance change in this extension.
+
+float32 is not a precision compromise: every backend in use produces
+float32 internally and widens it on output. Storing float64 preserved
+a precision the data never had.
+
+**No migration is required.** Reading accepts both forms, so tables
+embedded before this change keep working and a table with a mix of old
+and new extents ranks correctly. `VectorEncoding = "json"` restores the
+old write format if you need to hand a table to something that parses
+the column itself.
+
+`embed_text()` still returns JSON. Its result is a transient
+query-time value that callers routinely inspect, and it is now
+computed once per statement rather than once per row, so its encoding
+is not a performance concern.
 
 ## No evaluation set exists
 

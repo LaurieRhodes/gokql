@@ -8,6 +8,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -134,6 +135,15 @@ type Engine struct {
 	// scalar-function path only, and carries activeLetContext's
 	// existing caveat, not a new one.
 	Embedder embed.Embedder
+
+	// Ctx, when set by a host, makes long-running BULK operations
+	// (.embed-into) cancellable. nil means context.Background().
+	//
+	// Not a substitute for threading a context through expression
+	// evaluation, which is what the per-row scalar path would need.
+	// This covers the bulk paths, which are the ones that can run for
+	// minutes and previously could not be interrupted at all.
+	Ctx context.Context
 
 	// dictCache holds lazily-loaded shared dictionaries (see
 	// shareddict.go), keyed by "table.column". aggregateExtent/
