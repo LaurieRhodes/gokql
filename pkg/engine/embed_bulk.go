@@ -19,12 +19,15 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/LaurieRhodes/gokql/pkg/catalog"
+	"github.com/LaurieRhodes/gokql/pkg/embed"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
@@ -60,27 +63,39 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 		texts[i] = fmt.Sprintf("%v", row[textIdx])
 	}
 
-	// Batch through Ollama. All-or-nothing: collect every embedding
-	// before writing anything, matching every other ingest path here.
-	embeddings := make([][]float64, len(texts))
-	for start := 0; start < len(texts); start += EmbedBatchSize {
-		end := start + EmbedBatchSize
-		if end > len(texts) {
-			end = len(texts)
-		}
-		model := defaultModel
-		if modelIdx >= 0 && src.Rows[start][modelIdx] != nil {
-			model = fmt.Sprintf("%v", src.Rows[start][modelIdx])
-		}
-		batch, err := embedTextsBatch(texts[start:end], model)
-		if err != nil {
-			return nil, fmt.Errorf(".embed-into: batch %d-%d: %w", start, end, err)
-		}
-		if len(batch) != end-start {
-			return nil, fmt.Errorf(".embed-into: batch %d-%d: ollama returned %d embeddings for %d inputs",
-				start, end, len(batch), end-start)
-		}
-		copy(embeddings[start:end], batch)
+	// Batch through the configured backend. All-or-nothing: collect
+	// every embedding before writing anything, matching every other
+	// ingest path here.
+	//
+	// Batching is the BACKEND's concern now, not this command's. For
+	// Ollama it is still one HTTP call per EmbedBatchSize inputs via
+	// the native array endpoint; for an in-process backend there is no
+	// round trip to amortise and EmbedBatch is a loop. Either way this
+	// command asks for n vectors and gets n vectors, in order.
+	em := e.resolveEmbedder()
+
+	// A per-row Model column still overrides the backend's own model,
+	// where the backend can do that. Rows are grouped so a table
+	// mixing models is still one call per contiguous run rather than
+	// one per row.
+	embeddings, err := embedAllRows(em, texts, src, modelIdx, defaultModel)
+	if err != nil {
+		return nil, fmt.Errorf(".embed-into: %w", err)
+	}
+
+	// Vector-space guard. Everything below this point is about the one
+	// failure mode that ingest cannot recover from and queries cannot
+	// see: mixing two vector spaces in one table. A length mismatch
+	// already errors at query time in cosineSimilarity, but two
+	// DIFFERENT models of the SAME width (nomic vs any other 768-wide
+	// model; potion-base-32M vs potion-retrieval-32M) produce vectors
+	// that compare happily and rank nonsense. Catching it here, before
+	// anything is written, is the only place it is still cheap.
+	if err := checkUniformWidth(embeddings); err != nil {
+		return nil, fmt.Errorf(".embed-into: %w", err)
+	}
+	if err := e.checkVectorSpace(cmd.TableName, e.Catalog.GetTable(cmd.TableName), em, modelIdx, embeddings); err != nil {
+		return nil, fmt.Errorf(".embed-into: %w", err)
 	}
 
 	// Any column in the source query beyond the four this command
@@ -124,7 +139,13 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 
 	rows := make([]types.Row, len(src.Rows))
 	for i, row := range src.Rows {
-		model := defaultModel
+		// The Model column records WHICH MODEL PRODUCED THIS VECTOR,
+		// not which model was requested and not a package default.
+		// Two vectors of the same width from different models compare
+		// without error and rank nonsense, so this value is the only
+		// thing standing between a backend swap and silently wrong
+		// recall. It comes from the backend that did the work.
+		model := em.Name()
 		if modelIdx >= 0 && row[modelIdx] != nil {
 			model = fmt.Sprintf("%v", row[modelIdx])
 		}
@@ -260,4 +281,139 @@ func embedTextsBatchOnce(reqBody []byte) (vecs [][]float64, retryable bool, err 
 		return nil, false, fmt.Errorf("ollama error: %s", parsed.Error)
 	}
 	return parsed.Embeddings, false, nil
+}
+
+// embedAllRows produces one vector per text, honouring a per-row Model
+// column where present and where the backend supports switching.
+// Contiguous runs of the same model go through in a single EmbedBatch
+// call, so the common case (no Model column at all, or one constant
+// value) is exactly one batched pass.
+func embedAllRows(em embed.Embedder, texts []string, src *types.Table,
+	modelIdx int, defaultModel string) ([][]float64, error) {
+
+	rowModel := func(i int) string {
+		if modelIdx >= 0 && src.Rows[i][modelIdx] != nil {
+			return fmt.Sprintf("%v", src.Rows[i][modelIdx])
+		}
+		return ""
+	}
+
+	out := make([][]float64, len(texts))
+	for start := 0; start < len(texts); {
+		want := rowModel(start)
+		end := start + 1
+		for end < len(texts) && rowModel(end) == want {
+			end++
+		}
+
+		target := em
+		if want != "" && want != defaultModel {
+			sw, ok := em.(embed.ModelSwitcher)
+			if !ok {
+				return nil, fmt.Errorf("row %d requests model %q but backend %q cannot switch models per call",
+					start, want, em.Name())
+			}
+			t, err := sw.WithModel(want)
+			if err != nil {
+				return nil, err
+			}
+			target = t
+		}
+
+		batch, err := target.EmbedBatch(context.Background(), texts[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("rows %d-%d: %w", start, end, err)
+		}
+		if len(batch) != end-start {
+			return nil, fmt.Errorf("rows %d-%d: backend returned %d embeddings for %d inputs",
+				start, end, len(batch), end-start)
+		}
+		copy(out[start:end], batch)
+		start = end
+	}
+	return out, nil
+}
+
+// checkUniformWidth rejects a run whose own vectors disagree, which
+// means the backend changed model underneath us mid-ingest.
+func checkUniformWidth(vecs [][]float64) error {
+	if len(vecs) == 0 {
+		return nil
+	}
+	w := len(vecs[0])
+	if w == 0 {
+		return fmt.Errorf("backend returned an empty vector for row 0")
+	}
+	for i, v := range vecs {
+		if len(v) != w {
+			return fmt.Errorf("backend returned inconsistent vector widths within one run "+
+				"(row 0 is %d wide, row %d is %d) -- the served model appears to have changed mid-ingest",
+				w, i, len(v))
+		}
+	}
+	return nil
+}
+
+// checkVectorSpace refuses to append vectors from one model to a table
+// already holding another's. Reads a single existing row rather than
+// scanning: identity is uniform per table by construction, so one row
+// answers the question.
+//
+// Bypassable on purpose by projecting an explicit Model column, since
+// a caller who has said which model each row uses has made the claim
+// deliberately and owns it.
+func (e *Engine) checkVectorSpace(name string, tableDef *catalog.Table, em embed.Embedder,
+	modelIdx int, vecs [][]float64) error {
+
+	if len(vecs) == 0 || tableDef == nil || len(tableDef.Extents) == 0 {
+		return nil
+	}
+	if tableDef.Schema.ColumnIndex("Model") < 0 || tableDef.Schema.ColumnIndex("Embedding") < 0 {
+		return nil
+	}
+
+	existing, err := e.ScanExtent(name, tableDef.Extents[0].FilePath, &tableDef.Schema,
+		[]string{"Model", "Embedding"}, nil, 1)
+	if err != nil || existing == nil || len(existing.Rows) == 0 {
+		// A table we cannot read a sample from is not a reason to
+		// block an ingest; the read path will surface the real problem.
+		return nil
+	}
+
+	mIdx := existing.Schema.ColumnIndex("Model")
+	eIdx := existing.Schema.ColumnIndex("Embedding")
+	if mIdx < 0 || eIdx < 0 {
+		return nil
+	}
+
+	// The MODEL-NAME check is skipped when the query projects its own
+	// Model column: a caller who states the model per row has made
+	// that claim deliberately and owns it.
+	//
+	// The WIDTH check below is NOT skipped. An earlier version of this
+	// guard returned early on any explicit Model column and so skipped
+	// both, which meant projecting a Model column disabled the one
+	// check that is never a judgement call: vectors of two different
+	// widths cannot belong to one table under any labelling, and the
+	// caller cannot have meant it.
+	if modelIdx < 0 && existing.Rows[0][mIdx] != nil {
+		was := fmt.Sprintf("%v", existing.Rows[0][mIdx])
+		now := em.Name()
+		if was != "" && was != now {
+			return fmt.Errorf("table %q already holds vectors from model %q but this run produced %q; "+
+				"appending would mix two vector spaces that rank against each other without error. "+
+				"Re-embed the table, or write to a new one",
+				name, was, now)
+		}
+	}
+
+	if existing.Rows[0][eIdx] != nil {
+		if prev, ok := parseFloatArray(existing.Rows[0][eIdx]); ok && len(prev) > 0 {
+			if len(prev) != len(vecs[0]) {
+				return fmt.Errorf("table %q holds %d-wide vectors but this run produced %d-wide; "+
+					"re-embed the table, or write to a new one", name, len(prev), len(vecs[0]))
+			}
+		}
+	}
+	return nil
 }

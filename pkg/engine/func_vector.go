@@ -19,6 +19,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/LaurieRhodes/gokql/pkg/embed"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
@@ -54,17 +56,45 @@ func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 			return nil, true, nil
 		}
 		text := fmt.Sprintf("%v", textVal)
-		model := DefaultEmbedModel
+
+		// Resolve the backend through the seam rather than calling
+		// Ollama directly. currentEmbedder() returns the engine's
+		// configured embedder, else GOKQL_EMBED, else the historical
+		// Ollama default -- so an unconfigured engine behaves exactly
+		// as it did before embedder.go existed.
+		em := currentEmbedder()
+
+		// An explicit second argument still names a MODEL, not a
+		// backend: embed_text(x, "mxbai-embed-large") must keep
+		// meaning what it meant. It only makes sense where the
+		// backend can switch models per call, which today means
+		// Ollama; asking a loaded static model to be a different
+		// model mid-query is a category error, so say so rather than
+		// silently ignoring the argument and returning vectors from
+		// the wrong model.
 		if len(fc.Args) == 2 {
 			mv, err := evalExpr(fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
 			if mv != nil {
-				model = fmt.Sprintf("%v", mv)
+				name := fmt.Sprintf("%v", mv)
+				sw, ok := em.(embed.ModelSwitcher)
+				if !ok {
+					return nil, true, fmt.Errorf(
+						"embed_text: backend %q does not support a per-call model argument "+
+							"(drop the second argument, or configure that model as the backend)",
+						em.Name())
+				}
+				em2, err := sw.WithModel(name)
+				if err != nil {
+					return nil, true, fmt.Errorf("embed_text: %w", err)
+				}
+				em = em2
 			}
 		}
-		vec, err := embedText(text, model)
+
+		vec, err := em.Embed(context.Background(), text)
 		if err != nil {
 			return nil, true, fmt.Errorf("embed_text: %w", err)
 		}
