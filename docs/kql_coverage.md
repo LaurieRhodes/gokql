@@ -11,6 +11,8 @@ This rewrite corrects a significant amount of drift in the previous version (dat
 
 ---
 
+> **Active work queue: [`parity_backlog.md`](./parity_backlog.md)** (re-enumeration of 2026-10-22). It supersedes the "Not Yet Implemented: None" statements below, which held for operator and function names but not for operator options, window functions, literal syntax or plugins.
+
 ## Tabular Operators
 
 ### Implemented (41/53)
