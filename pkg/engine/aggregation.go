@@ -1180,7 +1180,7 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 		return types.TypeReal
 	case "percentile", "percentiles", "percentilew", "percentilesw":
 		return percentileResultType(args, schema)
-	case "hll", "hll_if", "hll_merge", "tdigest", "tdigest_merge", "merge_tdigest":
+	case "hll", "hll_if", "hll_merge", "tdigest", "tdigest_merge", "merge_tdigest", "buildschema":
 		return types.TypeDynamic
 	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "covariance", "covariancep", "covarianceif", "covariancepif":
 		return types.TypeReal

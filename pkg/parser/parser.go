@@ -3147,6 +3147,10 @@ func parseAssignments(s string) ([]Assignment, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", part, err)
 			}
+			if multi := expandMultiColumn("", expr); multi != nil {
+				result = append(result, multi...)
+				continue
+			}
 			name, _ := ExprResultName(expr)
 			result = append(result, Assignment{Name: name, Expr: expr, Unnamed: true})
 			continue
@@ -3159,6 +3163,10 @@ func parseAssignments(s string) ([]Assignment, error) {
 			return nil, fmt.Errorf("extend %q: %w", name, err)
 		}
 
+		if multi := expandMultiColumn(name, expr); multi != nil {
+			result = append(result, multi...)
+			continue
+		}
 		result = append(result, Assignment{Name: name, Expr: expr})
 	}
 	return result, nil
@@ -3365,6 +3373,12 @@ func parseProjectItems(colStr string) ([]ProjectItem, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", part, err)
 			}
+			if multi := expandMultiColumn("", expr); multi != nil {
+				for _, m := range multi {
+					items = append(items, ProjectItem{Name: m.Name, Expr: m.Expr})
+				}
+				continue
+			}
 			name, _ := ExprResultName(expr) // "" → ColumnN in the engine
 			items = append(items, ProjectItem{Name: name, Expr: expr, Unnamed: true})
 			continue
@@ -3377,6 +3391,12 @@ func parseProjectItems(colStr string) ([]ProjectItem, error) {
 		expr, err := ParseExpr(exprStr)
 		if err != nil {
 			return nil, fmt.Errorf("%q: %w", name, err)
+		}
+		if multi := expandMultiColumn(name, expr); multi != nil {
+			for _, m := range multi {
+				items = append(items, ProjectItem{Name: m.Name, Expr: m.Expr})
+			}
+			continue
 		}
 		items = append(items, ProjectItem{Name: name, Expr: expr})
 	}

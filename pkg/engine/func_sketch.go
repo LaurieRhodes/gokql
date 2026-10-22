@@ -243,6 +243,9 @@ func mergeHLLs(vals []types.Value) (types.Value, error) {
 // any other function.
 func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, bool, error) {
 	switch agg.Function {
+	case "buildschema":
+		v, err := computeBuildSchema(agg, rows, schema)
+		return v, true, err
 	case "hll", "hll_if":
 		min, max := 1, 2
 		if agg.Function == "hll_if" {

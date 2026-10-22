@@ -56,6 +56,9 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| `punycode_from_string`, `punycode_to_string`, `punycode_domain_to_string`, `punycode_domain_from_string` | `func_punycode.go`, RFC 3492 without IDNA folding; all four references exact (including `。`/`｡` label separators and preserved case) |
+| `series_stats` with multi-column assignment `(a, b) = series_stats(x)` and unnamed expansion to `series_stats_x_min` ... `series_stats_x_variance` | `multi_column.go` expands it into per-statistic reads of series_stats_dynamic; reference exact. Unnamed statistics keep their generated names when only some are named, as Kusto.Language does |
+| `buildschema` | `agg_buildschema.go`; reference exact, key and alternative order by first appearance |
 | `fork` (`Name =`, `as` in the subquery, GenericResult otherwise) and `facet by ... [with (...)]` (count_<Column> tables) | `fork_facet.go`; `Engine.ExecuteAll` returns every result table, the CLI prints each under `[Name]`, the server returns Table_0, Table_1, ... Both must be the last operator |
 | Generated column names follow Kusto.Language everywhere: unnamed extend/project expressions (`strlen(s)` → `strlen_s`, `tostring(x)` → `x`, `d.a.b` → `d_a_b`, otherwise `ColumnN` skipping existing names), print (`print_N`), summarize by (`ColumnN`), aggregates (`make_list(x)` → `list_x`, `take_any(x)` → `x`, `binary_all_and(x)` → `x`), duplicates suffixed (`count_`, `count_1`). Previously the expression text (`x + 1`, `strlen('a')`) | `result_names.go`; the per-function name kinds are generated from Kusto.Language by `tools/gen-result-names/gen.js` |
 | `arg_max`/`arg_min` returned only the returned expressions; now the maximized expression first, then the returned ones (the reference's `State, BeginLat, BeginLocation`), with written and tuple names applied in order. `take_any(x, y)` and `take_any(*)` added. Summarize aggregate names given as `['a b'] = ...`; `countif(x >= 3)` no longer misparsed as an assignment | `pickRowColumns` (operators.go). **Changes the output of a query that names a multi-column arg_max/arg_min** (`Best = arg_min(p, NodeId)` now labels `p` Best, as ADX does) |
@@ -109,8 +112,8 @@ with their own examples.
 ## P3 — carried over
 
 Decimal type (`todecimal`, `parse_version`), `hash_combine`/
-`hash_many`, punycode, `buildschema`, `series_stats` and multi-column
-assignment, series curve fitting and signal processing,
+`hash_many`, series curve fitting and signal processing (the
+multi-column assignment they need now exists, see series_stats),
 `datetime_list_timezones`, `reduce`. Details in the existing backlog
 documents.
 
