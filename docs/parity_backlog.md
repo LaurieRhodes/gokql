@@ -83,6 +83,7 @@ and ASIM parsers, which is this engine's main query population.
 | Result types of `iff`/`iif`/`case`/`coalesce`/`max_of`/`min_of` (common type of the results; were always string, splitting union columns and sorting numbers as text) and of `abs`/`round`/`ceiling`, `real()`/`double()`/`long()`/`int()` | `unifyResultTypes`; Kusto.Language result types. Two odm-pendants stored functions (LogicFrontier, LogicBrief) that failed on the string-typed `coalesce` now run |
 | Graph core: `graph-match` comma-separated sequences sharing node variables, repeated variables, anonymous `()`/`-->`/`<--`/`--`/`-[*a..b]->`, `*0..n`, `cycles=none/all/unique_edges`, `map`/`all`/`any`/`inner_nodes`; `make-graph with_node_id=` and two node tables | `graph_match.go` (traversal planned from the bound end of each element), `graph_parse.go`; every graph-match / make-graph / map / all / any / inner_nodes reference example exact (`graph_compliance_test.go`). Found on the way: `set_union`/`set_intersect`/`set_difference` sorted their result; ADX keeps first-seen order |
 | Graph operators: `graph-shortest-paths` (output=any/all), `graph-mark-components` (weak/strong), `graph-to-table` with_node_id/with_source_id/with_target_id (hash ids) and `nodes as N, edges as E`, `make-graph ... partitioned-by Col (...)`; query batches (`Q1; Q2` returns both results, `as` names visible to later statements); `geo_distance_2points` | `graph_components.go`, `graph_match.go` (shared walker), `graph.go`; every reference example of the four operators exact (`graph_ops_test.go`). Found on the way: a batch silently returned only its last statement's result; a line break inside a parenthesised sub-pipeline (fork, partitioned-by) failed to parse; graph-to-table node order now follows ADX (node-table rows, then edge-only nodes) |
+| Persistent graph models: `.create-or-alter graph_model` (versions), `.show graph_model(s)`, `.drop graph_model`, `.make [async] graph_snapshot`, `.show graph_snapshot(s)`, `.drop graph_snapshot(s)`, `graph("M" [, "S"])`, `labels()` | `graph_model.go`, `graph_model_parse.go`; append-only system tables like `_Functions`, snapshot data frozen per snapshot GUID with typed values round-tripping exactly; the graph-sample-data and labels() reference queries return their documented rows over equivalent data (`graph_model_test.go`). `.show graph_*` commands can be piped |
 
 ## P2 — real but less frequent
 
@@ -98,10 +99,6 @@ and ASIM parsers, which is this engine's main query population.
   Pattern-mining plugins (`autocluster`,
   `basket`, `diffpatterns`) have the same specification problem as
   `reduce` and need their algorithm pinned before work starts.
-
-- Graph, remaining: persistent graph models (`.create-or-alter
-  graph_model`, the `graph()` function, snapshots, `labels()` and
-  labelled pattern elements), which need a design pass first.
 
 ### Remaining plugin output schemas (Kusto.Language 12.4.1)
 

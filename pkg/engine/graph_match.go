@@ -99,9 +99,10 @@ func collectBaseNames(expr parser.Expr, names map[string]bool) (complete bool) {
 // by every occurrence (within and across sequences); each anonymous
 // "()" is its own variable.
 type gmVar struct {
-	name   string // "" = anonymous
-	offset int    // first column in the match schema (-1 = anonymous)
-	pos    int    // plan position at which it becomes bound
+	name      string // "" = anonymous
+	offset    int    // first column in the match schema (-1 = anonymous)
+	pos       int    // plan position at which it becomes bound
+	labelsOff int    // hidden labels column (-1 = not used)
 }
 
 // gmElem is one edge element of the pattern, between node variables
@@ -112,6 +113,7 @@ type gmElem struct {
 	offset      int // first column in the match schema (-1 = anonymous)
 	pathOff     int // hidden graph-path column (-1 = anonymous)
 	pos         int // plan position at which it becomes bound
+	labelsOff   int // hidden labels column (-1 = not used)
 }
 
 // gmStep traverses one edge element from an already bound variable.
@@ -141,7 +143,18 @@ type gmPlan struct {
 // unreachable from user-written names.
 const graphPathPrefix = "\x00graph-path:"
 
-func graphPathColumn(name string) string { return graphPathPrefix + name }
+// graphLabelsPrefix names the hidden labels column of a variable read
+// by labels(v); graphElemLabelsColumn holds the current element's
+// labels inside map/all/any. All hidden graph columns share
+// graphHiddenPrefix.
+const (
+	graphHiddenPrefix     = "\x00graph-"
+	graphLabelsPrefix     = "\x00graph-labels:"
+	graphElemLabelsColumn = "\x00graph-elem-labels"
+)
+
+func graphPathColumn(name string) string   { return graphPathPrefix + name }
+func graphLabelsColumn(name string) string { return graphLabelsPrefix + name }
 
 // graphPath is the traversal behind an edge variable: the node it
 // starts from in written (left-to-right) order and its edges in order.
@@ -168,56 +181,87 @@ func (p *graphPath) nodes() []types.Value {
 	return out
 }
 
-// graphPathUses records the edge variables that map/all/any (directly or
-// through inner_nodes) iterate over. complete=false means an expression
-// shape was not understood; the caller must then assume every variable.
-func graphPathUses(expr parser.Expr, uses map[string]bool) (complete bool) {
+// walkFuncCalls calls fn for every function call in expr.
+// complete=false means an expression shape was not understood; callers
+// must then assume the worst.
+func walkFuncCalls(expr parser.Expr, fn func(*parser.FuncCall)) (complete bool) {
 	switch e := expr.(type) {
 	case nil, *parser.Literal, *parser.ColumnRef:
 		return true
 	case *parser.FuncCall:
-		if (e.Name == "map" || e.Name == "all" || e.Name == "any") && len(e.Args) == 2 {
-			src := e.Args[0]
-			if c, ok := src.(*parser.FuncCall); ok && c.Name == "inner_nodes" && len(c.Args) == 1 {
-				src = c.Args[0]
-			}
-			if r, ok := src.(*parser.ColumnRef); ok {
-				uses[r.Name] = true
-			}
-		}
+		fn(e)
 		ok := true
 		for _, a := range e.Args {
-			ok = graphPathUses(a, uses) && ok
+			ok = walkFuncCalls(a, fn) && ok
 		}
 		return ok
 	case *parser.AccessExpr:
 		for _, k := range e.Path {
-			if k.Expr != nil && !graphPathUses(k.Expr, uses) {
+			if k.Expr != nil && !walkFuncCalls(k.Expr, fn) {
 				return false
 			}
 		}
-		return graphPathUses(e.Object, uses)
+		return walkFuncCalls(e.Object, fn)
 	case *parser.BinaryExpr:
-		return graphPathUses(e.Left, uses) && graphPathUses(e.Right, uses)
+		return walkFuncCalls(e.Left, fn) && walkFuncCalls(e.Right, fn)
 	case *parser.UnaryExpr:
-		return graphPathUses(e.Expr, uses)
+		return walkFuncCalls(e.Expr, fn)
 	case *parser.BetweenExpr:
-		return graphPathUses(e.Expr, uses) && graphPathUses(e.Low, uses) && graphPathUses(e.High, uses)
+		return walkFuncCalls(e.Expr, fn) && walkFuncCalls(e.Low, fn) && walkFuncCalls(e.High, fn)
 	case *parser.InExpr:
-		ok := graphPathUses(e.Column, uses)
+		ok := walkFuncCalls(e.Column, fn)
 		for _, v := range e.Values {
-			ok = graphPathUses(v, uses) && ok
+			ok = walkFuncCalls(v, fn) && ok
 		}
 		return ok
 	case *parser.HasAnyAllExpr:
-		ok := graphPathUses(e.Column, uses)
+		ok := walkFuncCalls(e.Column, fn)
 		for _, v := range e.Values {
-			ok = graphPathUses(v, uses) && ok
+			ok = walkFuncCalls(v, fn) && ok
 		}
 		return ok
 	default:
 		return false
 	}
+}
+
+// graphUses is what a graph-match's expressions need from the walk:
+// the edge variables map/all/any iterate (paths), the variables
+// labels(v) reads, and whether labels() appears without an argument.
+type graphUses struct {
+	paths, labels map[string]bool
+	all           bool // some expression was not understood: assume everything
+}
+
+func collectGraphUses(op *parser.GraphMatchOp) graphUses {
+	u := graphUses{paths: map[string]bool{}, labels: map[string]bool{}}
+	fn := func(fc *parser.FuncCall) {
+		switch {
+		case (fc.Name == "map" || fc.Name == "all" || fc.Name == "any") && len(fc.Args) == 2:
+			src := fc.Args[0]
+			if c, ok := src.(*parser.FuncCall); ok && c.Name == "inner_nodes" && len(c.Args) == 1 {
+				src = c.Args[0]
+			}
+			if r, ok := src.(*parser.ColumnRef); ok {
+				u.paths[r.Name] = true
+			}
+		case fc.Name == "labels" && len(fc.Args) == 1:
+			if r, ok := fc.Args[0].(*parser.ColumnRef); ok {
+				u.labels[r.Name] = true
+			}
+		}
+	}
+	if !walkFuncCalls(op.Where, fn) {
+		u.all = true
+	}
+	if op.Project != nil {
+		for _, it := range op.Project.Items {
+			if !walkFuncCalls(it.Expr, fn) {
+				u.all = true
+			}
+		}
+	}
+	return u
 }
 
 func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
@@ -235,7 +279,7 @@ func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 			}
 			named[name] = len(plan.vars)
 		}
-		plan.vars = append(plan.vars, gmVar{name: name, offset: -1, pos: -1})
+		plan.vars = append(plan.vars, gmVar{name: name, offset: -1, pos: -1, labelsOff: -1})
 		return len(plan.vars) - 1
 	}
 	for _, seq := range op.Sequences {
@@ -251,7 +295,7 @@ func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 				}
 				edgeNames[spec.Name] = true
 			}
-			plan.elems = append(plan.elems, gmElem{spec: spec, left: prev, right: next, offset: -1, pathOff: -1})
+			plan.elems = append(plan.elems, gmElem{spec: spec, left: prev, right: next, offset: -1, pathOff: -1, labelsOff: -1})
 			prev = next
 		}
 	}
@@ -340,24 +384,33 @@ func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 		plan.schema.Columns = append(plan.schema.Columns,
 			types.Column{Name: el.spec.Name, Type: types.TypeDynamic})
 	}
-	// Hidden graph paths only for the variables map/all/any iterate.
-	uses := make(map[string]bool)
-	allPaths := !graphPathUses(op.Where, uses)
-	if op.Project != nil {
-		for _, it := range op.Project.Items {
-			if !graphPathUses(it.Expr, uses) {
-				allPaths = true
-			}
-		}
-	}
+	// Hidden graph paths and labels only for the variables that
+	// map/all/any and labels() use.
+	uses := collectGraphUses(op)
 	for i := range plan.elems {
 		el := &plan.elems[i]
-		if el.spec.Name == "" || !(allPaths || uses[el.spec.Name]) {
+		if el.spec.Name == "" || !(uses.all || uses.paths[el.spec.Name]) {
 			continue
 		}
 		el.pathOff = len(plan.schema.Columns)
 		plan.schema.Columns = append(plan.schema.Columns,
 			types.Column{Name: graphPathColumn(el.spec.Name), Type: types.TypeDynamic})
+	}
+	for i := range plan.vars {
+		v := &plan.vars[i]
+		if v.name != "" && (uses.all || uses.labels[v.name]) {
+			v.labelsOff = len(plan.schema.Columns)
+			plan.schema.Columns = append(plan.schema.Columns,
+				types.Column{Name: graphLabelsColumn(v.name), Type: types.TypeDynamic})
+		}
+	}
+	for i := range plan.elems {
+		el := &plan.elems[i]
+		if el.spec.Name != "" && (uses.all || uses.labels[el.spec.Name]) {
+			el.labelsOff = len(plan.schema.Columns)
+			plan.schema.Columns = append(plan.schema.Columns,
+				types.Column{Name: graphLabelsColumn(el.spec.Name), Type: types.TypeDynamic})
+		}
 	}
 	return plan, nil
 }
@@ -406,6 +459,9 @@ func (plan *gmPlan) writeNode(g *Graph, row types.Row, v int, id types.Value) {
 		return
 	}
 	copy(row[off:], g.nodeElemRow(id))
+	if lo := plan.vars[v].labelsOff; lo >= 0 {
+		row[lo] = g.nodeLabelsJSON(id)
+	}
 }
 
 // writePath fills edge element el's columns: the edge's columns for a
@@ -415,6 +471,17 @@ func (plan *gmPlan) writePath(g *Graph, row types.Row, el int, start types.Value
 	elem := &plan.elems[el]
 	if elem.offset < 0 {
 		return nil
+	}
+	if elem.labelsOff >= 0 {
+		if elem.spec.VarLength {
+			parts := make([]string, len(edges))
+			for i, ei := range edges {
+				parts[i] = g.edgeLabelsJSON(ei)
+			}
+			row[elem.labelsOff] = "[" + strings.Join(parts, ",") + "]"
+		} else {
+			row[elem.labelsOff] = g.edgeLabelsJSON(edges[0])
+		}
 	}
 	if elem.pathOff >= 0 {
 		cp := make([]int, len(edges))
@@ -780,20 +847,22 @@ func (g *Graph) elemSchema(outer *types.Schema, nodes bool) (*types.Schema, int)
 	} else {
 		cols = g.EdgeSchema.Columns
 	}
+	width := len(cols) + 1 // + the element's labels
 	g.elemMu.Lock()
 	defer g.elemMu.Unlock()
 	key := elemSchemaKey{outer, nodes}
 	if s, ok := g.elemSchemas[key]; ok {
-		return s, len(cols)
+		return s, width
 	}
 	s := &types.Schema{}
 	s.Columns = append(s.Columns, cols...)
+	s.Columns = append(s.Columns, types.Column{Name: graphElemLabelsColumn, Type: types.TypeDynamic})
 	s.Columns = append(s.Columns, outer.Columns...)
 	if g.elemSchemas == nil {
 		g.elemSchemas = make(map[elemSchemaKey]*types.Schema)
 	}
 	g.elemSchemas[key] = s
-	return s, len(cols)
+	return s, width
 }
 
 // evalGraphPathFunc evaluates map(), all() and any() over the edges of
@@ -805,6 +874,8 @@ func (g *Graph) elemSchema(outer *types.Schema, nodes bool) (*types.Schema, int)
 // aggregation reaching scalar evaluation), so dispatch continues.
 func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
+	case "labels":
+		return evalGraphLabels(fc, schema, row)
 	case "inner_nodes":
 		if schemaHasGraphPaths(schema) {
 			return nil, true, fmt.Errorf("inner_nodes() can only be used as the first argument of all(), any() or map()")
@@ -848,14 +919,17 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 
 	elemSchema, width := g.elemSchema(schema, innerNodes)
 	var elems []types.Row
+	var elemLabels []string
 	if innerNodes {
 		nodes := path.nodes()
 		for i := 1; i < len(nodes)-1; i++ {
 			elems = append(elems, g.nodeElemRow(nodes[i]))
+			elemLabels = append(elemLabels, g.nodeLabelsJSON(nodes[i]))
 		}
 	} else {
 		for _, ei := range path.edges {
 			elems = append(elems, g.Edges[ei].Row)
+			elemLabels = append(elemLabels, g.edgeLabelsJSON(ei))
 		}
 	}
 
@@ -867,8 +941,9 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 		mapped = make([]interface{}, 0, len(elems))
 		mapType = inferExprType(eng, fc.Args[1], elemSchema)
 	}
-	for _, er := range elems {
+	for i, er := range elems {
 		copy(buf, er)
+		buf[width-1] = elemLabels[i]
 		v, err := evalExpr(eng, fc.Args[1], elemSchema, buf)
 		if err != nil {
 			return nil, true, err
@@ -906,6 +981,9 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 // graphPathFuncType is the result type of map/all/any over a graph-match
 // variable (ok=false when the call is not one).
 func graphPathFuncType(fc *parser.FuncCall, schema *types.Schema) (types.KQLType, bool) {
+	if fc.Name == "labels" && len(fc.Args) <= 1 && schemaHasGraphPaths(schema) {
+		return types.TypeDynamic, true
+	}
 	if (fc.Name != "map" && fc.Name != "all" && fc.Name != "any") || len(fc.Args) != 2 || !schemaHasGraphPaths(schema) {
 		return types.TypeDynamic, false
 	}
@@ -920,9 +998,35 @@ func schemaHasGraphPaths(schema *types.Schema) bool {
 		return false
 	}
 	for i := len(schema.Columns) - 1; i >= 0; i-- {
-		if strings.HasPrefix(schema.Columns[i].Name, graphPathPrefix) {
+		if strings.HasPrefix(schema.Columns[i].Name, graphHiddenPrefix) {
 			return true
 		}
 	}
 	return false
+}
+
+// evalGraphLabels is labels(v) for a graph-match variable, or labels()
+// for the current element inside map/all/any: a dynamic array of the
+// element's labels (empty for graphs built with make-graph).
+func evalGraphLabels(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	if !schemaHasGraphPaths(schema) {
+		return nil, false, nil
+	}
+	switch len(fc.Args) {
+	case 0:
+		if idx := schema.ColumnIndex(graphElemLabelsColumn); idx >= 0 {
+			return row[idx], true, nil
+		}
+		return nil, true, fmt.Errorf("labels() without an argument is only valid inside all(), any() or map()")
+	case 1:
+		ref, ok := fc.Args[0].(*parser.ColumnRef)
+		if !ok {
+			return nil, true, fmt.Errorf("labels() expects a node or edge variable")
+		}
+		if idx := schema.ColumnIndex(graphLabelsColumn(ref.Name)); idx >= 0 {
+			return row[idx], true, nil
+		}
+		return nil, true, fmt.Errorf("labels(): %q is not a node or edge variable of the pattern", ref.Name)
+	}
+	return nil, true, fmt.Errorf("labels() expects at most one argument")
 }

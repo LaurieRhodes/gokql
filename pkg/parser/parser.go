@@ -261,6 +261,7 @@ func Parse(input string) (Statement, error) {
 // nothing about either command's own grammar conflicts with piping.
 var pipeableSimpleCommandPrefixes = []string{
 	".show tables", ".show database", ".help", ".show table ",
+	".show graph_model", ".show graph_snapshot",
 }
 
 func parseSingleStatement(input string) (Statement, error) {
@@ -697,6 +698,10 @@ func parseCommand(input string) (Statement, error) {
 
 	if lower == ".show tables" {
 		return &ShowTablesCmd{}, nil
+	}
+
+	if st, ok, err := parseGraphModelCommand(input); ok {
+		return st, err
 	}
 
 	// .show database

@@ -397,6 +397,18 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 		return e.applyDropFunction(s)
 	case *parser.CreateMaterializedViewCmd:
 		return e.applyCreateMaterializedView(s)
+	case *parser.CreateOrAlterGraphModelCmd:
+		return e.applyCreateOrAlterGraphModel(s)
+	case *parser.DropGraphModelCmd:
+		return e.applyDropGraphModel(s)
+	case *parser.ShowGraphModelsCmd:
+		return e.applyShowGraphModels(s)
+	case *parser.MakeGraphSnapshotCmd:
+		return e.applyMakeGraphSnapshot(s)
+	case *parser.ShowGraphSnapshotsCmd:
+		return e.applyShowGraphSnapshots(s)
+	case *parser.DropGraphSnapshotCmd:
+		return e.applyDropGraphSnapshot(s)
 	case *parser.ShowMaterializedViewsCmd:
 		return e.applyShowMaterializedViews()
 	case *parser.DropMaterializedViewCmd:
@@ -754,6 +766,13 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	// stored_functions.go's resolveStoredFunction. Same shape as the
 	// federation case immediately above: resolve at the source, then
 	// hand off to the normal pipeline unchanged.
+	if q.SourceFuncCall != nil && q.SourceFuncCall.Name == "graph" {
+		g, err := e.resolveGraphSource(q.SourceFuncCall)
+		if err != nil {
+			return nil, err
+		}
+		return e.applyGraphPipeline(g, q.Operators)
+	}
 	if q.SourceFuncCall != nil {
 		result, err := e.resolveStoredFunction(q.SourceFuncCall)
 		if err != nil {

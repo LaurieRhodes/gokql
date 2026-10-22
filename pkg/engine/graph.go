@@ -40,6 +40,15 @@ type Graph struct {
 	// coercedIds: node-table id types disagreed with the edges, so
 	// every id was formatted as a string.
 	coercedIds bool
+	// idType, when idTypeSet, is the node id type of a graph built from
+	// a graph model (whose ids come from several step queries).
+	idType    types.KQLType
+	idTypeSet bool
+	// Labels (graph models only; make-graph graphs have none):
+	// node key → labels, and per-edge labels parallel to Edges.
+	nodeLabels map[string][]string
+	edgeLabels [][]string
+	isModel    bool
 
 	radjOnce sync.Once
 	radj     map[string][]int // node key → incoming edge indices (lazy)
@@ -94,6 +103,9 @@ func (g *Graph) derivedNodeIdValue(id types.Value) types.Value {
 
 // nodeIdType is the type node ids are hashed and compared as.
 func (g *Graph) nodeIdType() types.KQLType {
+	if g.idTypeSet {
+		return g.idType
+	}
 	if g.coercedIds {
 		return types.TypeString
 	}
@@ -120,11 +132,29 @@ func (g *Graph) nodeElemRow(id types.Value) types.Row {
 		return row
 	}
 	row := make(types.Row, len(g.NodeSchema.Columns))
-	row[g.NodeIdIdx] = id
+	if g.NodeIdIdx >= 0 {
+		row[g.NodeIdIdx] = id
+	}
 	if g.withNodeIdIdx >= 0 {
 		row[g.withNodeIdIdx] = id
 	}
 	return row
+}
+
+// nodeLabelsJSON / edgeLabelsJSON are labels() of a node or edge: a
+// dynamic array of strings, empty for make-graph graphs.
+func (g *Graph) nodeLabelsJSON(id types.Value) string {
+	if g.nodeLabels == nil {
+		return "[]"
+	}
+	return labelsJSON(g.nodeLabels[graphKey(id)])
+}
+
+func (g *Graph) edgeLabelsJSON(ei int) string {
+	if ei >= len(g.edgeLabels) {
+		return "[]"
+	}
+	return labelsJSON(g.edgeLabels[ei])
 }
 
 // graphKey formats a node id value as a map key. Type-tagged via
@@ -149,10 +179,18 @@ type pipeState struct {
 // `sort by ... | take N` pairs fuse into a bounded top-N heap
 // (applyTopN) instead of a full sort.
 func (e *Engine) applyPipeline(input *types.Table, ops []parser.Operator) (*types.Table, error) {
+	return e.applyPipelineState(pipeState{table: input}, ops)
+}
+
+// applyGraphPipeline runs ops over a graph source (graph("Model")).
+func (e *Engine) applyGraphPipeline(g *Graph, ops []parser.Operator) (*types.Table, error) {
+	return e.applyPipelineState(pipeState{graph: g}, ops)
+}
+
+func (e *Engine) applyPipelineState(st pipeState, ops []parser.Operator) (*types.Table, error) {
 	if err := multiResultNotLast(ops); err != nil {
 		return nil, err
 	}
-	st := pipeState{table: input}
 	for i := 0; i < len(ops); i++ {
 		if st.graph == nil {
 			if ob, isOrder := ops[i].(*parser.OrderByOp); isOrder && i+1 < len(ops) {
