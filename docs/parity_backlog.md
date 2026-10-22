@@ -56,6 +56,7 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| `evaluate activity_counts_metrics`, `activity_metrics`, `active_users_count`, `new_activity_metrics` (Cohort and Lookback arguments); `week`/`month`/`year` steps | `plugin_activity.go`; activity_counts_metrics, active_users_count and new_activity_metrics example 1 exact; activity_metrics' examples use rand(), so only its stated formulas and NaN first row are checked. active_users_count needs the lookback window to exclude its lower bound, (t - LookbackWindow, t], to reproduce the reference. Periods use exact int64 arithmetic (a float64 datetime cannot hold `End - 1tick`) |
 | `evaluate sliding_window_counts`, `rolling_percentile`, `schema_merge` | `plugin_rolling.go`, `plugin_schema_merge.go`; every reference example exact (sliding_window_counts 1, rolling_percentile 2, schema_merge 3). Output schemas from Kusto.Language (`Count`/`Dcount`). Unpinned: bins whose window is empty are not reported; Bin strings week/month/year unsupported; schema_merge's type-reduction rules beyond int/long/real and its mismatch message |
 | Arithmetic and comparison on mixed numeric types: `2 * 1.5` gave 2, `x + 0.5` and `x < 1.5` truncated the real to the long's integer, `int` operands failed (`unsupported operation: int32 + int32`), `1h * 1.5` truncated the factor, `90m / 1h` divided as integers; `2 * 1h` was typed long. Present since before this backlog | `evalMixedNumeric` and `numericPromote` (eval.go); result types follow Kusto.Language (int arithmetic widens to long; timespan times or divided by a number is a timespan; timespan / timespan is real) |
 | `percentile`/`percentiles`/`percentiles_array` interpolated (median of 1..10 was 5.5) and were always real; columns were named `percentile_x` | nearest-rank as ADX documents (median 5), result keeps the input type (int widens to long; datetime and timespan work), columns `percentile_x_50`, `percentile_x_99_5`, `percentile__50` for a non-column expression; a written name applies to the first column, `(a, b) = percentiles(...)` names each. `percentilew`, `percentilesw`, `percentilesw_array` added (weight = repetitions). ADX's T-Digest estimate can differ from the exact rank on large populations |
@@ -70,13 +71,14 @@ and ASIM parsers, which is this engine's main query population.
 - Operators previously labelled out of scope that have no cluster
   dependency: `fork`, `facet`.
 - `evaluate` plugins. `bag_unpack`, `ipv4_lookup`, `ipv6_lookup`,
-  `pivot`, `narrow`, `schema_merge`, `rolling_percentile` and
-  `sliding_window_counts` exist. Deterministic, documented-output
-  plugins: `sequence_detect`,
-  `active_users_count`, `activity_counts_metrics`,
-  `activity_engagement`, `new_activity_metrics`, `session_count`,
-  `funnel_sequence`, `funnel_sequence_completion`,
-  `dcount_intersect`. Pattern-mining plugins (`autocluster`,
+  `pivot`, `narrow`, `schema_merge`, `rolling_percentile`,
+  `sliding_window_counts`, `activity_counts_metrics`,
+  `activity_metrics`, `active_users_count` and `new_activity_metrics`
+  exist. Remaining: `sequence_detect`, `funnel_sequence`,
+  `funnel_sequence_completion`, `dcount_intersect`, and
+  `activity_engagement` and `session_count`, whose references show
+  only charts (of random data), so their algorithms are unpinned.
+  Pattern-mining plugins (`autocluster`,
   `basket`, `diffpatterns`) have the same specification problem as
   `reduce` and need their algorithm pinned before work starts.
 

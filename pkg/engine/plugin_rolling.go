@@ -54,28 +54,6 @@ func pluginScalar(text string) (types.Value, types.KQLType, error) {
 	return v, inferExprType(expr, empty), nil
 }
 
-// axisUnits converts a scalar to the timeline's runtime units:
-// datetime is nanoseconds, timespan 100ns ticks. A timespan step on a
-// datetime timeline is scaled to nanoseconds.
-func axisUnits(v types.Value, vt, axis types.KQLType) float64 {
-	f := types.ToFloat64(v)
-	if axis == types.TypeDatetime && vt == types.TypeTimespan {
-		return f * 100
-	}
-	return f
-}
-
-// axisValue is the runtime value of position x on a timeline of type t.
-func axisValue(x float64, t types.KQLType) types.Value {
-	switch t {
-	case types.TypeReal:
-		return x
-	case types.TypeInt:
-		return int32(x)
-	}
-	return int64(math.Round(x))
-}
-
 func pluginColumn(in *types.Table, plugin, which, name string) (int, error) {
 	i := in.Schema.ColumnIndex(strings.TrimSpace(name))
 	if i < 0 {
@@ -176,7 +154,8 @@ func applySlidingWindowCounts(e *Engine, in *types.Table, args []string, _ *type
 		return nil, err
 	}
 	axis := in.Schema.Columns[tCol].Type
-	var sc [4]float64
+	var sv [4]types.Value
+	var st [4]types.KQLType
 	for i, a := range args[2:6] {
 		v, vt, err := pluginScalar(a)
 		if err != nil {
@@ -185,17 +164,21 @@ func applySlidingWindowCounts(e *Engine, in *types.Table, args []string, _ *type
 		if _, isStr := v.(string); isStr || v == nil {
 			return nil, fmt.Errorf("%s: argument %d must be a number, datetime or timespan (Bin strings week/month/year are not supported)", name, i+3)
 		}
-		sc[i] = axisUnits(v, vt, axis)
+		sv[i], st[i] = v, vt
 	}
-	start, end, lookback, bin := sc[0], sc[1], sc[2], sc[3]
-	if bin <= 0 {
-		return nil, fmt.Errorf("%s: Bin must be positive", name)
+	b, err := newBinner(axis, sv[0], sv[1], sv[3], st[0], st[1], st[3])
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	k := int64(math.Floor(lookback / bin))
+	var k int64 // LookbackWindow in bins, rounded down
+	if axis == types.TypeReal {
+		k = int64(math.Floor(types.ToFloat64(sv[2]) / b.stepf))
+	} else {
+		k = axisInt(sv[2], st[2], axis) / b.stepi
+	}
 	if k < 1 {
 		k = 1
 	}
-	endIdx := int64(math.Floor((end - start) / bin))
 	dims, err := dimColumns(in, name, args[6:])
 	if err != nil {
 		return nil, err
@@ -211,20 +194,20 @@ func applySlidingWindowCounts(e *Engine, in *types.Table, args []string, _ *type
 		if r[tCol] == nil {
 			continue
 		}
-		bi := int64(math.Floor((types.ToFloat64(r[tCol]) - start) / bin))
+		bi := b.index(r[tCol])
 		dk := dimKey(r, dims)
-		for b := bi; b < bi+k; b++ {
-			if b < 0 || b > endIdx {
+		for w := bi; w < bi+k; w++ {
+			if !b.inRange(w) {
 				continue
 			}
-			key := dk + "\x01" + strconv.FormatInt(b, 10)
+			key := dk + "\x01" + strconv.FormatInt(w, 10)
 			c := cells[key]
 			if c == nil {
 				dr := make(types.Row, len(dims))
 				for i, d := range dims {
 					dr[i] = r[d]
 				}
-				c = &cell{dimRow: dr, bin: b, ids: map[string]bool{}}
+				c = &cell{dimRow: dr, bin: w, ids: map[string]bool{}}
 				cells[key] = c
 			}
 			c.count++
@@ -241,7 +224,7 @@ func applySlidingWindowCounts(e *Engine, in *types.Table, args []string, _ *type
 	out := &types.Table{Schema: schema}
 	var pos []float64
 	for _, c := range cells {
-		row := types.Row{axisValue(start+float64(c.bin)*bin, axis)}
+		row := types.Row{b.value(c.bin)}
 		row = append(row, c.dimRow...)
 		row = append(row, c.count, int64(len(c.ids)))
 		out.Rows = append(out.Rows, row)
@@ -274,9 +257,14 @@ func applyRollingPercentile(e *Engine, in *types.Table, args []string, _ *types.
 	if err != nil || bv == nil {
 		return nil, fmt.Errorf("%s: BinSize: must be a number or timespan", name)
 	}
-	binSize := axisUnits(bv, bt, axis)
-	if binSize <= 0 {
-		return nil, fmt.Errorf("%s: BinSize must be positive", name)
+	var zero types.Value = int64(0)
+	if axis == types.TypeReal {
+		zero = 0.0
+	}
+	// bin(IndexColumn, BinSize): periods aligned at zero
+	bn, err := newBinner(axis, zero, zero, bv, axis, axis, bt)
+	if err != nil {
+		return nil, fmt.Errorf("%s: BinSize: %w", name, err)
 	}
 	nv, _, err := pluginScalar(args[4])
 	if err != nil || nv == nil {
@@ -301,7 +289,7 @@ func applyRollingPercentile(e *Engine, in *types.Table, args []string, _ *types.
 		if r[iCol] == nil || r[vCol] == nil {
 			continue
 		}
-		b := int64(math.Floor(types.ToFloat64(r[iCol]) / binSize))
+		b := bn.index(r[iCol])
 		dk := dimKey(r, dims)
 		g := groups[dk]
 		if g == nil {
@@ -340,7 +328,7 @@ func applyRollingPercentile(e *Engine, in *types.Table, args []string, _ *types.
 			for w := b - n + 1; w <= b; w++ {
 				window = append(window, g.bins[w]...)
 			}
-			row := types.Row{axisValue(float64(b)*binSize, axis)}
+			row := types.Row{bn.value(b)}
 			row = append(row, g.dimRow...)
 			row = append(row, nearestRankPercentile(window, pct))
 			out.Rows = append(out.Rows, row)
