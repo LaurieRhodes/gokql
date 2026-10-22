@@ -638,6 +638,92 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		}
 		return re.ReplaceAllString(fmt.Sprintf("%v", sourceVal), ""), true, nil
 
+	case "around":
+		// around(value, center, delta): center-delta <= value <=
+		// center+delta; null if any argument is null.
+		if len(fc.Args) != 3 {
+			return nil, true, fmt.Errorf("around requires 3 arguments")
+		}
+		var vals [3]types.Value
+		for i, a := range fc.Args {
+			v, err := evalExpr(eng, a, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if v == nil {
+				return nil, true, nil
+			}
+			vals[i] = v
+		}
+		t := inferExprType(eng, fc.Args[0], schema)
+		var x, c, d float64
+		if t == types.TypeDatetime && inferExprType(eng, fc.Args[2], schema) == types.TypeTimespan {
+			// datetimes are nanoseconds, timespans ticks
+			x, c, d = float64(types.ToInt64(vals[0])), float64(types.ToInt64(vals[1])), float64(types.ToInt64(vals[2]))*100
+		} else {
+			x, c, d = types.ToFloat64(vals[0]), types.ToFloat64(vals[1]), types.ToFloat64(vals[2])
+		}
+		return x >= c-d && x <= c+d, true, nil
+
+	case "current_database":
+		if eng != nil && eng.Catalog != nil && eng.Catalog.Database != nil && eng.Catalog.Database.Name != "" {
+			return eng.Catalog.Database.Name, true, nil
+		}
+		return "", true, nil
+
+	case "guid":
+		// guid(null); guid(literal) is handled by the parser.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("guid requires 1 argument")
+		}
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil || v == nil {
+			return nil, true, err
+		}
+		g := strings.ToLower(strings.Trim(fmt.Sprintf("%v", v), "{} "))
+		return g, true, nil
+
+	case "estimate_data_size":
+		// estimate_data_size(col, ... | *): bytes by type: 8 for
+		// long/real/datetime/timespan, 4 int, 1 bool, 16 guid and
+		// decimal, the length for string and dynamic, 0 for null.
+		if len(fc.Args) < 1 {
+			return nil, true, fmt.Errorf("estimate_data_size requires at least 1 argument")
+		}
+		var total int64
+		size := func(v types.Value, t types.KQLType) int64 {
+			if v == nil {
+				return 0
+			}
+			switch t {
+			case types.TypeLong, types.TypeReal, types.TypeDatetime, types.TypeTimespan:
+				return 8
+			case types.TypeInt:
+				return 4
+			case types.TypeBool:
+				return 1
+			case types.TypeGUID, types.TypeDecimal:
+				return 16
+			}
+			return int64(len(fmt.Sprintf("%v", v)))
+		}
+		for _, a := range fc.Args {
+			if _, ok := a.(*parser.StarExpr); ok {
+				for i, c := range schema.Columns {
+					if i < len(row) && c.Name != timeReceivedColumnName {
+						total += size(row[i], c.Type)
+					}
+				}
+				continue
+			}
+			v, err := evalExpr(eng, a, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			total += size(v, inferExprType(eng, a, schema))
+		}
+		return total, true, nil
+
 	case "indexof":
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("indexof requires at least 2 arguments")
@@ -653,21 +739,61 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if sourceVal == nil || lookupVal == nil {
 			return nil, true, nil
 		}
-		s := fmt.Sprintf("%v", sourceVal)
-		lookup := fmt.Sprintf("%v", lookupVal)
-		start := 0
-		if len(fc.Args) >= 3 {
-			sv, _ := evalExpr(eng, fc.Args[2], schema, row)
-			start = int(types.ToInt64(sv))
+		s := kqlToString(sourceVal, inferExprType(eng, fc.Args[0], schema))
+		lookup := kqlToString(lookupVal, inferExprType(eng, fc.Args[1], schema))
+		// indexof(string, match [, start [, length [, occurrence]]]):
+		// a negative start counts from the end; length -1 is
+		// unlimited (below -1 is null); each further occurrence is
+		// searched from just after the previous match over the same
+		// length, as the reference example's idx8 (= 9) requires.
+		opt := func(i int, def int64) (int64, bool) {
+			if len(fc.Args) <= i {
+				return def, true
+			}
+			v, err := evalExpr(eng, fc.Args[i], schema, row)
+			if err != nil || v == nil {
+				return 0, false
+			}
+			return types.ToInt64(v), true
 		}
-		if start >= len(s) {
+		start, ok1 := opt(2, 0)
+		length, ok2 := opt(3, -1)
+		occ, ok3 := opt(4, 1)
+		if !ok1 || !ok2 || !ok3 || length < -1 || occ < 0 {
+			return nil, true, nil
+		}
+		n := int64(len(s))
+		if start < 0 {
+			start += n
+			if start < 0 {
+				start = 0
+			}
+		}
+		if start > n {
 			return int64(-1), true, nil
 		}
-		idx := strings.Index(s[start:], lookup)
-		if idx < 0 {
-			return int64(-1), true, nil
+		if occ == 0 {
+			occ = 1
 		}
-		return int64(start + idx), true, nil
+		pos := start
+		for k := int64(0); k < occ; k++ {
+			end := n
+			if length >= 0 && pos+length < n {
+				end = pos + length
+			}
+			if pos > end {
+				return int64(-1), true, nil
+			}
+			idx := strings.Index(s[pos:end], lookup)
+			if idx < 0 {
+				return int64(-1), true, nil
+			}
+			if k == occ-1 {
+				return pos + int64(idx), true, nil
+			}
+			pos += int64(idx) + 1
+		}
+		return int64(-1), true, nil
 
 	case "indexof_regex":
 		// indexof_regex(string, match [, start [, length [, occurrence]]])

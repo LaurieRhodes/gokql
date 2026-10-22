@@ -372,25 +372,19 @@ type AsOp struct {
 
 func (*AsOp) operatorNode() {}
 
-// ScanOp: | scan [declare (ColumnDeclarations)] with (step StepName [output=all|last|none] : Condition => Column = Assignment[, ...] ;)
-//
-// Verified against real ADX docs (scan-operator.md) before scoping
-// this deliberately to a SINGLE step — real ADX's own scan is a
-// genuine multi-step state machine (steps evaluated in REVERSE order
-// per record, cross-step state references via StepName.ColumnName,
-// with_match_id sequence tracking across matches) — real, substantial
-// state-machine semantics, not a small addition on top of something
-// already built. A single step already covers the operator's most
-// common real use (cumulative/running-value patterns — every worked
-// example in real ADX's own docs is single-step) and is what's
-// implemented here; a query with more than one step, or using
-// with_match_id, gets a clear parse error naming exactly what's
-// unsupported, not silent mis-parsing. See applyScan's own doc
-// comment (pkg/engine/scan.go) for exactly how StepName.ColumnName
-// references are resolved for the one supported step.
+// ScanOp: | scan [with_match_id=Name] [declare (ColumnDeclarations)]
+// with (step StepName [output=all|last|none] : Condition [=> Column =
+// Assignment, ...]; ...). The multi-step state machine is described in
+// pkg/engine/scan.go.
 type ScanOp struct {
-	Declares    []ScanDeclare
-	StepName    string
+	MatchIDColumn string // "" without with_match_id
+	Declares      []ScanDeclare
+	Steps         []ScanStep
+}
+
+// ScanStep is one step of a scan.
+type ScanStep struct {
+	Name        string
 	Output      string // "all" (default), "last", "none"
 	Condition   Expr
 	Assignments []ScanAssignment
@@ -969,6 +963,9 @@ type HasAnyAllExpr struct {
 	Column Expr   // Left side
 	Values []Expr // Term list
 	All    bool   // true for has_all, false for has_any
+	// SubqueryText is a tabular term source, has_any ((T | project x)),
+	// whose first column supplies the terms; resolved once per operator.
+	SubqueryText string
 }
 
 func (*HasAnyAllExpr) exprNode() {}

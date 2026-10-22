@@ -261,7 +261,61 @@ func applyBagUnpackPlugin(e *Engine, input *types.Table, argTexts []string, outp
 		result.AddRow(newRow)
 	}
 
+	if outputSchema != nil {
+		return projectToOutputSchema(result, input, colIdx, outputSchema), nil
+	}
 	return result, nil
+}
+
+// projectToOutputSchema shapes bag_unpack's result to its declared
+// output schema: exactly the listed columns, or with a leading "*" the
+// input's columns (less the unpacked one) followed by the listed
+// columns not among them. Listed columns are converted to their
+// declared type; a missing one is null.
+func projectToOutputSchema(result, input *types.Table, unpacked int, out *types.Schema) *types.Table {
+	var cols []types.Column
+	seen := map[string]bool{}
+	for _, c := range out.Columns {
+		if c.Name != "*" {
+			continue
+		}
+		for i, ic := range input.Schema.Columns {
+			if i != unpacked && !seen[ic.Name] {
+				cols = append(cols, ic)
+				seen[ic.Name] = true
+			}
+		}
+	}
+	for _, c := range out.Columns {
+		if c.Name != "*" && !seen[c.Name] {
+			cols = append(cols, c)
+			seen[c.Name] = true
+		}
+	}
+	src := make([]int, len(cols))
+	for i, c := range cols {
+		src[i] = result.Schema.ColumnIndex(c.Name)
+	}
+	shaped := types.NewTable(result.Name, types.Schema{Columns: cols})
+	for _, row := range result.Rows {
+		nr := make(types.Row, len(cols))
+		for i, j := range src {
+			if j < 0 || j >= len(row) || row[j] == nil {
+				continue
+			}
+			v := row[j]
+			if have := result.Schema.Columns[j].Type; have != cols[i].Type {
+				if cv, err := types.ParseValue(kqlToString(v, have), cols[i].Type); err == nil {
+					v = cv
+				} else {
+					v = nil
+				}
+			}
+			nr[i] = v
+		}
+		shaped.AddRow(nr)
+	}
+	return shaped
 }
 
 // jsonValueKQLType infers the correct KQL output type for a raw Go

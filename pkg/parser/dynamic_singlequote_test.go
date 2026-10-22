@@ -2,8 +2,8 @@ package parser
 
 import "testing"
 
-// dynamic_singlequote_test.go — normalizeSingleQuotedJSON, found and
-// fixed as a real, recurring gap during this session's own testing
+// dynamic_singlequote_test.go — single-quoted strings in dynamic
+// literals (dynamicLiteralToJSON), found and fixed as a real, recurring gap during this session's own testing
 // (not hypothetical): real ADX's own documentation examples for
 // several functions (bag_merge, bag_remove_keys, has_any_index, among
 // others) freely use single quotes inside dynamic({...}) literals as
@@ -14,7 +14,7 @@ import "testing"
 // separate pieces of work this same session.
 
 func TestNormalizeSingleQuotedJSONBasic(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`{'a':1,'b':2}`)
+	got := dynLitJSON(t, `{'a':1,'b':2}`)
 	want := `{"a":1,"b":2}`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -22,8 +22,8 @@ func TestNormalizeSingleQuotedJSONBasic(t *testing.T) {
 }
 
 func TestNormalizeSingleQuotedJSONArray(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`['this', 'example']`)
-	want := `["this", "example"]`
+	got := dynLitJSON(t, `['this', 'example']`)
+	want := `["this","example"]`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -34,7 +34,7 @@ func TestNormalizeSingleQuotedJSONArray(t *testing.T) {
 // unchanged — the actual point of this being a purely additive fix,
 // not a risk to any query that never used single quotes at all.
 func TestNormalizeSingleQuotedJSONDoubleQuotedUnaffected(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`{"a":1,"b":"hello"}`)
+	got := dynLitJSON(t, `{"a":1,"b":"hello"}`)
 	want := `{"a":1,"b":"hello"}`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -47,8 +47,8 @@ func TestNormalizeSingleQuotedJSONDoubleQuotedUnaffected(t *testing.T) {
 // resulting JSON would be broken (an unescaped " would prematurely
 // close the string).
 func TestNormalizeSingleQuotedJSONEmbeddedDoubleQuote(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`{'msg': 'she said "hi"'}`)
-	want := `{"msg": "she said \"hi\""}`
+	got := dynLitJSON(t, `{'msg': 'she said "hi"'}`)
+	want := `{"msg":"she said \"hi\""}`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -59,8 +59,8 @@ func TestNormalizeSingleQuotedJSONEmbeddedDoubleQuote(t *testing.T) {
 // avoid prematurely closing it) is correctly unescaped to a bare ' —
 // no longer needing escaping once the outer delimiter becomes ".
 func TestNormalizeSingleQuotedJSONEscapedSingleQuote(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`{'msg': 'it\'s here'}`)
-	want := `{"msg": "it's here"}`
+	got := dynLitJSON(t, `{'msg': 'it\'s here'}`)
+	want := `{"msg":"it's here"}`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -70,8 +70,8 @@ func TestNormalizeSingleQuotedJSONEscapedSingleQuote(t *testing.T) {
 // quotes appearing together in the same literal — real ADX permits
 // this, not an either/or choice for the whole literal.
 func TestNormalizeSingleQuotedJSONMixedQuotes(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`{"a":1, 'b':2}`)
-	want := `{"a":1, "b":2}`
+	got := dynLitJSON(t, `{"a":1, 'b':2}`)
+	want := `{"a":1,"b":2}`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -81,9 +81,21 @@ func TestNormalizeSingleQuotedJSONMixedQuotes(t *testing.T) {
 // both using single quotes throughout — the recursive case, not just
 // a single, flat level.
 func TestNormalizeSingleQuotedJSONNested(t *testing.T) {
-	got := normalizeSingleQuotedJSON(`{'outer': {'inner': ['a', 'b']}}`)
-	want := `{"outer": {"inner": ["a", "b"]}}`
+	got := dynLitJSON(t, `{'outer': {'inner': ['a', 'b']}}`)
+	want := `{"outer":{"inner":["a","b"]}}`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
+}
+
+func dynLitJSON(t *testing.T, s string) string {
+	t.Helper()
+	got, n, err := dynamicLiteralToJSON(s)
+	if err != nil {
+		t.Fatalf("%s: %v", s, err)
+	}
+	if n != len(s) {
+		t.Fatalf("%s: consumed %d of %d bytes", s, n, len(s))
+	}
+	return got
 }

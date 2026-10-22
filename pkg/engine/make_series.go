@@ -240,23 +240,17 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 		groups[""] = &groupEntry{byVals: nil, buckets: make([][]types.Row, numBins)}
 	}
 
-	// Build output schema: aggregation array columns, then by columns,
-	// then AxisColumn array last — the by-vs-aggregation column order
-	// is this engine's own established summarize convention (see
-	// applySummarize's own doc comment on the identical, deliberate
-	// divergence from real ADX's column order there), not a real-ADX
-	// requirement; AxisColumn last IS a real, explicitly documented
-	// rule ("The last column is an array containing the values of
-	// AxisColumn"), preserved exactly.
+	// Output schema: by columns, aggregation arrays, then the
+	// AxisColumn array last, as Kusto.Language orders them.
 	var outCols []types.Column
-	for i, msAgg := range op.Aggregations {
-		outCols = append(outCols, types.Column{Name: msAgg.Agg.Name, Type: types.TypeDynamic})
-		_ = aggOutTypes[i]
-	}
-	byOffset := len(outCols)
 	for _, byExpr := range op.ByExprs {
 		byType := inferExprType(e, byExpr.Expr, &input.Schema)
 		outCols = append(outCols, types.Column{Name: byExpr.Name, Type: byType})
+	}
+	aggOffset := len(outCols)
+	for i, msAgg := range op.Aggregations {
+		outCols = append(outCols, types.Column{Name: msAgg.Agg.Name, Type: types.TypeDynamic})
+		_ = aggOutTypes[i]
 	}
 	axisOutIdx := len(outCols)
 	outCols = append(outCols, types.Column{Name: op.AxisColumn, Type: types.TypeDynamic})
@@ -300,11 +294,11 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 			if err != nil {
 				return nil, fmt.Errorf("make-series: encoding %q array: %w", msAgg.Agg.Name, err)
 			}
-			outRow[i] = string(b)
+			outRow[aggOffset+i] = string(b)
 		}
 
 		for i := range op.ByExprs {
-			outRow[byOffset+i] = g.byVals[i]
+			outRow[i] = g.byVals[i]
 		}
 
 		outRow[axisOutIdx] = string(axisJSON)

@@ -195,6 +195,22 @@ func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Terms from a subquery, or from a let-bound table named alone.
+		subq := ex.SubqueryText
+		if subq == "" && len(ex.Values) == 1 {
+			if ref, ok := ex.Values[0].(*parser.ColumnRef); ok {
+				if _, isTable := e.letContext.LookupTable(ref.Name); isTable {
+					subq = ref.Name
+				}
+			}
+		}
+		if subq != "" {
+			vals, err := evalInSubqueryOnce(e, subq)
+			if err != nil {
+				return nil, err
+			}
+			return &parser.HasAnyAllExpr{Column: col, Values: vals, All: ex.All}, nil
+		}
 		newVals := make([]parser.Expr, len(ex.Values))
 		changed := col != ex.Column
 		for i, v := range ex.Values {
@@ -335,6 +351,9 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 		return nil, fmt.Errorf("column %q not found", e.Name)
 
 	case *parser.BinaryExpr:
+		if _, ok := e.Left.(*parser.StarExpr); ok {
+			return evalStarPredicate(eng, e, schema, row)
+		}
 		left, err := evalExpr(eng, e.Left, schema, row)
 		if err != nil {
 			return nil, err
@@ -444,14 +463,29 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 		}
 		colStr := fmtV(colVal)
 
+		// Terms: each value, a dynamic array contributing its elements
+		// (has_any (dynamic(["a", "b"])), or a let-bound array).
+		var terms []string
+		for _, valExpr := range e.Values {
+			val, err := evalExpr(eng, valExpr, schema, row)
+			if err != nil {
+				return nil, err
+			}
+			if inferExprType(eng, valExpr, schema) == types.TypeDynamic {
+				if arr, ok := parseJSONArray(val); ok {
+					for _, el := range arr {
+						if el != nil {
+							terms = append(terms, fmtV(el))
+						}
+					}
+					continue
+				}
+			}
+			terms = append(terms, fmtV(val))
+		}
 		if e.All {
 			// has_all: every term must be found (whole-term, case-insensitive)
-			for _, valExpr := range e.Values {
-				val, err := evalExpr(eng, valExpr, schema, row)
-				if err != nil {
-					return nil, err
-				}
-				term := fmtV(val)
+			for _, term := range terms {
 				if !hasTerm(colStr, term, false) {
 					return false, nil
 				}
@@ -459,12 +493,7 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 			return true, nil
 		}
 		// has_any: at least one term must be found (whole-term, case-insensitive)
-		for _, valExpr := range e.Values {
-			val, err := evalExpr(eng, valExpr, schema, row)
-			if err != nil {
-				return nil, err
-			}
-			term := fmtV(val)
+		for _, term := range terms {
 			if hasTerm(colStr, term, false) {
 				return true, nil
 			}
@@ -491,6 +520,33 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 			return !inRange, nil
 		}
 		return inRange, nil
+
+	case *parser.ToScalarExpr:
+		// Reached inside a user-function body (operators substitute
+		// toscalar before rows are read): the subquery may use the
+		// function's parameters, which are this row's columns, so they
+		// are bound as lets while it runs.
+		if eng == nil {
+			return nil, fmt.Errorf("toscalar: no engine")
+		}
+		ctx := &LetContext{
+			Scalars:     make(map[string]types.Value, len(schema.Columns)),
+			ScalarTypes: make(map[string]types.KQLType, len(schema.Columns)),
+			Functions:   make(map[string]*parser.FunctionDef),
+			Tables:      make(map[string]*types.Table),
+			Parent:      eng.letContext,
+		}
+		for i, c := range schema.Columns {
+			if i < len(row) {
+				ctx.Scalars[c.Name] = row[i]
+				ctx.ScalarTypes[c.Name] = c.Type
+			}
+		}
+		prev := eng.letContext
+		eng.setLetContext(ctx)
+		val, _, err := toScalarInExpr(eng, e)
+		eng.setLetContext(prev)
+		return val, err
 
 	default:
 		return nil, fmt.Errorf("unsupported expression type: %T", expr)
@@ -729,6 +785,8 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 	switch e := expr.(type) {
 	case *parser.Literal:
 		return e.Type
+	case *parser.ToScalarExpr:
+		return toScalarType(eng, e, schema)
 	case *parser.ColumnRef:
 		idx := schema.ColumnIndex(e.Name)
 		if idx >= 0 {
@@ -802,7 +860,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			return types.TypeReal
 		case "row_window_session":
 			return types.TypeDatetime
-		case "time", "totime":
+		case "time", "totime", "timespan":
 			return types.TypeTimespan
 		case "dayofweek":
 			return types.TypeTimespan
@@ -1314,4 +1372,89 @@ func userFuncResultType(eng *Engine, fc *parser.FuncCall, _ *types.Schema) (type
 		ps.Columns[i] = types.Column{Name: p.Name, Type: p.Type}
 	}
 	return inferExprType(eng, fn.Body, ps), true
+}
+
+// evalStarPredicate evaluates * <op> value (where * has "x"): true
+// when any column, as a string, satisfies the operator.
+func evalStarPredicate(eng *Engine, e *parser.BinaryExpr, schema *types.Schema, row types.Row) (types.Value, error) {
+	if !isStringOperator(e.Op) && e.Op != parser.OpEQ {
+		return nil, fmt.Errorf("* is only supported with a string operator (has, contains, ==, ...)")
+	}
+	right, err := evalExpr(eng, e.Right, schema, row)
+	if err != nil {
+		return nil, err
+	}
+	for i, col := range schema.Columns {
+		if i >= len(row) {
+			break
+		}
+		if col.Name == timeReceivedColumnName {
+			continue // hidden
+		}
+		v := kqlToString(row[i], col.Type)
+		got, err := evalBinaryOp(eng, v, e.Op, right, schema, e)
+		if err != nil {
+			return nil, err
+		}
+		if b, ok := got.(bool); ok && b {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// toScalarInExpr is evalToScalarOnce, reached through a variable:
+// evalExpr calling it directly makes an initialization cycle
+// (Execute -> ... -> the evaluate plugin table -> evalExpr).
+var toScalarInExpr func(*Engine, *parser.ToScalarExpr) (types.Value, types.KQLType, error)
+
+func init() { toScalarInExpr = evalToScalarOnce }
+
+// toScalarType is the type of a toscalar() reached unsubstituted (in a
+// user-function body): the subquery's first column type, found by
+// running it once with the schema's columns (the parameters) bound to
+// zero values of their types, and cached per expression.
+func toScalarType(eng *Engine, ex *parser.ToScalarExpr, schema *types.Schema) types.KQLType {
+	if eng == nil {
+		return types.TypeDynamic
+	}
+	if t, ok := eng.toScalarTypes.Load(ex); ok {
+		return t.(types.KQLType)
+	}
+	ctx := &LetContext{
+		Scalars:     make(map[string]types.Value),
+		ScalarTypes: make(map[string]types.KQLType),
+		Functions:   make(map[string]*parser.FunctionDef),
+		Tables:      make(map[string]*types.Table),
+		Parent:      eng.letContext,
+	}
+	for _, c := range schema.Columns {
+		ctx.Scalars[c.Name] = zeroValueOf(c.Type)
+		ctx.ScalarTypes[c.Name] = c.Type
+	}
+	prev := eng.letContext
+	eng.setLetContext(ctx)
+	_, t, err := toScalarInExpr(eng, ex)
+	eng.setLetContext(prev)
+	if err != nil {
+		t = types.TypeDynamic
+	}
+	eng.toScalarTypes.Store(ex, t)
+	return t
+}
+
+func zeroValueOf(t types.KQLType) types.Value {
+	switch t {
+	case types.TypeLong, types.TypeDatetime, types.TypeTimespan:
+		return int64(0)
+	case types.TypeInt:
+		return int32(0)
+	case types.TypeReal:
+		return float64(0)
+	case types.TypeBool:
+		return false
+	case types.TypeDynamic:
+		return "null"
+	}
+	return ""
 }

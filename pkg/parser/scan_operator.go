@@ -7,20 +7,31 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-// parseScan parses "[declare (ColumnDeclarations)] with (step StepName
-// [output=all|last|none] : Condition => Column = Assignment[, ...] ;)".
-// See ScanOp's own doc comment for exactly what this covers (a single
-// step; with_match_id and multi-step sequences are rejected with a
-// clear error).
+// parseScan parses "[with_match_id=Name] [declare (ColumnDeclarations)]
+// with (step StepName [output=all|last|none] : Condition [=> Column =
+// Assignment, ...]; ...)".
 func parseScan(s string) (Operator, error) {
 	s = strings.TrimSpace(s)
 	lower := keywordFold(s)
+	op := &ScanOp{}
 
 	if strings.HasPrefix(lower, "with_match_id") {
-		return nil, fmt.Errorf("scan: with_match_id is not implemented")
+		rest := strings.TrimSpace(s[len("with_match_id"):])
+		if !strings.HasPrefix(rest, "=") {
+			return nil, fmt.Errorf("scan: expected with_match_id=Name")
+		}
+		rest = strings.TrimSpace(rest[1:])
+		end := 0
+		for end < len(rest) && isIdentChar(rest[end]) {
+			end++
+		}
+		if end == 0 {
+			return nil, fmt.Errorf("scan: expected a column name after with_match_id=")
+		}
+		op.MatchIDColumn = rest[:end]
+		s = strings.TrimSpace(rest[end:])
+		lower = keywordFold(s)
 	}
-
-	op := &ScanOp{Output: "all"}
 
 	if strings.HasPrefix(lower, "declare") {
 		rest := strings.TrimSpace(s[len("declare"):])
@@ -39,9 +50,6 @@ func parseScan(s string) (Operator, error) {
 		s = strings.TrimSpace(rest[close+1:])
 		lower = keywordFold(s)
 	}
-	if len(op.Declares) == 0 {
-		return nil, fmt.Errorf("scan: declare(...) is required — at least one declared column")
-	}
 
 	if !strings.HasPrefix(lower, "with") {
 		return nil, fmt.Errorf("scan: expected 'with (...)' step definitions")
@@ -59,27 +67,35 @@ func parseScan(s string) (Operator, error) {
 	}
 	body := strings.TrimSpace(s[1:close])
 
-	var steps []string
+	seen := map[string]bool{}
 	for _, part := range splitRespectingParens(body, ';') {
 		part = strings.TrimSpace(part)
-		if part != "" {
-			steps = append(steps, part)
+		if part == "" {
+			continue
 		}
+		step, err := parseScanStep(part, op.Declares)
+		if err != nil {
+			return nil, err
+		}
+		if seen[step.Name] {
+			return nil, fmt.Errorf("scan: duplicate step name %q", step.Name)
+		}
+		seen[step.Name] = true
+		op.Steps = append(op.Steps, *step)
 	}
-	if len(steps) == 0 {
+	if len(op.Steps) == 0 {
 		return nil, fmt.Errorf("scan: expected at least one step")
 	}
-	if len(steps) > 1 {
-		return nil, fmt.Errorf("scan: multi-step scan (%d steps) is not implemented — only a single step is supported", len(steps))
-	}
+	return op, nil
+}
 
-	stepText := steps[0]
-	stepLower := strings.ToLower(stepText)
-	if !strings.HasPrefix(stepLower, "step ") {
-		return nil, fmt.Errorf("scan: expected 'step StepName : Condition => ...'")
+// parseScanStep parses "step Name [output=all|last|none] : Condition
+// [=> Column = Assignment, ...]".
+func parseScanStep(stepText string, declares []ScanDeclare) (*ScanStep, error) {
+	if !strings.HasPrefix(strings.ToLower(stepText), "step ") {
+		return nil, fmt.Errorf("scan: expected 'step StepName : Condition [=> ...]', got %q", stepText)
 	}
 	stepText = strings.TrimSpace(stepText[len("step "):])
-
 	colonIdx := findTopLevelByte(stepText, ':')
 	if colonIdx < 0 {
 		return nil, fmt.Errorf("scan: expected ':' after step name")
@@ -91,13 +107,12 @@ func parseScan(s string) (Operator, error) {
 	if len(headFields) == 0 {
 		return nil, fmt.Errorf("scan: expected a step name")
 	}
-	op.StepName = headFields[0]
-	if !isValidIdentifier(op.StepName) {
-		return nil, fmt.Errorf("scan: invalid step name %q", op.StepName)
+	step := &ScanStep{Name: headFields[0], Output: "all"}
+	if !isValidIdentifier(step.Name) {
+		return nil, fmt.Errorf("scan: invalid step name %q", step.Name)
 	}
 	if rest := strings.TrimSpace(head[len(headFields[0]):]); rest != "" {
-		restLower := strings.ToLower(rest)
-		if !strings.HasPrefix(restLower, "output") {
+		if !strings.HasPrefix(strings.ToLower(rest), "output") {
 			return nil, fmt.Errorf("scan: unexpected token %q after step name", rest)
 		}
 		eqIdx := strings.Index(rest, "=")
@@ -108,22 +123,19 @@ func parseScan(s string) (Operator, error) {
 		if val != "all" && val != "last" && val != "none" {
 			return nil, fmt.Errorf("scan: output must be 'all', 'last', or 'none', got %q", val)
 		}
-		op.Output = val
+		step.Output = val
 	}
 
-	arrowIdx := findTopLevelArrow(tail)
-	if arrowIdx < 0 {
-		return nil, fmt.Errorf("scan: expected '=>' after the step condition")
+	condText, assignText := tail, ""
+	if arrowIdx := findTopLevelArrow(tail); arrowIdx >= 0 {
+		condText = strings.TrimSpace(tail[:arrowIdx])
+		assignText = strings.TrimSpace(tail[arrowIdx+2:])
 	}
-	condText := strings.TrimSpace(tail[:arrowIdx])
-	assignText := strings.TrimSpace(tail[arrowIdx+2:])
-	assignText = strings.TrimSuffix(strings.TrimSpace(assignText), ";")
-
 	condExpr, err := ParseExpr(condText)
 	if err != nil {
-		return nil, fmt.Errorf("scan: condition: %w", err)
+		return nil, fmt.Errorf("scan step %s: condition: %w", step.Name, err)
 	}
-	op.Condition = condExpr
+	step.Condition = condExpr
 
 	for _, part := range splitRespectingParens(assignText, ',') {
 		part = strings.TrimSpace(part)
@@ -135,21 +147,22 @@ func parseScan(s string) (Operator, error) {
 			return nil, fmt.Errorf("scan: expected Column = Assignment, got %q", part)
 		}
 		col := strings.TrimSpace(part[:eqIdx])
-		if !isValidIdentifier(col) {
-			return nil, fmt.Errorf("scan: invalid assignment column name %q", col)
+		declared := false
+		for _, d := range declares {
+			if d.Name == col {
+				declared = true
+			}
 		}
-		exprText := strings.TrimSpace(part[eqIdx+1:])
-		aExpr, err := ParseExpr(exprText)
+		if !declared {
+			return nil, fmt.Errorf("scan step %s: assignment to %q, which is not in declare(...)", step.Name, col)
+		}
+		aExpr, err := ParseExpr(strings.TrimSpace(part[eqIdx+1:]))
 		if err != nil {
-			return nil, fmt.Errorf("scan: assignment %q: %w", col, err)
+			return nil, fmt.Errorf("scan step %s: assignment %q: %w", step.Name, col, err)
 		}
-		op.Assignments = append(op.Assignments, ScanAssignment{Column: col, Expr: aExpr})
+		step.Assignments = append(step.Assignments, ScanAssignment{Column: col, Expr: aExpr})
 	}
-	if len(op.Assignments) == 0 {
-		return nil, fmt.Errorf("scan: step %q has no assignments", op.StepName)
-	}
-
-	return op, nil
+	return step, nil
 }
 
 // parseScanDeclares parses a declare(...) column list:

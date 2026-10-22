@@ -168,7 +168,9 @@ type Engine struct {
 	udfDepth int
 	// udfTypeDepth bounds inferExprType through user-function bodies.
 	udfTypeDepth atomic.Int32
-	stmtEmbedder embed.Embedder
+	// toScalarTypes caches toScalarType by *parser.ToScalarExpr.
+	toScalarTypes sync.Map
+	stmtEmbedder  embed.Embedder
 
 	// pipelineSource is the source table name of the query whose
 	// pipeline is running ($table for a piped search).

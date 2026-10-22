@@ -104,3 +104,85 @@ func TestSweep2ParseKvEscape(t *testing.T) {
 | parse-kv str as (failure:string) with (pair_delimiter=' ', kv_delimiter='=', quote='"', escape='\\')`)
 	expectCell(t, tbl, 0, 1, `the remote host sent "bye!"`)
 }
+
+func TestSweep2Batch2Scalars(t *testing.T) {
+	cases := []struct{ name, query, want string }{
+		{"indexof negative start", `print indexof("abcdefg","cde",-5)`, "2"},
+		{"indexof occurrence", `print indexof("abcdefgabcdefg", "cde", 1, 10, 2)`, "9"},
+		{"indexof range", `print indexof("abcdefg","cde",1,2)`, "-1"},
+		{"datatable hex", `datatable(num:long)[0x88888008, 0x42000000, 0x00767000, 0x00000005] | summarize result = toupper(tohex(binary_all_or(num)))`, "CAFEF00D"},
+		{"time literal", `print 24 * 60 * time(00:01:00) / time(1s)`, "86400"},
+		{"time day literal", `print tostring(time(29.09:00:05.12345))`, "29.09:00:05.1234500"},
+		{"timespan alias", `print timespan(25min)`, "00:25:00"},
+		{"dynamic typed values", `print dynamic({"a": datetime(1970-05-11), "b": 1d, e: long(5), f: [1, 2,]})`, `{"a":"1970-05-11T00:00:00.0000000Z","b":"1.00:00:00","e":5,"f":[1,2]}`},
+		{"dynamic multiline h-string", "print dynamic({\n 'S': [\n  h@'https://x;key'\n ],\n})", `{"S":["https://x;key"]}`},
+		{"estimate_data_size", `range x from 1 to 10 step 1 | extend Text = '1234567890' | summarize Total=sum(estimate_data_size(*))`, "180"},
+		{"toscalar in udf", `let T1 = datatable(xdate:datetime)[datetime(1970-01-01)]; let f = (hours:long) { toscalar(T1 | summarize min(xdate) - hours*1h) }; print f(1235)`, "1969-11-10T13:00:00Z"},
+		{"let print", `let T1 = print x=1; T1`, "1"},
+		{"has_any dynamic", `datatable(S:string)["TEXAS","OHIO"] | where S has_any (dynamic(["ohio"]))`, "OHIO"},
+		{"has_any subquery", `let P = datatable(S:string, N:long)["TEXAS", 9, "OHIO", 1]; datatable(S:string)["TEXAS","OHIO"] | where S has_any ((P | where N > 5 | project S))`, "TEXAS"},
+		{"where star has", `datatable(a:string, b:long)["cow",1,"dog",22] | where * has "cow" | project b`, "1"},
+		{"summarize paren by", `datatable(a:long,b:long)[1,2,1,3] | summarize sum(b)by a | project sum_b`, "5"},
+		{"summarize by only", `datatable(a:long,b:long)[1,2,3,4,1,2] | summarize by h=a+b | count`, "2"},
+		{"between names", `let S=1; let E=S+2; datatable(a:long)[1,2,5] | where a between (S .. E) | count`, "2"},
+		{"join bare table", `let X = datatable(Key:string, V:long)["a",1,"b",2]; let Y = datatable(Key:string, W:long)["b",10]; X | join kind=inner Y on Key | project W`, "10"},
+		{"unicode codepoints variadic", `print unicode_codepoints_to_string(dynamic([75, 117, 115]), 116, 111)`, "Kusto"},
+		{"rows_near", `range x from 1 to 10 step 1 | evaluate rows_near(x == 5, 1) | summarize make_list(x)`, "[4,5,6]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			expectCell(t, queryResult(t, c.query), 0, 0, c.want)
+		})
+	}
+}
+
+func TestSweep2MakeSeriesRangeAndOrder(t *testing.T) {
+	tbl := queryResult(t, `datatable(a:long,t:datetime)[1,datetime(2020-01-01), 2, datetime(2020-01-03 05:00)]
+| make-series hint.shufflekey = a sum(a) default = 0 on t in range(datetime(2020-01-01), datetime(2020-01-03), 1d) by a`)
+	if tbl.Schema.Columns[0].Name != "a" || tbl.Schema.Columns[1].Name != "sum_a" {
+		t.Fatalf("columns %v, want a, sum_a, t", tbl.Schema.Columns)
+	}
+	expectCell(t, tbl, 0, 1, "[1,0,0]")
+	expectCell(t, tbl, 1, 1, "[0,0,2]")
+}
+
+func TestSweep2BagUnpackOutputSchemaStar(t *testing.T) {
+	tbl := queryResult(t, `datatable(d:dynamic, Description: string)
+[dynamic({"Name": "John", "Age":20, "height":180}), "Student"]
+| evaluate bag_unpack(d) : (*, Name:string, Age:long)`)
+	for i, n := range []string{"Description", "Name", "Age"} {
+		if tbl.Schema.Columns[i].Name != n {
+			t.Fatalf("columns %v", tbl.Schema.Columns)
+		}
+	}
+	expectCols(t, tbl, 3)
+	expectCell(t, tbl, 0, 2, "20")
+}
+
+func TestSweep2Consume(t *testing.T) {
+	tbl := queryResult(t, `range x from 1 to 3 step 1 | consume`)
+	expectRows(t, tbl, 0)
+}
+
+func TestSweep2FormatTimespan(t *testing.T) {
+	tbl := queryResult(t, `let t = time(29.09:00:05.12345); print v1=format_timespan(t, 'dd.hh:mm:ss:FF'), v2=format_timespan(t, 'ddd.h:mm:ss [fffffff]')`)
+	expectCell(t, tbl, 0, 0, "29.09:00:05:12")
+	expectCell(t, tbl, 0, 1, "029.9:00:05 [1234500]")
+}
+
+func TestSweep2RightSemiKeepsEveryMatch(t *testing.T) {
+	tbl := queryResult(t, `let X = datatable(Key:string, Value1:long)['a',1,'b',2,'b',3,'c',4];
+let Y = datatable(Key:string, Value2:long)['b',10,'c',20,'c',30,'d',40];
+X | join kind=rightsemi Y on Key`)
+	expectRows(t, tbl, 3)
+	expectCell(t, tbl, 2, 1, "30")
+}
+
+func TestSweep2Around(t *testing.T) {
+	tbl := queryResult(t, `range dt from datetime(2021-01-01 01:00) to datetime(2021-01-01 02:00) step 1min | where around(dt, datetime(2021-01-01 01:30), 1min) | count`)
+	expectCell(t, tbl, 0, 0, "3")
+	tbl = queryResult(t, `print around(5, 4, 1), around(1.5, 1, 0.4), isnull(around(int(null), 1, 1)), isnull(guid(null))`)
+	for c, w := range []string{"true", "false", "true", "true"} {
+		expectCell(t, tbl, 0, c, w)
+	}
+}

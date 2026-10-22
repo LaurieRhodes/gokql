@@ -242,6 +242,13 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 		return d, nil
 
 	case TypeLong:
+		if h, ok := hexLiteral(s); ok {
+			v, err := strconv.ParseUint(h, 16, 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot parse %q as long: %w", s, err)
+			}
+			return int64(v), nil
+		}
 		v, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse %q as long: %w", s, err)
@@ -249,6 +256,13 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 		return v, nil
 
 	case TypeInt:
+		if h, ok := hexLiteral(s); ok {
+			v, err := strconv.ParseUint(h, 16, 32)
+			if err != nil {
+				return nil, fmt.Errorf("cannot parse %q as int: %w", s, err)
+			}
+			return int32(uint32(v)), nil
+		}
 		v, err := strconv.ParseInt(s, 10, 32)
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse %q as int: %w", s, err)
@@ -770,4 +784,12 @@ func FormatReal(f float64) string {
 		return "-∞"
 	}
 	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// hexLiteral returns the digits of a 0x-prefixed literal (0x1F).
+func hexLiteral(s string) (string, bool) {
+	if len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+		return s[2:], true
+	}
+	return "", false
 }

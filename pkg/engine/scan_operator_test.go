@@ -94,18 +94,46 @@ func TestScanOperatorOutputNone(t *testing.T) {
 	}
 }
 
-// TestScanOperatorMultiStepRejected guards ScanOp's own documented
-// scope limitation: only a single step is supported.
-func TestScanOperatorMultiStepRejected(t *testing.T) {
-	queryError(t, `range x from 1 to 3 step 1
-		| scan declare (c:long=0) with ( step s1: true => c = x; step s2: true => c = x; )`)
+// TestScanOperatorMultiStepMatchId is the reference's "Events between
+// Start and Stop" example: three steps and with_match_id.
+func TestScanOperatorMultiStepMatchId(t *testing.T) {
+	tbl := queryResult(t, `let Events = datatable (Ts: timespan, Event: string) [
+    0m, "A", 1m, "Start", 2m, "B", 3m, "D", 4m, "Stop", 6m, "C", 8m, "Start", 11m, "E", 12m, "Stop"];
+Events
+| sort by Ts asc
+| scan with_match_id=m_id with
+(
+    step s1: Event == "Start";
+    step s2: Event != "Start" and Event != "Stop" and Ts - s1.Ts <= 5m;
+    step s3: Event == "Stop" and Ts - s1.Ts <= 5m;
+)`)
+	want := [][2]string{{"Start", "0"}, {"B", "0"}, {"D", "0"}, {"Stop", "0"}, {"Start", "1"}, {"E", "1"}, {"Stop", "1"}}
+	expectRows(t, tbl, len(want))
+	for i, w := range want {
+		expectCell(t, tbl, i, 1, w[0])
+		expectCell(t, tbl, i, 2, w[1])
+	}
 }
 
-// TestScanOperatorWithMatchIdRejected guards ScanOp's own documented
-// scope limitation: with_match_id is not implemented.
-func TestScanOperatorWithMatchIdRejected(t *testing.T) {
-	queryError(t, `range x from 1 to 3 step 1
-		| scan with_match_id=m declare (c:long=0) with ( step s1: true => c = x; )`)
+// TestScanOperatorSessions is the reference's "Sessions tagging"
+// example: Check 1 promotion through an output=none step starts a new
+// match.
+func TestScanOperatorSessions(t *testing.T) {
+	tbl := queryResult(t, `let Events = datatable (Ts: timespan, Event: string) [
+    0m, "A", 1m, "A", 2m, "B", 3m, "D", 32m, "B", 36m, "C", 38m, "D", 41m, "E", 75m, "A"];
+Events
+| sort by Ts asc
+| scan with_match_id=session_id declare (sessionStart: timespan) with
+(
+    step inSession: true => sessionStart = iff(isnull(inSession.sessionStart), Ts, inSession.sessionStart);
+    step endSession output=none: Ts - inSession.sessionStart > 30m;
+)`)
+	expectRows(t, tbl, 9)
+	for i, w := range []string{"0", "0", "0", "0", "1", "1", "1", "1", "2"} {
+		expectCell(t, tbl, i, 3, w)
+	}
+	expectCell(t, tbl, 4, 2, "00:32:00")
+	expectCell(t, tbl, 8, 2, "01:15:00")
 }
 
 // TestScanOperatorAssignmentToUndeclaredColumnRejected confirms a

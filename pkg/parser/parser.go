@@ -588,6 +588,10 @@ func isTabularSource(s string) bool {
 	if strings.HasPrefix(lower, "union ") {
 		return true
 	}
+	// let T = print x=1;
+	if strings.HasPrefix(lower, "print ") || lower == "print" {
+		return true
+	}
 	// graph("Model" [, ...]) is a graph-valued source.
 	if strings.HasPrefix(lower, "graph(") || strings.HasPrefix(lower, "graph (") {
 		return true
@@ -2810,9 +2814,27 @@ func parseEvaluate(s string) (Operator, error) {
 		if !strings.HasPrefix(schemaText, "(") || !strings.HasSuffix(schemaText, ")") {
 			return nil, fmt.Errorf("evaluate %s: expected '(Name: type, ...)' after ':', got %q", pluginName, schemaText)
 		}
-		schema, err := parseColumnDefs(schemaText[1 : len(schemaText)-1])
-		if err != nil {
-			return nil, fmt.Errorf("evaluate %s: output schema: %w", pluginName, err)
+		// A "*" entry (bag_unpack(d) : (*, Name:string)) keeps the
+		// input's columns; it is recorded as a column named "*".
+		var defs []string
+		star := false
+		for _, d := range splitRespectingParens(schemaText[1:len(schemaText)-1], ',') {
+			if strings.TrimSpace(d) == "*" {
+				star = true
+				continue
+			}
+			defs = append(defs, d)
+		}
+		schema := &types.Schema{}
+		if len(defs) > 0 {
+			sc, err := parseColumnDefs(strings.Join(defs, ","))
+			if err != nil {
+				return nil, fmt.Errorf("evaluate %s: output schema: %w", pluginName, err)
+			}
+			schema = sc
+		}
+		if star {
+			schema.Columns = append([]types.Column{{Name: "*", Type: types.TypeDynamic}}, schema.Columns...)
 		}
 		op.OutputSchema = schema
 	} else if rest != "" {
@@ -3074,9 +3096,26 @@ func parseSummarize(s string) (*SummarizeOp, error) {
 	}, s)
 	var aggStr, byStr string
 	byIdx := findKeyword(spaced, " by ")
+	if byIdx < 0 {
+		// sum(x)by a: no space after the closing parenthesis.
+		for k := 0; k < len(spaced); {
+			i := findKeyword(spaced[k:], "by ")
+			if i < 0 {
+				break
+			}
+			if i += k; i > 0 && spaced[i-1] == ')' {
+				byIdx = i - 1
+				break
+			}
+			k = i + 1
+		}
+	}
 	if byIdx >= 0 {
-		aggStr = strings.TrimSpace(s[:byIdx])
+		aggStr = strings.TrimSpace(s[:byIdx+1])
 		byStr = strings.TrimSpace(s[byIdx+4:])
+		if s[byIdx] == ' ' {
+			aggStr = strings.TrimSpace(s[:byIdx])
+		}
 	} else {
 		aggStr = s
 	}
@@ -4216,7 +4255,11 @@ func parsePostAggregation(s, name string) (*Aggregation, error) {
 		case *Literal:
 			return x, nil
 		case *ColumnRef:
-			return nil, fmt.Errorf("summarize: %q is not an aggregate or scalar function result (use it inside an aggregate, or in by)", x.Name)
+			// A name outside any aggregate: only a let scalar or a
+			// function parameter is valid here (summarize min(t) -
+			// hours*1h), which the parser cannot tell from a column,
+			// so it is resolved when the row is evaluated.
+			return x, nil
 		}
 		return nil, fmt.Errorf("summarize: unsupported expression in an aggregation: %s", s)
 	}

@@ -34,7 +34,7 @@ func parseMakeSeries(s string) (Operator, error) {
 			continue
 		}
 		if strings.HasPrefix(lowerField, "hint.") {
-			s = strings.TrimSpace(s[len(fields[0]):])
+			s = stripHints(s) // hint.x=y and hint.x = y
 			continue
 		}
 		break
@@ -73,6 +73,25 @@ func parseMakeSeries(s string) (Operator, error) {
 	if byIdx >= 0 {
 		byStr = strings.TrimSpace(rest[byIdx+len(" by "):])
 		rest = strings.TrimSpace(rest[:byIdx])
+	}
+
+	// Alternate syntax: AxisColumn in range(start, stop, step). The stop
+	// is inclusive and the axis is binned with bin(), not bin_at(), so
+	// it is the main form over bin(start, step) .. bin(stop, step)+step.
+	if inIdx := findKeyword(rest, " in "); inIdx > 0 {
+		r := strings.TrimSpace(rest[inIdx+len(" in "):])
+		if strings.HasPrefix(keywordFold(r), "range") {
+			r = strings.TrimSpace(r[len("range"):])
+			if strings.HasPrefix(r, "(") && strings.HasSuffix(r, ")") {
+				args := splitRespectingParens(r[1:len(r)-1], ',')
+				if len(args) != 3 {
+					return nil, fmt.Errorf("make-series: expected range(start, stop, step)")
+				}
+				a, b, st := strings.TrimSpace(args[0]), strings.TrimSpace(args[1]), strings.TrimSpace(args[2])
+				rest = fmt.Sprintf("%s from bin(%s, %s) to bin(%s, %s) + (%s) step %s",
+					strings.TrimSpace(rest[:inIdx]), a, st, b, st, st, st)
+			}
+		}
 	}
 
 	// AxisColumn, then optional "from X", optional "to Y", required "step S" —

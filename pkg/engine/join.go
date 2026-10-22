@@ -185,12 +185,10 @@ func (e *Engine) applyJoin(left *types.Table, op *parser.JoinOp) (*types.Table, 
 				rightMatched[key] = true
 			}
 		}
-		// Emit right rows that had a match (deduplicated by key)
-		emitted := make(map[string]bool)
+		// Every right row that has a match, as leftsemi keeps every
+		// matching left row.
 		for _, rightRow := range right.Rows {
-			key := joinKey(rightRow, rightKeyIdxs)
-			if rightMatched[key] && !emitted[key] {
-				emitted[key] = true
+			if rightMatched[joinKey(rightRow, rightKeyIdxs)] {
 				result.AddRow(rightRow)
 			}
 		}

@@ -61,6 +61,59 @@ var dateDashSpaceRe = regexp.MustCompile(` *- *`)
 // bareDateRe is the date part of a bare datetime literal.
 var bareDateRe = regexp.MustCompile(`^\d{4} *- *\d{1,2} *- *\d{1,2}`)
 
+// tryConsumeBareJSONLiteral checks whether the input at the current
+// position is a dynamic literal ([...] or {...}) immediately followed
+// (modulo whitespace) by ')': dynamic([1,2,3]), dynamic({"a":1}). The
+// content is KQL's dynamic literal grammar (dynamic_literal.go), not a
+// KQL expression list. On success it consumes the literal (not the
+// closing paren) and returns its JSON; a malformed literal is a parse
+// error rather than a runtime failure.
+func (p *exprParser) tryConsumeBareJSONLiteral() (string, error, bool) {
+	rest := p.input[p.pos:]
+	if len(rest) == 0 || (rest[0] != '[' && rest[0] != '{') {
+		return "", nil, false
+	}
+	normalized, end, err := dynamicLiteralToJSON(rest)
+	if err != nil {
+		return "", fmt.Errorf("dynamic(%s): %v", strings.TrimSpace(rest[:min(len(rest), 200)]), err), true
+	}
+	after := end
+	for after < len(rest) && (rest[after] == ' ' || rest[after] == '\t' || rest[after] == '\n' || rest[after] == '\r') {
+		after++
+	}
+	if after >= len(rest) || rest[after] != ')' {
+		// Doesn't immediately close — not the literal form; fall
+		// through to normal expression parsing.
+		return "", nil, false
+	}
+	if !json.Valid([]byte(normalized)) {
+		return "", fmt.Errorf("dynamic(%s): not valid JSON", rest[:end]), true
+	}
+	p.pos += end
+	return normalized, nil, true
+}
+
+// bareTimespanRe is a bare timespan literal inside time(...).
+var bareTimespanRe = regexp.MustCompile(`^-?(\d+\.)?\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?`)
+
+func (p *exprParser) tryConsumeBareTimespanLiteral() bool {
+	rest := p.input[p.pos:]
+	loc := bareTimespanRe.FindStringIndex(rest)
+	if loc == nil {
+		return false
+	}
+	after := loc[1]
+	for after < len(rest) && (rest[after] == ' ' || rest[after] == '\t') {
+		after++
+	}
+	if after >= len(rest) || rest[after] != ')' {
+		return false
+	}
+	p.consumedBareLiteral = rest[:loc[1]]
+	p.pos += loc[1]
+	return true
+}
+
 // tryConsumeBareDateTimeLiteral checks whether the input at the current
 // position is a bare date/datetime literal immediately followed
 // (modulo whitespace) by ')'. If so, consumes it (not the paren) and
@@ -70,167 +123,6 @@ var bareDateRe = regexp.MustCompile(`^\d{4} *- *\d{1,2} *- *\d{1,2}`)
 // are unaffected, since neither starts with four digits, and any
 // trailing content before ')' (other than optional time-of-day) makes
 // the match fail closed, falling through to normal expression parsing.
-// tryConsumeBareJSONLiteral checks whether the input at the current
-// position is a JSON array/object literal ([...] or {...}, brace/
-// bracket-balanced, respecting quoted strings so commas or brackets
-// inside a JSON string don't confuse depth counting) immediately
-// followed (modulo whitespace) by ')'. Matches real Kusto's
-// dynamic(...) grammar: the content is JSON, not a KQL expression list
-// — dynamic([1,2,3]) and dynamic({"a":1}) are literal-defining syntax,
-// not a function call over evaluated KQL sub-expressions. On success,
-// consumes the literal (not the closing paren) and validates it is
-// well-formed JSON, returning a clear parse-time error otherwise
-// rather than deferring to a runtime failure.
-func (p *exprParser) tryConsumeBareJSONLiteral() (string, error, bool) {
-	rest := p.input[p.pos:]
-	if len(rest) == 0 || (rest[0] != '[' && rest[0] != '{') {
-		return "", nil, false
-	}
-	open, close := rest[0], byte(']')
-	if open == '{' {
-		close = '}'
-	}
-	depth := 0
-	inStr := false
-	escaped := false
-	end := -1
-	for i := 0; i < len(rest); i++ {
-		c := rest[i]
-		if inStr {
-			if escaped {
-				escaped = false
-			} else if c == 92 { // backslash
-				escaped = true
-			} else if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-		case open:
-			depth++
-		case close:
-			depth--
-			if depth == 0 {
-				end = i + 1
-			}
-		}
-		if end >= 0 {
-			break
-		}
-	}
-	if end < 0 {
-		return "", fmt.Errorf("dynamic(...): unterminated %c...%c literal", open, close), true
-	}
-	matched := rest[:end]
-	after := end
-	for after < len(rest) && (rest[after] == ' ' || rest[after] == '	') {
-		after++
-	}
-	if after >= len(rest) || rest[after] != ')' {
-		// Doesn't immediately close — not the literal form; fall
-		// through to normal expression parsing rather than erroring,
-		// in case this shape is ever legitimately something else.
-		return "", nil, false
-	}
-	// Normalize single-quoted JSON strings/keys to double-quoted ones
-	// BEFORE strict validation — verified as a real, recurring gap
-	// during this session's own testing, not a hypothetical: real
-	// ADX's own documentation examples for several functions
-	// (bag_merge, bag_remove_keys, has_any_index, among others) freely
-	// use single quotes inside dynamic({...}) literals
-	// (dynamic({'A1':12}), dynamic(['a', 'b'])) as ordinary, valid KQL
-	// grammar — strict JSON (RFC 8259, which Go's own encoding/json
-	// enforces via json.Valid below) never permits single quotes at
-	// all, so a direct copy-paste of those real, documented examples
-	// failed here with "not valid JSON" until requoted by hand.
-	// Normalizing once, here, at parse time is sufficient: this
-	// engine always stores a dynamic value as JSON-encoded text
-	// internally from this point forward, so every downstream
-	// consumer (parseJSONObject, parseJSONArray, ...) already only
-	// ever sees the normalized, valid form — no second fix needed at
-	// any of those call sites.
-	normalized := normalizeSingleQuotedJSON(matched)
-	if !json.Valid([]byte(normalized)) {
-		return "", fmt.Errorf("dynamic(%s): not valid JSON", matched), true
-	}
-	p.pos += end
-	return normalized, nil, true
-}
-
-// normalizeSingleQuotedJSON rewrites single-quoted strings in s
-// (real ADX's own tolerated dynamic(...) literal grammar) into
-// properly double-quoted, strict-JSON strings — a single-quoted
-// string's own literal double-quote characters are escaped ("), and
-// its own escaped single quotes (') are unescaped to a bare ' (no
-// longer needing escaping once the outer delimiter is now "). A
-// double-quoted string already present in s (and anything outside any
-// string at all — {, }, [, ], :, ,, whitespace, bare numbers/
-// true/false/null) passes through completely unchanged; this function
-// only ever rewrites content it finds strictly BETWEEN a pair of
-// single quotes.
-func normalizeSingleQuotedJSON(s string) string {
-	var out strings.Builder
-	i := 0
-	for i < len(s) {
-		c := s[i]
-		switch c {
-		case '"':
-			// An existing double-quoted string: copy through verbatim,
-			// respecting its own backslash escapes, so a " inside it
-			// is never mistaken for the string's own closing quote.
-			out.WriteByte(c)
-			i++
-			for i < len(s) {
-				out.WriteByte(s[i])
-				if s[i] == '\\' && i+1 < len(s) {
-					i++
-					out.WriteByte(s[i])
-					i++
-					continue
-				}
-				if s[i] == '"' {
-					i++
-					break
-				}
-				i++
-			}
-		case '\'':
-			// A single-quoted string: re-emit as a double-quoted one,
-			// escaping any literal " found inside it and unescaping
-			// any \' (no longer needed once the delimiter itself is
-			// now ", not ').
-			out.WriteByte('"')
-			i++
-			for i < len(s) {
-				if s[i] == '\\' && i+1 < len(s) && s[i+1] == '\'' {
-					out.WriteByte('\'')
-					i += 2
-					continue
-				}
-				if s[i] == '"' {
-					out.WriteString(`\"`)
-					i++
-					continue
-				}
-				if s[i] == '\'' {
-					i++
-					break
-				}
-				out.WriteByte(s[i])
-				i++
-			}
-			out.WriteByte('"')
-		default:
-			out.WriteByte(c)
-			i++
-		}
-	}
-	return out.String()
-}
-
 func (p *exprParser) tryConsumeBareDateTimeLiteral() bool {
 	rest := p.input[p.pos:]
 	loc := bareDateTimeRe.FindStringIndex(rest)
@@ -428,6 +320,26 @@ func (p *exprParser) parseComparison() (Expr, error) {
 	}
 
 	if isHasAny {
+		// A tabular source of terms: has_any ((T | project x)) or a
+		// let-bound table, has_any (T).
+		if closeIdx := findMatchingParenAnyQuote(p.input, p.pos); closeIdx > p.pos {
+			inner := strings.TrimSpace(p.input[p.pos+1 : closeIdx])
+			tabular := false
+			if strings.HasPrefix(inner, "(") && findMatchingParenAnyQuote(inner, 0) == len(inner)-1 {
+				if _, err := ParseExpr(inner); err != nil {
+					tabular = true
+					inner = strings.TrimSpace(inner[1 : len(inner)-1])
+				}
+			} else if _, err := ParseExpr(inner); err != nil && !strings.Contains(inner, ",") {
+				if _, qerr := parseQuery(inner); qerr == nil {
+					tabular = true
+				}
+			}
+			if tabular {
+				p.pos = closeIdx + 1
+				return &HasAnyAllExpr{Column: left, All: hasAll, SubqueryText: inner}, nil
+			}
+		}
 		p.pos++ // skip '('
 		p.skipWhitespace()
 
@@ -696,6 +608,12 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 	}
 
 	ch := p.input[p.pos]
+
+	// * as an operand: every column (where * has "x").
+	if ch == '*' {
+		p.pos++
+		return &StarExpr{}, nil
+	}
 
 	// Parenthesised expression
 	if ch == '(' {
@@ -1155,6 +1073,16 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 		var args []Expr
 		if p.pos < len(p.input) && p.input[p.pos] == ')' {
 			p.pos++
+		} else if (lower == "time" || lower == "timespan" || lower == "totimespan") && p.tryConsumeBareTimespanLiteral() {
+			// time(00:01:00), time(29.09:00:05.12345): a bare
+			// [d.]hh:mm[:ss[.f]] literal, not arithmetic.
+			args = append(args, &Literal{Value: p.consumedBareLiteral, Type: types.TypeString})
+			p.skipWhitespace()
+			if p.pos < len(p.input) && p.input[p.pos] == ')' {
+				p.pos++
+			} else {
+				return nil, fmt.Errorf("expected ) after timespan literal in %s(%s...)", name, p.consumedBareLiteral)
+			}
 		} else if (lower == "datetime" || lower == "todatetime") && p.tryConsumeBareDateTimeLiteral() {
 			// datetime(2026-02-28) / datetime(2026-02-28 10:30:00): a bare
 			// unquoted date shape, matching real Kusto's grammar, where this

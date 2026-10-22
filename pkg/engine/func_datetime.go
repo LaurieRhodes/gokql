@@ -494,7 +494,7 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 			return nil, true, fmt.Errorf("%s: unknown part %q", fc.Name, fmt.Sprintf("%v", partVal))
 		}
 
-	case "totimespan", "totime", "time":
+	case "totimespan", "totime", "time", "timespan":
 		// totimespan(value) — convert string or number to timespan
 		// (ticks). time(...) is the timespan literal form, time(1h).
 		if len(fc.Args) != 1 {
@@ -753,24 +753,38 @@ func formatTimespanKQL(ticks int64, kqlFmt string) string {
 	seconds := remainder / 1e9
 	fracNanos := remainder % 1e9
 
-	r := strings.NewReplacer(
-		"fffffff", fmt.Sprintf("%07d", fracNanos/100),
-		"ffffff", fmt.Sprintf("%06d", fracNanos/1000),
-		"fffff", fmt.Sprintf("%05d", fracNanos/10000),
-		"ffff", fmt.Sprintf("%04d", fracNanos/100000),
-		"fff", fmt.Sprintf("%03d", fracNanos/1000000),
-		"ff", fmt.Sprintf("%02d", fracNanos/10000000),
-		"f", fmt.Sprintf("%d", fracNanos/100000000),
-		"dd", fmt.Sprintf("%02d", days),
-		"d", fmt.Sprintf("%d", days),
-		"hh", fmt.Sprintf("%02d", hours),
-		"h", fmt.Sprintf("%d", hours),
-		"mm", fmt.Sprintf("%02d", minutes),
-		"m", fmt.Sprintf("%d", minutes),
-		"ss", fmt.Sprintf("%02d", seconds),
-		"s", fmt.Sprintf("%d", seconds),
-	)
-	result := r.Replace(kqlFmt)
+	// Runs of one specifier letter are one element: d.. (days, padded
+	// to the run length), h/H, m, s (one or two digits), f.. (that
+	// many fraction digits), F.. (the same, trailing zeros dropped,
+	// nothing when zero). Anything else is copied.
+	frac7 := fmt.Sprintf("%07d", fracNanos/100)
+	var out strings.Builder
+	for i := 0; i < len(kqlFmt); {
+		c := kqlFmt[i]
+		j := i
+		for j < len(kqlFmt) && kqlFmt[j] == c {
+			j++
+		}
+		n := j - i
+		switch c {
+		case 'd':
+			out.WriteString(fmt.Sprintf("%0*d", n, days))
+		case 'h', 'H':
+			out.WriteString(fmt.Sprintf("%0*d", min(n, 2), hours))
+		case 'm':
+			out.WriteString(fmt.Sprintf("%0*d", min(n, 2), minutes))
+		case 's':
+			out.WriteString(fmt.Sprintf("%0*d", min(n, 2), seconds))
+		case 'f':
+			out.WriteString(frac7[:min(n, 7)])
+		case 'F':
+			out.WriteString(strings.TrimRight(frac7[:min(n, 7)], "0"))
+		default:
+			out.WriteString(kqlFmt[i:j])
+		}
+		i = j
+	}
+	result := out.String()
 	if negative {
 		result = "-" + result
 	}

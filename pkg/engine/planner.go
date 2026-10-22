@@ -282,6 +282,9 @@ func (c *columnCollector) collectExpr(expr parser.Expr) {
 	case *parser.ColumnRef:
 		c.addColumn(e.Name)
 	case *parser.BinaryExpr:
+		if _, ok := e.Left.(*parser.StarExpr); ok {
+			c.needsAll = true // where * has "x" reads every column
+		}
 		c.collectExpr(e.Left)
 		c.collectExpr(e.Right)
 	case *parser.UnaryExpr:
@@ -298,6 +301,9 @@ func (c *columnCollector) collectExpr(expr parser.Expr) {
 			}
 		}
 		for _, arg := range e.Args {
+			if _, ok := arg.(*parser.StarExpr); ok && e.Name == "estimate_data_size" {
+				c.needsAll = true
+			}
 			c.collectExpr(arg)
 		}
 	case *parser.Literal:
