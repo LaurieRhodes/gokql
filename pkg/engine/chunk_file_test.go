@@ -39,7 +39,7 @@ Paragraph in section B, likewise comfortably over the twenty character floor.
 	tbl := diskQuery(t, eng, `Chunks | count`)
 	expectCell(t, tbl, 0, 0, "3")
 
-	tbl = diskQuery(t, eng, `Chunks | where Id == "c002" | project HeadingTrail`)
+	tbl = diskQuery(t, eng, `Chunks | where Id == "test:c002" | project HeadingTrail`)
 	expectCell(t, tbl, 0, 0, "Title > Section A")
 }
 

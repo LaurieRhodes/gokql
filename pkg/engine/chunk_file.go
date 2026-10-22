@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/LaurieRhodes/gokql/pkg/catalog"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
@@ -80,10 +81,27 @@ func (e *Engine) applyChunkFile(cmd *parser.ChunkFileCmd) (*types.Table, error) 
 		return nil, fmt.Errorf(".chunk-file into %q: %w", cmd.TableName, err)
 	}
 
+	// Ids are <key>:c<NNN>: unique across files in one table (the
+	// embeddings table joins back on Id, and .embed-into resumes by
+	// skipping Ids already present) and readable enough to cite.
+	// Bare c<NNN> numbered per file, so every file's first chunk was
+	// c001.
+	key := cmd.IdPrefix
+	if key == "" {
+		key = strings.TrimSuffix(provenance, filepath.Ext(provenance))
+	}
+	ids := make([]string, len(final))
+	for i := range final {
+		ids[i] = fmt.Sprintf("%s:c%03d", key, i+1)
+	}
+	if err := e.checkChunkIds(cmd, tableDef, provenance, ids); err != nil {
+		return nil, err
+	}
+
 	rows := make([]types.Row, len(final))
 	oversizedSplits := 0
 	for i, c := range final {
-		id := fmt.Sprintf("c%03d", i+1)
+		id := ids[i]
 		row := make(types.Row, len(tableDef.Schema.Columns))
 		for ti, tc := range tableDef.Schema.Columns {
 			switch tc.Name {
@@ -123,6 +141,55 @@ func (e *Engine) applyChunkFile(cmd *parser.ChunkFileCmd) (*types.Table, error) 
 	result.AddRow(types.Row{"OK", extID, int64(len(raw)), int64(len(final)), int64(splitCount)})
 	return result, nil
 }
+
+// checkChunkIds refuses a write that would duplicate an Id already in
+// the table: the same file chunked twice (its Ids regenerate), or two
+// files sharing a stem. Tables written before keyed Ids hold bare
+// c<NNN> Ids; a file whose Provenance has those rows was already
+// chunked, and re-chunking it would duplicate its content under new
+// Ids.
+func (e *Engine) checkChunkIds(cmd *parser.ChunkFileCmd, tableDef *catalog.Table, provenance string, ids []string) error {
+	if len(tableDef.Extents) == 0 {
+		return nil
+	}
+	cols := []string{"Id"}
+	hasProv := tableDef.Schema.ColumnIndex("Provenance") >= 0
+	if hasProv {
+		cols = append(cols, "Provenance")
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	for _, ext := range tableDef.Extents {
+		tbl, err := e.ScanExtent(cmd.TableName, ext.FilePath, &tableDef.Schema, cols, nil, 0)
+		if err != nil {
+			return fmt.Errorf(".chunk-file: reading existing Ids: %w", err)
+		}
+		idIdx, provIdx := tbl.Schema.ColumnIndex("Id"), tbl.Schema.ColumnIndex("Provenance")
+		for _, r := range tbl.Rows {
+			id := fmtV(r[idIdx])
+			prov := ""
+			if provIdx >= 0 && r[provIdx] != nil {
+				prov = fmtV(r[provIdx])
+			}
+			switch {
+			case want[id] && prov == provenance:
+				return fmt.Errorf(".chunk-file: %q is already chunked into %s (Id %s exists); "+
+					"remove its rows first or chunk into another table", cmd.Path, cmd.TableName, id)
+			case want[id]:
+				return fmt.Errorf(".chunk-file: Id %s already exists in %s from %q; "+
+					"give this file its own key with into %s with (idprefix=\"...\")", id, cmd.TableName, prov, cmd.TableName)
+			case prov == provenance && legacyChunkId.MatchString(id):
+				return fmt.Errorf(".chunk-file: %s already holds chunks of %q (Id %s, written before keyed Ids); "+
+					"remove its rows first or chunk into another table", cmd.TableName, provenance, id)
+			}
+		}
+	}
+	return nil
+}
+
+var legacyChunkId = regexp.MustCompile(`^c\d+$`)
 
 // extractParagraphs walks lines, tracking a markdown heading-trail
 // stack, emitting one rawChunk per blank-line-delimited block.

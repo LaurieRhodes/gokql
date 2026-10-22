@@ -12,7 +12,7 @@ import "github.com/LaurieRhodes/gokql/pkg/types"
 
 type helpEntry struct{ cmd, desc string }
 
-const chunkFileHelpCmd = `.chunk-file "path" into T`
+const chunkFileHelpCmd = `.chunk-file "path" into T [with (idprefix="key")]`
 
 var helpEntries = []helpEntry{
 	{".create table T (Col: Type, ...)", "create an empty table"},

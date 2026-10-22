@@ -1498,6 +1498,9 @@ func (*EmbedIntoCmd) statementNode() {}
 type ChunkFileCmd struct {
 	Path      string
 	TableName string
+	// IdPrefix, from `with (idprefix="...")`, is the document key in
+	// chunk Ids (<key>:c001); "" means the file's stem.
+	IdPrefix string
 }
 
 func (*ChunkFileCmd) statementNode() {}

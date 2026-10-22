@@ -86,9 +86,9 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 		return nil, fmt.Errorf(".embed-into: source has duplicate Id values "+
 			"(%q appears %d times; %d rows, %d distinct Ids). Ids must be unique: "+
 			"the embeddings table is joined back on Id, and resuming a partial run "+
-			"skips Ids already present. If these came from .chunk-file, note it numbers "+
-			"chunks per FILE, so Ids collide across files -- make them unique in the "+
-			"query, e.g. | extend Id = strcat(Provenance, \":\", Id)",
+			"skips Ids already present. Chunks written by older .chunk-file versions are "+
+			"numbered per FILE (c001...), so their Ids collide across files -- make them "+
+			"unique in the query, e.g. | extend Id = strcat(Provenance, \":\", Id)",
 			dup, n, len(src.Rows), distinctIdCount(src, idIdx))
 	}
 

@@ -135,24 +135,30 @@ once returns `ErrConcurrentEmbedders` rather than silently using the
 wrong one. The durable fix is an evaluation context threaded through
 `evalExpr`'s 319 call sites.
 
-**`Id` must be unique across the whole source query.** `.chunk-file`
-numbers chunks `c001..cNNN` PER FILE, so Ids collide across files:
-six of this repo's docs produced 281 chunks with only 123 distinct
-Ids. Duplicate Ids break two things silently. The embeddings table is
+**`Id` must be unique across the whole source query.** Duplicate Ids
+break two things silently. The embeddings table is
 joined back on Id, so a duplicated key turns a `top 3` into a partial
 cross product (observed: three copies of one chunk's score attached to
 unrelated text). And resumption skips Ids already present, so a
 re-run after a partial failure would skip genuinely different chunks
 that merely share an Id, losing them with no error. `.embed-into`
-now refuses a source with duplicate Ids. Make them unique in the
+refuses a source with duplicate Ids.
+
+`.chunk-file` emits Ids of the form `<key>:c<NNN>`, where the key is
+the file's stem (`dejong07_mulapin:c001`) or the value given with
+`.chunk-file "path" into T with (idprefix="dj")`. They are unique
+across the files of one table and short enough to cite. The command
+refuses to write an Id the table already holds: the same file chunked
+twice, or two files with the same stem (give one an `idprefix`). It
+also refuses to re-chunk a file whose rows in the table carry the bare
+`c<NNN>` Ids older versions wrote, which numbered chunks per file and
+collided across files (six of this repo's docs once gave 281 chunks
+with 123 distinct Ids). For such older tables, make Ids unique in the
 query:
 
 ```
 .embed-into E <| Chunks | extend Id = strcat(Provenance, ":", Id) | project Id, Text, Provenance
 ```
-
-Whether `.chunk-file` should emit globally unique Ids itself is an
-open question; it would be a behaviour change to that command.
 
 **One table, one model.** The stored `Model` column is provenance: the
 name of the backend that produced the vector, recorded by the engine

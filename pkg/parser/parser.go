@@ -796,7 +796,39 @@ func parseCommand(input string) (Statement, error) {
 		if tableName == "" {
 			return nil, fmt.Errorf(".chunk-file: missing table name after 'into'")
 		}
-		return &ChunkFileCmd{Path: path, TableName: tableName}, nil
+		cmd := &ChunkFileCmd{Path: path, TableName: tableName}
+		// .chunk-file "path" into T with (idprefix="key")
+		if sp := strings.IndexAny(tableName, " \t("); sp > 0 {
+			cmd.TableName = tableName[:sp]
+			props := strings.TrimSpace(tableName[sp:])
+			lp := strings.ToLower(props)
+			if !strings.HasPrefix(lp, "with (") && !strings.HasPrefix(lp, "with(") {
+				return nil, fmt.Errorf(".chunk-file into %s: expected with (...) after the table name, got %q", cmd.TableName, props)
+			}
+			open := strings.Index(props, "(")
+			closeIdx := findMatchingParen(props, open)
+			if closeIdx < 0 || strings.TrimSpace(props[closeIdx+1:]) != "" {
+				return nil, fmt.Errorf(".chunk-file into %s: malformed with (...) clause", cmd.TableName)
+			}
+			for _, kv := range splitAndTrim(props[open+1:closeIdx], ',') {
+				eq := strings.Index(kv, "=")
+				if eq < 0 {
+					return nil, fmt.Errorf(".chunk-file into %s: malformed property %q, expected name=value", cmd.TableName, kv)
+				}
+				key := strings.ToLower(strings.TrimSpace(kv[:eq]))
+				val := strings.Trim(strings.TrimSpace(kv[eq+1:]), `"'`)
+				switch key {
+				case "idprefix":
+					if val == "" || strings.Contains(val, ":") {
+						return nil, fmt.Errorf(".chunk-file into %s: idprefix must be non-empty and contain no ':'", cmd.TableName)
+					}
+					cmd.IdPrefix = val
+				default:
+					return nil, fmt.Errorf(".chunk-file into %s: unknown property %q (supported: idprefix)", cmd.TableName, key)
+				}
+			}
+		}
+		return cmd, nil
 	}
 
 	// .embed-into T <| query — bulk-embeds a Text column via Ollama's
