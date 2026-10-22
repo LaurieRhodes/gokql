@@ -769,11 +769,60 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 
 	nAggs := len(aggFns)
 	st := &extentAggState{
-		groupIdx: make(map[string]int),
 		repKinds: make([]vecKind, nAggs),
 	}
 	var keyBuf []byte     // reused: map lookups on string(keyBuf) do not allocate
 	var codeToGroup []int // dict code -> group index; -1 = unseen
+
+	// codeToGroup alone identifies groups while consecutive chunks
+	// share one dictionary (the common case: shared or extent-scoped
+	// dictionaries), so the per-extent string map is built only when
+	// needed: a chunk with a different dictionary, or a chunk on the
+	// generic path. The cross-extent merge uses st.keys.
+	var lastDict []string
+	ensureIdx := func() {
+		if st.groupIdx != nil {
+			return
+		}
+		st.groupIdx = make(map[string]int, len(st.keys))
+		for gi, k := range st.keys {
+			st.groupIdx[k] = gi
+		}
+	}
+	// Group state comes from slabs: one allocation per 256 groups
+	// instead of two or three per group.
+	var accSlab []aggAccum
+	var valSlab []types.Value
+	newGroup := func(key string, nBy int) (int, []types.Value) {
+		if len(accSlab) < nAggs {
+			accSlab = make([]aggAccum, nAggs*256)
+		}
+		if nBy == 0 {
+			gi := len(st.keys)
+			st.keys = append(st.keys, key)
+			st.accums = append(st.accums, accSlab[:nAggs:nAggs])
+			accSlab = accSlab[nAggs:]
+			st.byVals = append(st.byVals, nil)
+			if st.groupIdx != nil {
+				st.groupIdx[key] = gi
+			}
+			return gi, nil
+		}
+		if len(valSlab) < nBy {
+			valSlab = make([]types.Value, nBy*256)
+		}
+		gi := len(st.keys)
+		st.keys = append(st.keys, key)
+		st.accums = append(st.accums, accSlab[:nAggs:nAggs])
+		accSlab = accSlab[nAggs:]
+		bv := valSlab[:nBy:nBy]
+		valSlab = valSlab[nBy:]
+		st.byVals = append(st.byVals, bv)
+		if st.groupIdx != nil {
+			st.groupIdx[key] = gi
+		}
+		return gi, bv
+	}
 
 	iter, f, _, err := e.openExtentChunks(ext.FilePath, scanCols, zoneFilter)
 	if err != nil {
@@ -878,6 +927,16 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 			}
 		}
 		if byDict != nil {
+			if lastDict != nil && !sameDict(lastDict, byDict.dictVals) {
+				// A different dictionary: codes no longer mean what
+				// codeToGroup recorded. Value identity takes over.
+				// (Not seen in any extent gokql writes: dictionaries
+				// are shared or extent-scoped. A guard for other
+				// writers.)
+				codeToGroup = codeToGroup[:0]
+				ensureIdx()
+			}
+			lastDict = byDict.dictVals
 			if len(codeToGroup) < len(byDict.dictVals) {
 				grown := make([]int, len(byDict.dictVals))
 				copy(grown, codeToGroup)
@@ -894,17 +953,16 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 				gi := codeToGroup[code]
 				if gi < 0 {
 					key := byDict.dictVals[code]
-					// The same value may have a different code in an
-					// earlier chunk only if dictionaries diverge;
-					// groupIdx keeps value-identity authoritative.
-					if egi, exists := st.groupIdx[key]; exists {
+					egi, exists := -1, false
+					if st.groupIdx != nil {
+						egi, exists = st.groupIdx[key]
+					}
+					if exists {
 						gi = egi
 					} else {
-						gi = len(st.byVals)
-						st.groupIdx[key] = gi
-						st.keys = append(st.keys, key)
-						st.byVals = append(st.byVals, []types.Value{key})
-						st.accums = append(st.accums, make([]aggAccum, nAggs))
+						// by-values left nil: the merge boxes the
+						// key once per global group, not per extent.
+						gi, _ = newGroup(key, 0)
 					}
 					codeToGroup[code] = gi
 				}
@@ -921,6 +979,7 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 			continue
 		}
 
+		ensureIdx()
 		for row := 0; row < chunk.RowCount; row++ {
 			if !sel[row] {
 				continue
@@ -936,18 +995,13 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 
 			gi, exists := st.groupIdx[string(keyBuf)]
 			if !exists {
-				key := string(keyBuf)
-				gi = len(st.byVals)
-				st.groupIdx[key] = gi
-				st.keys = append(st.keys, key)
-				bv := make([]types.Value, len(plan.byCols))
+				var bv []types.Value
+				gi, bv = newGroup(string(keyBuf), len(plan.byCols))
 				for bi, vi := range byVecIdx {
 					if vecs[vi] != nil {
 						bv[bi] = vecs[vi].value(row)
 					}
 				}
-				st.byVals = append(st.byVals, bv)
-				st.accums = append(st.accums, make([]aggAccum, nAggs))
 			}
 
 			acc := st.accums[gi]
@@ -965,6 +1019,24 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 		return nil, fmt.Errorf("scan iteration %s: %w", ext.FilePath, err)
 	}
 	return st, nil
+}
+
+// sameDict reports whether two decoded dictionaries are the same
+// mapping. Extent-scoped dictionaries decode to a fresh slice per
+// chunk, so equal contents count, not only the same backing array.
+func sameDict(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 || &a[0] == &b[0] {
+		return true
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // runColumnarAggregate executes the plan: extents aggregate in parallel
@@ -1090,7 +1162,12 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 			if !exists {
 				gi = len(byVals)
 				groupIdx[key] = gi
-				byVals = append(byVals, st.byVals[sgi])
+				bv := st.byVals[sgi]
+				if bv == nil {
+					// Dictionary path: the single by-value is the key.
+					bv = []types.Value{key}
+				}
+				byVals = append(byVals, bv)
 				accums = append(accums, st.accums[sgi])
 				continue
 			}
