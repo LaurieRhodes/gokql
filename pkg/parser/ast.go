@@ -1236,7 +1236,8 @@ func (*IngestInlineCmd) statementNode() {}
 
 // DropExtentCmd: .drop extent <guid>
 type DropExtentCmd struct {
-	ExtentID string
+	ExtentID  string
+	TableName string // from "... from Table"; empty when not given
 }
 
 func (*DropExtentCmd) statementNode() {}

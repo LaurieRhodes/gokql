@@ -31,7 +31,7 @@ func init() {
 // inside the <Table>_<hexid>.vtx discovery convention.
 func (e *Engine) newExtentID() string {
 	if !e.Catalog.IsDiscovery() {
-		return fmt.Sprintf("%08x", e.Catalog.Database.Version+1)
+		return e.Catalog.AllocateExtentID()
 	}
 	var r [4]byte
 	if _, err := rand.Read(r[:]); err != nil {

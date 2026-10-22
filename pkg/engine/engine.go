@@ -382,8 +382,22 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 		}
 		return e.mergeExtents(s.TableName)
 	case *parser.DropExtentCmd:
-		tableName, err := e.Catalog.RemoveExtent(s.ExtentID)
-		if err != nil {
+		// An id can name extents of several tables in a database
+		// written before ids were allocated uniquely; never guess.
+		tableName := s.TableName
+		if tableName == "" {
+			owners := e.Catalog.ExtentTables(s.ExtentID)
+			if len(owners) > 1 {
+				return nil, fmt.Errorf(".drop extent %s: id is used by extents of tables %s; "+
+					"name the table with .drop extent %s from <Table>",
+					s.ExtentID, strings.Join(owners, ", "), s.ExtentID)
+			}
+			if len(owners) == 0 {
+				return nil, fmt.Errorf("extent %q not found", s.ExtentID)
+			}
+			tableName = owners[0]
+		}
+		if err := e.Catalog.RemoveExtentFrom(tableName, s.ExtentID); err != nil {
 			return nil, err
 		}
 		result := types.NewTable("", types.Schema{

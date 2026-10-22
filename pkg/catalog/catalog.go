@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,6 +25,10 @@ type Catalog struct {
 	dbPath    string // Root path for the database
 	discovery bool   // catalog-free mode: files are the source of truth
 	Database  *Database
+
+	// lastAllocatedID is the highest extent id handed out by
+	// AllocateExtentID in this process (see there).
+	lastAllocatedID uint64
 }
 
 // Database represents a single database with tables and extents.
@@ -310,7 +316,74 @@ func (c *Catalog) AddExtent(tableName string, entry ExtentEntry) error {
 	return c.save()
 }
 
-// RemoveExtent removes an extent by ID from any table.
+// AllocateExtentID returns a catalog-mode extent id (8 lowercase hex
+// digits) not used by any extent of any table, including the
+// _Dictionaries system table, and not handed out before in this
+// process.
+//
+// The id used to be Version+1. A flush writes its data extent and its
+// _Dictionaries extent before either registration advances Version,
+// so the two received the same id; .drop extent, which resolves an id
+// across tables, could then remove the dictionary extent instead of
+// the data extent.
+func (c *Catalog) AllocateExtentID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	next := uint64(c.Database.Version) + 1
+	if c.lastAllocatedID >= next {
+		next = c.lastAllocatedID + 1
+	}
+	for _, t := range c.Database.Tables {
+		for _, ext := range t.Extents {
+			if n, err := strconv.ParseUint(ext.ID, 16, 64); err == nil && n >= next {
+				next = n + 1
+			}
+		}
+	}
+	c.lastAllocatedID = next
+	return fmt.Sprintf("%08x", next)
+}
+
+// ExtentTables returns the names of the tables holding an extent with
+// the given id (more than one only in databases written before
+// AllocateExtentID existed).
+func (c *Catalog) ExtentTables(extentID string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var out []string
+	for name, t := range c.Database.Tables {
+		for _, ext := range t.Extents {
+			if ext.ID == extentID {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RemoveExtentFrom removes extentID from the named table only.
+func (c *Catalog) RemoveExtentFrom(tableName, extentID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	table, ok := c.Database.Tables[tableName]
+	if !ok {
+		return fmt.Errorf("table %q does not exist", tableName)
+	}
+	for i, ext := range table.Extents {
+		if ext.ID == extentID {
+			table.Extents = append(table.Extents[:i], table.Extents[i+1:]...)
+			_ = os.Remove(filepath.Join(c.dbPath, ext.FilePath))
+			return c.save()
+		}
+	}
+	return fmt.Errorf("extent %q not found in table %q", extentID, tableName)
+}
+
+// RemoveExtent removes an extent by ID from the first table holding
+// it. .drop extent uses ExtentTables and RemoveExtentFrom instead, so
+// an id shared between tables is never resolved by guessing.
 func (c *Catalog) RemoveExtent(extentID string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

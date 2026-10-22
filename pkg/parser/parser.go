@@ -487,8 +487,17 @@ func parseCommand(input string) (Statement, error) {
 
 	// .drop extent <guid>
 	if strings.HasPrefix(lower, ".drop extent ") {
-		guid := strings.TrimSpace(input[len(".drop extent "):])
-		return &DropExtentCmd{ExtentID: guid}, nil
+		// .drop extent ExtentId [from TableName]
+		rest := strings.TrimSpace(input[len(".drop extent "):])
+		cmd := &DropExtentCmd{ExtentID: rest}
+		if i := findKeyword(rest, " from "); i >= 0 {
+			cmd.ExtentID = strings.TrimSpace(rest[:i])
+			cmd.TableName = strings.TrimSpace(rest[i+len(" from "):])
+			if !isIdentifier(cmd.TableName) {
+				return nil, fmt.Errorf(".drop extent: invalid table name %q", cmd.TableName)
+			}
+		}
+		return cmd, nil
 	}
 
 	// .drop table T
