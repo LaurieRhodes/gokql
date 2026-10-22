@@ -273,8 +273,12 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// unordered SET with no guaranteed output order at all, so
 		// sort.Strings was never a real correctness requirement, just
 		// an incidental default that happened to also be wrong.
-		if len(agg.Args) != 1 {
-			return nil, fmt.Errorf("make_set requires 1 argument")
+		if len(agg.Args) < 1 || len(agg.Args) > 2 {
+			return nil, fmt.Errorf("make_set requires 1-2 arguments (expr [, maxSize])")
+		}
+		maxSize, err := aggMaxSize(agg, 1, schema)
+		if err != nil {
+			return nil, err
 		}
 		argType := inferExprType(agg.Args[0], schema)
 		seen := make(map[string]bool)
@@ -287,6 +291,9 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			key := fmt.Sprintf("%v", val)
 			if !seen[key] {
 				seen[key] = true
+				if len(values) >= maxSize {
+					break
+				}
 				values = append(values, valueForJSONArray(val, argType))
 			}
 		}
@@ -301,8 +308,12 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// summarize make_list(...) is real ADX's own documented way
 		// to feed a column into series_pearson_correlation and other
 		// series_* functions).
-		if len(agg.Args) != 1 {
-			return nil, fmt.Errorf("make_list requires 1 argument")
+		if len(agg.Args) < 1 || len(agg.Args) > 2 {
+			return nil, fmt.Errorf("make_list requires 1-2 arguments (expr [, maxSize])")
+		}
+		maxSize, err := aggMaxSize(agg, 1, schema)
+		if err != nil {
+			return nil, err
 		}
 		argType := inferExprType(agg.Args[0], schema)
 		var values []interface{}
@@ -310,6 +321,9 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			val, err := evalExpr(agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
+			}
+			if len(values) >= maxSize {
+				break
 			}
 			values = append(values, valueForJSONArray(val, argType))
 		}
@@ -328,8 +342,12 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// behavior deliberately, for consistency between the two —
 		// now mirrors make_list's own FIXED behavior instead, for the
 		// same reason).
-		if len(agg.Args) != 1 {
-			return nil, fmt.Errorf("make_list_with_nulls requires 1 argument")
+		if len(agg.Args) < 1 || len(agg.Args) > 2 {
+			return nil, fmt.Errorf("make_list_with_nulls requires 1-2 arguments (expr [, maxSize])")
+		}
+		maxSize, err := aggMaxSize(agg, 1, schema)
+		if err != nil {
+			return nil, err
 		}
 		argType := inferExprType(agg.Args[0], schema)
 		values := make([]interface{}, 0, len(rows))
@@ -339,8 +357,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 				continue
 			}
 			if val == nil {
+				if len(values) >= maxSize {
+					break
+				}
 				values = append(values, nil)
 				continue
+			}
+			if len(values) >= maxSize {
+				break
 			}
 			values = append(values, valueForJSONArray(val, argType))
 		}
@@ -354,8 +378,12 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// conditional variant duplicates make_set's own logic rather
 		// than calling it, so the bug had to be fixed here separately
 		// too, not automatically inherited).
-		if len(agg.Args) != 2 {
-			return nil, fmt.Errorf("make_set_if requires 2 arguments")
+		if len(agg.Args) < 2 || len(agg.Args) > 3 {
+			return nil, fmt.Errorf("make_set_if requires 2-3 arguments (expr, predicate [, maxSize])")
+		}
+		maxSize, err := aggMaxSize(agg, 2, schema)
+		if err != nil {
+			return nil, err
 		}
 		argType := inferExprType(agg.Args[0], schema)
 		seen := make(map[string]bool)
@@ -375,6 +403,9 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			key := fmt.Sprintf("%v", val)
 			if !seen[key] {
 				seen[key] = true
+				if len(values) >= maxSize {
+					break
+				}
 				values = append(values, valueForJSONArray(val, argType))
 			}
 		}
@@ -386,8 +417,12 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// 2026-08-17, same fix as make_list above, same reason as
 		// make_set_if immediately above (duplicated logic, fixed
 		// separately here too).
-		if len(agg.Args) != 2 {
-			return nil, fmt.Errorf("make_list_if requires 2 arguments")
+		if len(agg.Args) < 2 || len(agg.Args) > 3 {
+			return nil, fmt.Errorf("make_list_if requires 2-3 arguments (expr, predicate [, maxSize])")
+		}
+		maxSize, err := aggMaxSize(agg, 2, schema)
+		if err != nil {
+			return nil, err
 		}
 		argType := inferExprType(agg.Args[0], schema)
 		var values []interface{}
@@ -403,6 +438,9 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
+			if len(values) >= maxSize {
+				break
+			}
 			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
@@ -414,21 +452,29 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 1 || len(agg.Args) > 2 {
 			return nil, fmt.Errorf("make_bag requires 1-2 arguments")
 		}
+		maxSize, err := aggMaxSize(agg, 1, schema)
+		if err != nil {
+			return nil, err
+		}
 		merged := make(map[string]interface{})
 		for _, row := range rows {
 			val, err := evalExpr(agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
-			mergeDynamicIntoBag(merged, val)
+			mergeDynamicIntoBagLimited(merged, val, maxSize)
 		}
 		b, _ := json.Marshal(merged)
 		return string(b), nil
 
 	case "make_bag_if":
 		// make_bag_if(dynamic_expr, predicate)
-		if len(agg.Args) != 2 {
-			return nil, fmt.Errorf("make_bag_if requires 2 arguments")
+		if len(agg.Args) < 2 || len(agg.Args) > 3 {
+			return nil, fmt.Errorf("make_bag_if requires 2-3 arguments (expr, predicate [, maxSize])")
+		}
+		maxSize, err := aggMaxSize(agg, 2, schema)
+		if err != nil {
+			return nil, err
 		}
 		merged := make(map[string]interface{})
 		for _, row := range rows {
@@ -443,7 +489,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			mergeDynamicIntoBag(merged, val)
+			mergeDynamicIntoBagLimited(merged, val, maxSize)
 		}
 		b, _ := json.Marshal(merged)
 		return string(b), nil
@@ -1193,6 +1239,51 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 
 // mergeDynamicIntoBag merges a dynamic value into a bag (map).
 // The value can be a JSON string representing an object, or a map[string]interface{}.
+// maxAggElements is the default and maximum maxSize of make_list,
+// make_set and make_bag (ADX reference: "The default and max value is
+// 1048576").
+const maxAggElements = 1048576
+
+// aggMaxSize reads the optional constant maxSize argument at position
+// idx, defaulting to and capped at maxAggElements.
+func aggMaxSize(agg parser.Aggregation, idx int, schema *types.Schema) (int, error) {
+	if len(agg.Args) <= idx {
+		return maxAggElements, nil
+	}
+	v, err := evalExpr(agg.Args[idx], schema, make(types.Row, len(schema.Columns)))
+	if err != nil {
+		return 0, fmt.Errorf("%s: maxSize: %w", agg.Function, err)
+	}
+	n, ok := toInt64(v)
+	if !ok || n <= 0 {
+		return 0, fmt.Errorf("%s: maxSize must be a positive integer constant, got %v", agg.Function, v)
+	}
+	if n > maxAggElements {
+		n = maxAggElements
+	}
+	return int(n), nil
+}
+
+// mergeDynamicIntoBagLimited is mergeDynamicIntoBag that adds no new
+// key once the bag holds max keys (existing keys can still update).
+// Keys of one input object are taken in sorted order so the cut is
+// deterministic.
+func mergeDynamicIntoBagLimited(bag map[string]interface{}, val interface{}, max int) {
+	tmp := map[string]interface{}{}
+	mergeDynamicIntoBag(tmp, val)
+	keys := make([]string, 0, len(tmp))
+	for k := range tmp {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, exists := bag[k]; !exists && len(bag) >= max {
+			continue
+		}
+		bag[k] = tmp[k]
+	}
+}
+
 func mergeDynamicIntoBag(bag map[string]interface{}, val interface{}) {
 	switch v := val.(type) {
 	case map[string]interface{}:

@@ -690,6 +690,12 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		}
 		return types.TypeString
 	case *parser.FuncCall:
+		// Declared, argument-independent return types (Kusto.Language;
+		// func_signatures.go) take precedence over the hand-written
+		// cases below, which remain for argument-dependent functions.
+		if t, ok := scalarReturnTypes[e.Name]; ok {
+			return t
+		}
 		switch e.Name {
 		case "now", "ago", "datetime", "todatetime", "make_datetime",
 			"startofday", "startofweek", "startofmonth", "startofyear",

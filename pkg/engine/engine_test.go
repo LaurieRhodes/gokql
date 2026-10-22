@@ -1742,10 +1742,12 @@ func TestRand(t *testing.T) {
 }
 
 func TestRandN(t *testing.T) {
+	// rand(N): a real drawn uniformly from {0.0, 1.0, ..., N-1}
+	// (rand-function reference; Kusto.Language declares it real).
 	tbl := queryResult(t, `print R = rand(100)`)
-	v := cellVal(t, tbl, 0, 0).(int64)
-	if v < 0 || v >= 100 {
-		t.Errorf("rand(100) should be in [0,100), got %d", v)
+	v := cellVal(t, tbl, 0, 0).(float64)
+	if v < 0 || v >= 100 || v != float64(int64(v)) {
+		t.Errorf("rand(100) should be a whole number in [0,100), got %v", v)
 	}
 }
 

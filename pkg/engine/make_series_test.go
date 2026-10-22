@@ -153,13 +153,14 @@ func TestMakeSeriesSumWithDefaultAndMvExpand(t *testing.T) {
 	if valIdx < 0 {
 		t.Fatalf("expected column 'Value', schema: %+v", result.Schema.Columns)
 	}
-	want := []int64{10, 20, -2, 30, -2}
+	// Value=toint(Value): int, so int32 values.
+	want := []int32{10, 20, -2, 30, -2}
 	if result.RowCount() != len(want) {
 		t.Fatalf("expected %d rows, got %d", len(want), result.RowCount())
 	}
 	for i, w := range want {
 		got := result.Rows[i][valIdx]
-		gotI, ok := got.(int64)
+		gotI, ok := got.(int32)
 		if !ok || gotI != w {
 			t.Errorf("row %d Value = %v (%T), want %d", i, got, got, w)
 		}

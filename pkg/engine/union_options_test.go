@@ -42,7 +42,7 @@ func TestUnionColumnTypeMismatch(t *testing.T) {
 		let View_2 = view () { print x=toint(2) };
 		union withsource=TableName View_1, View_2`)
 	assertColumns(t, columnNames(&r.Schema), "TableName", "x_long", "x_int")
-	want := [][]interface{}{{"View_1", int64(1), nil}, {"View_2", nil, int64(2)}}
+	want := [][]interface{}{{"View_1", int64(1), nil}, {"View_2", nil, int32(2)}}
 	assertRows(t, r.Rows, want)
 }
 
@@ -54,7 +54,7 @@ func TestUnionColumnTypeMismatchNameCollision(t *testing.T) {
 	assertColumns(t, columnNames(&r.Schema), "TableName", "x_long1", "x_int", "x_long")
 	want := [][]interface{}{
 		{"View_1", int64(1), nil, nil},
-		{"View_2", nil, int64(2), nil},
+		{"View_2", nil, int32(2), nil},
 		{"View_3", nil, nil, int64(3)},
 	}
 	assertRows(t, r.Rows, want)

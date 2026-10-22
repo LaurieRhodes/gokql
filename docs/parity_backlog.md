@@ -30,11 +30,9 @@ and ASIM parsers, which is this engine's main query population.
 | `column_ifexists`, `column_names_of` | unsupported; schema-aware evaluation needed |
 | `pack_all()` | unsupported |
 | `bin_at()` as a scalar (make-series has its own path) | unsupported |
-| `make_list`/`make_set` optional `MaxSize` argument | "requires 1 argument" |
 | Tabular parameter with wildcard schema, `(T:(*))` | "unknown KQL type" |
 | Default parameter values, `(x:long = 2)` | "unknown KQL type" |
 | `materialize()` | parse error |
-| `bag_pack(...)` typed as string by `inferExprType`, so a following `evaluate bag_unpack` rejects it | type inference bug |
 | Literals: hex `0x1F`, `guid(...)`, `real(+inf)`/`real(-inf)`/`real(nan)`, obfuscated `h"..."`, adjacent string-literal concatenation `'a' 'b'` | parse errors |
 
 ## Closed
@@ -47,6 +45,8 @@ and ASIM parsers, which is this engine's main query population.
 | `summarize` output order: group-by columns, then aggregates | `byColumnsFirst`, applied to the row and columnar paths; seven tests that asserted the old positional order updated |
 | `sum`/`sumif` typed as the argument promoted (int/long to long, timespan kept, real kept), exact int64 accumulation on row and columnar paths | signature from Kusto.Language (`ReturnTypeKind.Parameter0Promoted`); `partition` test that asserted real corrected |
 | `datatable`/ingest timespan literals (`2d`, `1.5h`, `100ms`, `1tick`) | `types.ParseValue` |
+| Static return types: 271 functions take their declared type from `Kusto.Language` (`func_signatures.go`, generated); about 100 implemented functions previously inferred as `string` (pow, sqrt, log, cos, datetime_add, totimespan, tobool, parse_csv, zip, strcmp, ipv4_compare, series_*, bag_pack, ...). `evalFunc` coerces numeric results to the declared representation, so int-typed functions (getyear, datetime_part, dayofmonth, hourofday, week_of_year, ...) now yield int and rand(N) real, as declared | probe: every fixed-return function over an empty datatable vs the declared type; remaining differences are the documented exclusions (jaccard_index, graph-match, decimal) |
+| `make_list`, `make_set`, `make_bag` and `_if`/`_with_nulls` forms: optional `maxSize` (default and cap 1048576) | `aggMaxSize` |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 

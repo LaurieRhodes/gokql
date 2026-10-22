@@ -36,12 +36,13 @@ func TestDatetimePartFullWorkedExample(t *testing.T) {
 		millisecond = datetime_part("millisecond", dt),
 		microsecond = datetime_part("microsecond", dt),
 		nanosecond = datetime_part("nanosecond", dt)`)
-	want := []int64{2017, 4, 10, 44, 30, 303, 1, 2, 3, 765, 765432, 765432100}
+	// datetime_part returns int (Kusto.Language: ScalarTypes.Int).
+	want := []int32{2017, 4, 10, 44, 30, 303, 1, 2, 3, 765, 765432, 765432100}
 	names := []string{"year", "quarter", "month", "weekOfYear", "day", "dayOfYear", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond"}
 	for i, w := range want {
-		got, ok := result.Rows[0][i].(int64)
+		got, ok := result.Rows[0][i].(int32)
 		if !ok || got != w {
-			t.Errorf("%s = %v (%T), want int64(%d)", names[i], result.Rows[0][i], result.Rows[0][i], w)
+			t.Errorf("%s = %v (%T), want int32(%d)", names[i], result.Rows[0][i], result.Rows[0][i], w)
 		}
 	}
 }

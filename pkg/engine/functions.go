@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -16,6 +17,54 @@ import (
 var windowFuncNames = map[string]bool{"row_number": true, "prev": true, "next": true}
 
 func evalFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
+	v, err := evalFuncRaw(fc, schema, row)
+	if err != nil || v == nil {
+		return v, err
+	}
+	if t, ok := scalarReturnTypes[fc.Name]; ok {
+		return coerceToDeclared(v, t), nil
+	}
+	return v, nil
+}
+
+// coerceToDeclared brings a numeric result into the representation of
+// its declared type (int → int32, long → int64, real → float64), so a
+// value and the static type inferExprType reports for it agree. Other
+// types, and values that would not convert exactly, are unchanged.
+func coerceToDeclared(v types.Value, t types.KQLType) types.Value {
+	switch t {
+	case types.TypeInt:
+		switch x := v.(type) {
+		case int64:
+			if x >= math.MinInt32 && x <= math.MaxInt32 {
+				return int32(x)
+			}
+		case float64:
+			if x == math.Trunc(x) && x >= math.MinInt32 && x <= math.MaxInt32 {
+				return int32(x)
+			}
+		}
+	case types.TypeLong:
+		switch x := v.(type) {
+		case int32:
+			return int64(x)
+		case int:
+			return int64(x)
+		}
+	case types.TypeReal:
+		switch x := v.(type) {
+		case int64:
+			return float64(x)
+		case int32:
+			return float64(x)
+		case int:
+			return float64(x)
+		}
+	}
+	return v
+}
+
+func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
 	// Try each category in turn. The order doesn't matter for correctness
 	// (function names are unique) but we put the most common categories first.
 	if v, ok, err := evalStringFunc(fc, schema, row); ok {
