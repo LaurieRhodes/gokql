@@ -114,6 +114,9 @@ func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 	if v, ok, err := evalPunycodeFunc(fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalSeriesFitFunc(fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalUserFunc(fc, schema, row); ok {
 		return v, err
 	}

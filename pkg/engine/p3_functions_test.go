@@ -54,3 +54,27 @@ func TestBuildSchemaReference(t *testing.T) {
 		t.Errorf("%s = %s", r.Schema.Columns[0].Name, formatCell(r, 0, 0))
 	}
 }
+
+func TestSeriesFitReference(t *testing.T) {
+	r := queryResult(t, `print y = dynamic([2, 5, 6, 8, 11, 15, 17, 18, 25, 26, 30, 30])
+| extend (RSquare, Slope, Variance, RVariance, Interception, LineFit) = series_fit_line(y)
+| extend f0 = todouble(LineFit[0]), f11 = todouble(LineFit[11]) | project-away y, LineFit`)
+	// reference: 0.982, 2.730, 98.628, 1.686, -1.666, LineFit 1.064 ... 31.102
+	want := []float64{0.982900730884447, 2.7307692307692304, 98.62878787878786, 1.686480186480187, -1.6666666666666667, 1.0641025641025641, 31.102564102564102}
+	for i, w := range want {
+		got := r.Rows[0][i].(float64)
+		if d := got - w; d > 1e-9 || d < -1e-9 {
+			t.Errorf("%s = %v, want %v", r.Schema.Columns[i].Name, got, w)
+		}
+	}
+	// degree-1 poly equals the line; cubic against numpy.polyfit
+	r2 := queryResult(t, `print x = dynamic([0, 1, 2, 3, 4]), y = dynamic([1, 0, 3, 10, 25]) | extend series_fit_poly(y, x, 3)
+| project c0 = todouble(series_fit_poly_y_coefficients[0]), c3 = todouble(series_fit_poly_y_coefficients[3])`)
+	if c0, c3 := r2.Rows[0][0].(float64), r2.Rows[0][1].(float64); c0-1.0/3 > 1e-9 || 1.0/3-c0 > 1e-9 || c3-0.94285714285714 > 1e-9 || 0.94285714285714-c3 > 1e-9 {
+		t.Errorf("cubic coefficients %v %v", c0, c3)
+	}
+	cols := columnNames(&queryResult(t, `print y = dynamic([1, 2, 4]) | project series_fit_line(y)`).Schema)
+	if len(cols) != 6 || cols[0] != "series_fit_line_y_rsquare" || cols[5] != "series_fit_line_y_line_fit" {
+		t.Errorf("series_fit_line columns: %v", cols)
+	}
+}

@@ -5,17 +5,32 @@ package parser
 //	extend (Name1, Name2, ...) = series_stats(x [, ignore_nonfinite])
 //	project series_stats(x)
 //
-// series_stats is expanded into one assignment per statistic, each
-// reading its key from series_stats_dynamic: min, min_idx, max,
-// max_idx, avg, stdev, variance. Written names apply in order; the
-// rest are series_stats_<x>_<stat>, as Kusto.Language names them
+// series_stats, series_fit_line and series_fit_poly are expanded into
+// one assignment per output, each reading its key from the function's
+// single-bag form (series_stats_dynamic, series_fit_line_dynamic, and
+// the internal __series_fit_poly_dynamic). Written names apply in order; the
+// rest are <function>_<x>_<output>, as Kusto.Language names them
 // (it keeps every column even when only some are named).
 
 import "strings"
 
-var seriesStatsKeys = []struct{ key, conv string }{
-	{"min", "todouble"}, {"min_idx", "tolong"}, {"max", "todouble"}, {"max_idx", "tolong"},
-	{"avg", "todouble"}, {"stdev", "todouble"}, {"variance", "todouble"},
+type multiKey struct{ key, conv string }
+
+// multiColumnFuncs: each multi-column function, the function returning
+// the same statistics as one bag, and its columns in order.
+var multiColumnFuncs = map[string]struct {
+	bag  string
+	keys []multiKey
+}{
+	"series_stats": {"series_stats_dynamic", []multiKey{
+		{"min", "todouble"}, {"min_idx", "tolong"}, {"max", "todouble"}, {"max_idx", "tolong"},
+		{"avg", "todouble"}, {"stdev", "todouble"}, {"variance", "todouble"}}},
+	"series_fit_line": {"series_fit_line_dynamic", []multiKey{
+		{"rsquare", "todouble"}, {"slope", "todouble"}, {"variance", "todouble"},
+		{"rvariance", "todouble"}, {"interception", "todouble"}, {"line_fit", "todynamic"}}},
+	"series_fit_poly": {"__series_fit_poly_dynamic", []multiKey{
+		{"rsquare", "todouble"}, {"coefficients", "todynamic"}, {"variance", "todouble"},
+		{"rvariance", "todouble"}, {"poly_fit", "todynamic"}}},
 }
 
 // expandMultiColumn returns the assignments a multi-column call
@@ -23,7 +38,11 @@ var seriesStatsKeys = []struct{ key, conv string }{
 // ("" when none; "(a, b)" for a tuple).
 func expandMultiColumn(name string, expr Expr) []Assignment {
 	fc, ok := expr.(*FuncCall)
-	if !ok || fc.Name != "series_stats" {
+	if !ok {
+		return nil
+	}
+	spec, ok := multiColumnFuncs[fc.Name]
+	if !ok {
 		return nil
 	}
 	var written []string
@@ -40,10 +59,10 @@ func expandMultiColumn(name string, expr Expr) []Assignment {
 	if len(fc.Args) > 0 {
 		arg, _ = ExprResultName(fc.Args[0])
 	}
-	dyn := &FuncCall{Name: "series_stats_dynamic", RawName: "series_stats_dynamic", Args: fc.Args}
-	out := make([]Assignment, len(seriesStatsKeys))
-	for i, k := range seriesStatsKeys {
-		n := "series_stats_" + arg + "_" + k.key
+	dyn := &FuncCall{Name: spec.bag, RawName: spec.bag, Args: fc.Args}
+	out := make([]Assignment, len(spec.keys))
+	for i, k := range spec.keys {
+		n := fc.Name + "_" + arg + "_" + k.key
 		if i < len(written) && written[i] != "" {
 			n = written[i]
 		}

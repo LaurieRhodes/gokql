@@ -58,6 +58,7 @@ and ASIM parsers, which is this engine's main query population.
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 | `punycode_from_string`, `punycode_to_string`, `punycode_domain_to_string`, `punycode_domain_from_string` | `func_punycode.go`, RFC 3492 without IDNA folding; all four references exact (including `。`/`｡` label separators and preserved case) |
 | `series_stats` with multi-column assignment `(a, b) = series_stats(x)` and unnamed expansion to `series_stats_x_min` ... `series_stats_x_variance` | `multi_column.go` expands it into per-statistic reads of series_stats_dynamic; reference exact. Unnamed statistics keep their generated names when only some are named, as Kusto.Language does |
+| `series_fit_line`, `series_fit_line_dynamic`, `series_fit_poly` (x series, degree) | `func_series_fit.go` with the multi-column expansion; series_fit_line reference exact (x = 1..n, sample variance, rvariance = SSres/(n-1)); polynomial coefficients checked against numpy.polyfit |
 | `buildschema` | `agg_buildschema.go`; reference exact, key and alternative order by first appearance |
 | `fork` (`Name =`, `as` in the subquery, GenericResult otherwise) and `facet by ... [with (...)]` (count_<Column> tables) | `fork_facet.go`; `Engine.ExecuteAll` returns every result table, the CLI prints each under `[Name]`, the server returns Table_0, Table_1, ... Both must be the last operator |
 | Generated column names follow Kusto.Language everywhere: unnamed extend/project expressions (`strlen(s)` → `strlen_s`, `tostring(x)` → `x`, `d.a.b` → `d_a_b`, otherwise `ColumnN` skipping existing names), print (`print_N`), summarize by (`ColumnN`), aggregates (`make_list(x)` → `list_x`, `take_any(x)` → `x`, `binary_all_and(x)` → `x`), duplicates suffixed (`count_`, `count_1`). Previously the expression text (`x + 1`, `strlen('a')`) | `result_names.go`; the per-function name kinds are generated from Kusto.Language by `tools/gen-result-names/gen.js` |
@@ -112,8 +113,9 @@ with their own examples.
 ## P3 — carried over
 
 Decimal type (`todecimal`, `parse_version`), `hash_combine`/
-`hash_many`, series curve fitting and signal processing (the
-multi-column assignment they need now exists, see series_stats),
+`hash_many`, `series_fit_2lines` (the reference does not say which
+side owns the split point and shows no numbers), series signal
+processing (decompose, outliers, periods),
 `datetime_list_timezones`, `reduce`. Details in the existing backlog
 documents.
 
