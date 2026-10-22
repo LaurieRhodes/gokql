@@ -150,9 +150,10 @@ func TestBareExpressionAutoNaming(t *testing.T) {
 
 	tbl2 := queryResult(t, `datatable(x:long) [1,2,3] | extend x + 1`)
 	expectRows(t, tbl2, 3)
-	autoIdx := tbl2.Schema.ColumnIndex("x + 1")
+	// An expression with no derivable name is ColumnN (Kusto.Language).
+	autoIdx := tbl2.Schema.ColumnIndex("Column1")
 	if autoIdx < 0 {
-		t.Fatalf("expected auto-generated column named %q, got columns: %v", "x + 1", tbl2.Schema.Columns)
+		t.Fatalf("expected auto-generated column named %q, got columns: %v", "Column1", tbl2.Schema.Columns)
 	}
 	if tbl2.Rows[0][autoIdx] != int64(2) {
 		t.Errorf("expected first row's x+1 = 2, got %v", tbl2.Rows[0][autoIdx])
@@ -160,9 +161,9 @@ func TestBareExpressionAutoNaming(t *testing.T) {
 
 	tbl3 := queryResult(t, `datatable(x:long) [1,2,3] | project x + 1`)
 	expectRows(t, tbl3, 3)
-	autoIdx3 := tbl3.Schema.ColumnIndex("x + 1")
+	autoIdx3 := tbl3.Schema.ColumnIndex("Column1")
 	if autoIdx3 < 0 {
-		t.Fatalf("expected auto-generated column named %q in project, got columns: %v", "x + 1", tbl3.Schema.Columns)
+		t.Fatalf("expected auto-generated column named %q in project, got columns: %v", "Column1", tbl3.Schema.Columns)
 	}
 }
 
@@ -903,21 +904,25 @@ func TestSummarizeArgMax(t *testing.T) {
 // etc.) -- only checked via getschema here, distinct from
 // TestSummarizeArgMax above which only checks the VALUE.
 func TestArgMaxOutputColumnNaming(t *testing.T) {
+	// The maximized/minimized expression's own column comes first,
+	// then the returned ones (the reference: State, BeginLat, BeginLocation).
 	tbl := queryResult(t, `datatable (Name: string, Score: long) ["Alice", 90, "Bob", 95] | summarize arg_max(Score, Name)`)
-	if tbl.Schema.Columns[0].Name != "Name" {
-		t.Fatalf("expected output column named %q, got %q", "Name", tbl.Schema.Columns[0].Name)
+	if tbl.Schema.Columns[0].Name != "Score" || tbl.Schema.Columns[1].Name != "Name" {
+		t.Fatalf("expected columns Score, Name, got %v", tbl.Schema.Columns)
 	}
-	expectCell(t, tbl, 0, 0, "Bob")
+	expectCell(t, tbl, 0, 1, "Bob")
 }
 
 // TestArgMinOutputColumnNaming is the arg_min counterpart of the test
 // immediately above.
 func TestArgMinOutputColumnNaming(t *testing.T) {
+	// The maximized/minimized expression's own column comes first,
+	// then the returned ones (the reference: State, BeginLat, BeginLocation).
 	tbl := queryResult(t, `datatable (Name: string, Score: long) ["Alice", 90, "Bob", 95] | summarize arg_min(Score, Name)`)
-	if tbl.Schema.Columns[0].Name != "Name" {
-		t.Fatalf("expected output column named %q, got %q", "Name", tbl.Schema.Columns[0].Name)
+	if tbl.Schema.Columns[0].Name != "Score" || tbl.Schema.Columns[1].Name != "Name" {
+		t.Fatalf("expected columns Score, Name, got %v", tbl.Schema.Columns)
 	}
-	expectCell(t, tbl, 0, 0, "Alice")
+	expectCell(t, tbl, 0, 1, "Alice")
 }
 
 // TestSummarizeArgMaxStarParses guards the actual reported bug: real

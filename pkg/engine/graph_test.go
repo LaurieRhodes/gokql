@@ -95,7 +95,7 @@ func TestGraphMatchSingleHop(t *testing.T) {
 	tbl := queryResult(t, graphEdges+graphNodesFull+
 		`E | make-graph Src --> Dst with N on Id | graph-match (x)-[e]->(y) project x.Id, y.Id`)
 	expectRows(t, tbl, 3) // a->b, b->c, a->c (traversal order: from a, then b)
-	expectColNames(t, tbl, "x.Id", "y.Id")
+	expectColNames(t, tbl, "x_Id", "y_Id")
 }
 
 func TestGraphMatchWhereNodeProperty(t *testing.T) {
@@ -124,7 +124,7 @@ func TestGraphMatchAnonymousElements(t *testing.T) {
 	tbl := queryResult(t, graphEdges+
 		`E | make-graph Src --> Dst | graph-match (x)-[]->() project x.NodeId`)
 	expectRows(t, tbl, 3)
-	expectColNames(t, tbl, "x.NodeId")
+	expectColNames(t, tbl, "x_NodeId")
 }
 
 func TestGraphMatchDerivedNodesExposeNodeId(t *testing.T) {
@@ -167,7 +167,7 @@ func TestGraphMatchVariableLengthAttackPath(t *testing.T) {
 		`where attacker.Kind == "External" and target.Kind == "CriticalAsset" `+
 		`project attacker.Id, target.Id, PathLength = array_length(e)`)
 	expectRows(t, tbl, 2) // a->b->c->d (3 hops) and a->d (1 hop)
-	expectColNames(t, tbl, "attacker.Id", "target.Id", "PathLength")
+	expectColNames(t, tbl, "attacker_Id", "target_Id", "PathLength")
 }
 
 func TestGraphMatchVariableLengthMinHops(t *testing.T) {

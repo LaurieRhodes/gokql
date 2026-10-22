@@ -84,6 +84,9 @@ type pipeState struct {
 // `sort by ... | take N` pairs fuse into a bounded top-N heap
 // (applyTopN) instead of a full sort.
 func (e *Engine) applyPipeline(input *types.Table, ops []parser.Operator) (*types.Table, error) {
+	if err := multiResultNotLast(ops); err != nil {
+		return nil, err
+	}
 	st := pipeState{table: input}
 	for i := 0; i < len(ops); i++ {
 		if st.graph == nil {

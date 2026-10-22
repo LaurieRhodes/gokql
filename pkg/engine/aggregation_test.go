@@ -32,8 +32,10 @@ func TestAnyifReturnsNullWhenNoMatch(t *testing.T) {
 // alias relationship, not a separate function.
 func TestTakeAnySameAsAny(t *testing.T) {
 	tbl := queryResult(t, `datatable(x:long) [1,2,3] | summarize take_any(x)`)
-	if tbl.Schema.Columns[0].Name != "take_any_x" {
-		t.Errorf("expected auto-name take_any_x (not any_x, matching real ADX's own distinct default naming for the modern vs deprecated form), got %q", tbl.Schema.Columns[0].Name)
+	// take_any(State) names its column State (the reference's example 1);
+	// the deprecated any() adds the any_ prefix.
+	if tbl.Schema.Columns[0].Name != "x" {
+		t.Errorf("expected take_any(x) to be named x, got %q", tbl.Schema.Columns[0].Name)
 	}
 }
 

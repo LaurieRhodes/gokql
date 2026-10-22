@@ -409,17 +409,27 @@ func (st *replState) runCommand(input string) error {
 		return fmt.Errorf("parse: %w", err)
 	}
 
-	result, err := st.eng.Execute(stmt)
+	results, err := st.eng.ExecuteAll(stmt)
 	if err != nil {
 		return err
 	}
 
 	elapsed := time.Since(start)
 
-	if result != nil {
-		st.printResult(result)
-	} else {
+	switch len(results) {
+	case 0:
 		fmt.Fprintln(st.output, "OK")
+	case 1:
+		st.printResult(results[0])
+	default:
+		// fork / facet: each table under its name, blank-line separated
+		for i, r := range results {
+			if i > 0 {
+				fmt.Fprintln(st.output)
+			}
+			fmt.Fprintf(st.output, "[%s]\n", r.Name)
+			st.printResult(r)
+		}
 	}
 
 	if st.timer {

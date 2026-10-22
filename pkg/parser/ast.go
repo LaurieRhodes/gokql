@@ -118,8 +118,9 @@ type ProjectOp struct {
 
 // ProjectItem is a single projection entry.
 type ProjectItem struct {
-	Name string
-	Expr Expr // nil for a bare column reference
+	Name    string
+	Expr    Expr // nil for a bare column reference
+	Unnamed bool // no "Name =" written; see Assignment.Unnamed
 }
 
 func (*ProjectOp) operatorNode() {}
@@ -488,6 +489,10 @@ func (*ExtendOp) operatorNode() {}
 type Assignment struct {
 	Name string
 	Expr Expr
+	// Unnamed: no "Name =" was written. Name then holds the derived
+	// name (ExprResultName), or "" for the operator to fill in
+	// (ColumnN; print_N for print).
+	Unnamed bool
 }
 
 // TakeOp: | take N  (alias: | limit N)

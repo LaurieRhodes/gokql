@@ -170,6 +170,9 @@ func parseMakeSeries(s string) (Operator, error) {
 			if name == "" {
 				name = deriveByName(expr)
 			}
+			if name == "" {
+				name = fmt.Sprintf("Column%d", len(op.ByExprs)+1)
+			}
 			op.ByExprs = append(op.ByExprs, ByExpr{Name: name, Expr: expr})
 		}
 	}

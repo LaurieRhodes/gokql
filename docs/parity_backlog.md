@@ -56,6 +56,9 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| `fork` (`Name =`, `as` in the subquery, GenericResult otherwise) and `facet by ... [with (...)]` (count_<Column> tables) | `fork_facet.go`; `Engine.ExecuteAll` returns every result table, the CLI prints each under `[Name]`, the server returns Table_0, Table_1, ... Both must be the last operator |
+| Generated column names follow Kusto.Language everywhere: unnamed extend/project expressions (`strlen(s)` → `strlen_s`, `tostring(x)` → `x`, `d.a.b` → `d_a_b`, otherwise `ColumnN` skipping existing names), print (`print_N`), summarize by (`ColumnN`), aggregates (`make_list(x)` → `list_x`, `take_any(x)` → `x`, `binary_all_and(x)` → `x`), duplicates suffixed (`count_`, `count_1`). Previously the expression text (`x + 1`, `strlen('a')`) | `result_names.go`; the per-function name kinds are generated from Kusto.Language by `tools/gen-result-names/gen.js` |
+| `arg_max`/`arg_min` returned only the returned expressions; now the maximized expression first, then the returned ones (the reference's `State, BeginLat, BeginLocation`), with written and tuple names applied in order. `take_any(x, y)` and `take_any(*)` added. Summarize aggregate names given as `['a b'] = ...`; `countif(x >= 3)` no longer misparsed as an assignment | `pickRowColumns` (operators.go). **Changes the output of a query that names a multi-column arg_max/arg_min** (`Best = arg_min(p, NodeId)` now labels `p` Best, as ADX does) |
 | `beta_cdf`, `beta_inv`, `beta_pdf`, `welch_test` | `func_beta.go`; the reference examples to ADX's 15 displayed digits (the pdf example is the exact rational value), other points against SciPy to 1e-14. beta_inv follows its reference example where the page's prose contradicts it (p > 1 is null, alpha <= 0 NaN). welch_test is two-sided with Welch–Satterthwaite df: 0.021 on the reference data |
 | `extend a = x + 1, b = a * 2`: a later assignment can use a column an earlier one defines (in order, as Kusto.Language resolves it; project, print and summarize do not allow this). Previously `column "a" not found` | `extendSplitPoint` splits the extend and applies the parts in sequence |
 | `hll`, `hll_if`, `hll_merge` (aggregate and scalar), `dcount_hll`, `tdigest` (with weight), `tdigest_merge`/`merge_tdigest` (aggregate and scalar), `percentile_tdigest` (with `typeof(T)`), `percentiles_array_tdigest`, `percentrank_tdigest`, `rank_tdigest`; `evaluate dcount_intersect` | `func_sketch.go`. Exact sketches (the distinct set, the weighted sample) since dcount and percentiles here are exact; the dynamic values are this engine's own, not ADX's binary sketches. dcount_intersect reference example exact. Types and aggregate names (`merge_tdigests_t`) from Kusto.Language |
@@ -71,12 +74,10 @@ and ASIM parsers, which is this engine's main query population.
 
 ## P2 — real but less frequent
 
-- Operators previously labelled out of scope that have no cluster
-  dependency: `fork`, `facet`.
 - `evaluate` plugins. `bag_unpack`, `ipv4_lookup`, `ipv6_lookup`,
   `pivot`, `narrow`, `schema_merge`, `rolling_percentile`,
   `sliding_window_counts`, `activity_counts_metrics`,
-  `activity_metrics`, `active_users_count` and `new_activity_metrics`
+  `activity_metrics`, `active_users_count`, `new_activity_metrics`,
   `sequence_detect` and `dcount_intersect` exist. Remaining:
   `funnel_sequence` and `funnel_sequence_completion` (references use
   StormEvents only; funnel_sequence returns three tables), and

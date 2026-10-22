@@ -316,13 +316,13 @@ func handleKustoRequest(cfg serverConfig, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, err := eng.Execute(stmt)
+	results, err := eng.ExecuteAll(stmt)
 	if err != nil {
 		writeKustoError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	writeKustoResult(w, result)
+	writeKustoResults(w, results)
 }
 
 // writeKustoResult serializes a *types.Table into the Tables[] shape
@@ -332,9 +332,25 @@ func handleKustoRequest(cfg serverConfig, w http.ResponseWriter, r *http.Request
 // against, so this is a reasonable, documented choice for this
 // implementation, not a claim of exact real-Kustainer parity for
 // every management command's response shape.
-func writeKustoResult(w http.ResponseWriter, t *types.Table) {
+// writeKustoResults serializes one table per result, Table_0,
+// Table_1, ... (fork and facet return several); no results is one
+// empty table, as for a single nil result.
+func writeKustoResults(w http.ResponseWriter, ts []*types.Table) {
+	if len(ts) == 0 {
+		ts = []*types.Table{nil}
+	}
+	resp := kustoResponse{}
+	for i, t := range ts {
+		resp.Tables = append(resp.Tables, kustoTable(fmt.Sprintf("Table_%d", i), t))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func kustoTable(name string, t *types.Table) kustoTableResult {
 	table := kustoTableResult{
-		TableName: "Table_0",
+		TableName: name,
 		Columns:   make([]kustoColumn, 0),
 		Rows:      make([][]interface{}, 0),
 	}
@@ -350,11 +366,7 @@ func writeKustoResult(w http.ResponseWriter, t *types.Table) {
 			table.Rows = append(table.Rows, append([]interface{}(nil), row...))
 		}
 	}
-
-	resp := kustoResponse{Tables: []kustoTableResult{table}}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	return table
 }
 
 // writeKustoError reports a failure. Real Kustainer's own error

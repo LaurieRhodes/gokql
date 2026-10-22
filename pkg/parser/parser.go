@@ -1602,6 +1602,16 @@ func parseOperator(seg string) (Operator, error) {
 		return parsePartition(seg[len("partition "):])
 	}
 
+	// | fork [Name =] (subquery) ...
+	if keywordAt(lower, "fork") {
+		return parseFork(seg[len("fork"):])
+	}
+
+	// | facet by Column [, ...] [with (subquery)]
+	if keywordAt(lower, "facet") {
+		return parseFacet(seg[len("facet"):])
+	}
+
 	// | mv-apply [Name =] ArrayCol [to typeof(T)] on ( subquery )
 	if strings.HasPrefix(lower, "mv-apply ") || strings.HasPrefix(lower, "mvapply ") {
 		var rest string
@@ -2313,6 +2323,11 @@ func parsePrintStatement(s string, remaining []string) (Statement, error) {
 	if err != nil {
 		return nil, fmt.Errorf("print: %w", err)
 	}
+	for i := range assignments {
+		if assignments[i].Unnamed {
+			assignments[i].Name = "" // print_<position>
+		}
+	}
 	query := &Query{
 		Source:    "",
 		Operators: []Operator{&PrintOp{Expressions: assignments}},
@@ -2862,10 +2877,8 @@ func parseSummarize(s string) (*SummarizeOp, error) {
 			// Check for "Name = expr" alias syntax
 			var name string
 			exprStr := part
-			eqIdx := strings.Index(part, "=")
-			if eqIdx > 0 && (eqIdx+1 >= len(part) || part[eqIdx+1] != '=') &&
-				(eqIdx == 0 || part[eqIdx-1] != '!') {
-				name = strings.TrimSpace(part[:eqIdx])
+			if eqIdx := assignmentEqIndex(part); eqIdx > 0 {
+				name = unquoteIdent(part[:eqIdx])
 				exprStr = strings.TrimSpace(part[eqIdx+1:])
 			}
 
@@ -2891,47 +2904,19 @@ func parseSummarize(s string) (*SummarizeOp, error) {
 // For bin(Col, step), returns the first arg's column name.
 // For other expressions, returns the expression as a string.
 func deriveByName(expr Expr) string {
-	switch e := expr.(type) {
-	case *ColumnRef:
-		return e.Name
-	case *FuncCall:
-		// For bin/floor/startofday etc., use the first arg's column name
-		if len(e.Args) > 0 {
-			if ref, ok := e.Args[0].(*ColumnRef); ok {
-				return ref.Name
-			}
-		}
-		return e.Name + "_"
-	case *AccessExpr:
-		// For Properties.tags.env → use leaf property name
-		if len(e.Path) > 0 {
-			last := e.Path[len(e.Path)-1]
-			if last.Name != "" {
-				return last.Name
-			}
-		}
-		return deriveByName(e.Object)
-	default:
-		return "expr_"
-	}
+	name, _ := ExprResultName(expr) // "" → ColumnN in the engine
+	return name
 }
 
 func parseAggregation(s string) (*Aggregation, error) {
 	s = strings.TrimSpace(s)
 	agg := &Aggregation{}
 
-	// Check for "Name = func(...)" pattern
-	eqIdx := strings.Index(s, "=")
-	if eqIdx > 0 {
-		// Make sure '=' is not part of '==' or '!='
-		if eqIdx+1 < len(s) && s[eqIdx+1] == '=' {
-			// It's ==, not assignment
-		} else if eqIdx > 0 && s[eqIdx-1] == '!' {
-			// It's !=
-		} else {
-			agg.Name = strings.TrimSpace(s[:eqIdx])
-			s = strings.TrimSpace(s[eqIdx+1:])
-		}
+	// "Name = func(...)": an assignment "=" at the top level, not part
+	// of ==, !=, <=, >= or =~ (countif(x >= 3) has no name).
+	if eqIdx := assignmentEqIndex(s); eqIdx > 0 {
+		agg.Name = unquoteIdent(s[:eqIdx])
+		s = strings.TrimSpace(s[eqIdx+1:])
 	}
 
 	// Parse function call: func(args...)
@@ -2990,14 +2975,16 @@ func parseAggregation(s string) (*Aggregation, error) {
 	if agg.Name == "" {
 		agg.AutoNamed = true
 	}
-	if agg.Name == "" && (agg.Function == "tdigest_merge" || agg.Function == "merge_tdigest") {
-		agg.Name = "merge_tdigests_"
-		if len(agg.Args) > 0 {
-			if ref, ok := agg.Args[0].(*ColumnRef); ok {
-				agg.Name += ref.Name
-			}
+	// Generated names from Kusto.Language's result-name kinds (sum(x)
+	// → sum_x, make_list(x) → list_x, take_anyif(x, p) → x). covariance
+	// keeps both argument names, as ADX's own example shows, and the
+	// percentiles family and arg_max/arg_min/take_any are named per
+	// output column elsewhere.
+	if agg.Name == "" && !strings.HasPrefix(agg.Function, "covariance") && !IsPercentileAgg(agg.Function) {
+		if n, ok := AggResultName(&FuncCall{Name: agg.Function, Args: agg.Args}); ok {
+			agg.Name = n
+			return agg, nil
 		}
-		return agg, nil
 	}
 	if agg.Name == "" && IsPercentileAgg(agg.Function) {
 		agg.Name = PercentileAutoName(agg, 0)
@@ -3160,11 +3147,8 @@ func parseAssignments(s string) ([]Assignment, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", part, err)
 			}
-			name := part
-			if ref, ok := expr.(*ColumnRef); ok && strings.HasPrefix(part, "[") {
-				name = ref.Name
-			}
-			result = append(result, Assignment{Name: name, Expr: expr})
+			name, _ := ExprResultName(expr)
+			result = append(result, Assignment{Name: name, Expr: expr, Unnamed: true})
 			continue
 		}
 
@@ -3381,7 +3365,8 @@ func parseProjectItems(colStr string) ([]ProjectItem, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", part, err)
 			}
-			items = append(items, ProjectItem{Name: part, Expr: expr})
+			name, _ := ExprResultName(expr) // "" → ColumnN in the engine
+			items = append(items, ProjectItem{Name: name, Expr: expr, Unnamed: true})
 			continue
 		}
 		name := unquoteIdent(part[:eqIdx])

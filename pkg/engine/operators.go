@@ -55,7 +55,29 @@ func (e *Engine) applyProject(input *types.Table, op *parser.ProjectOp) (*types.
 		if err != nil {
 			return nil, fmt.Errorf("project %q: %w", item.Name, err)
 		}
-		items[i] = parser.ProjectItem{Name: item.Name, Expr: rewritten}
+		items[i] = parser.ProjectItem{Name: item.Name, Expr: rewritten, Unnamed: item.Unnamed}
+	}
+	// Unnamed computed items: ColumnN when no name derives, and a
+	// generated name that collides with another output column gets a
+	// numeric suffix (project Column1 = 5, 6 gives Column1, Column11).
+	gen := newColumnNamer(&input.Schema)
+	written := map[string]bool{}
+	for _, it := range items {
+		if !it.Unnamed {
+			written[it.Name] = true
+		}
+	}
+	for i := range items {
+		if !items[i].Unnamed || items[i].Expr == nil {
+			continue
+		}
+		n := autoColumnName(items[i].Name, items[i].Expr, &input.Schema)
+		if n == "" {
+			n = gen.next()
+		}
+		n = parser.UniqueName(n, func(x string) bool { return written[x] })
+		written[n] = true
+		items[i].Name = n
 	}
 
 	// Build new schema: passthrough columns keep their type, computed
@@ -144,6 +166,12 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 		}
 		assignments[i] = parser.Assignment{Name: autoColumnName(assign.Name, rewritten, &input.Schema), Expr: rewritten}
 	}
+	gen := newColumnNamer(&input.Schema)
+	for i := range assignments {
+		if assignments[i].Name == "" {
+			assignments[i].Name = gen.next()
+		}
+	}
 
 	// existingIdx maps each assignment to the input-schema column index
 	// it replaces, or -1 if it's a genuinely new column appended at the
@@ -200,6 +228,25 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 		result.AddRow(newRow)
 	}
 	return result, nil
+}
+
+// columnNamer hands out ColumnN names for unnamed expressions: N counts
+// up from 1 and skips names the operator's input already has.
+type columnNamer struct {
+	schema *types.Schema
+	n      int
+}
+
+func newColumnNamer(s *types.Schema) *columnNamer { return &columnNamer{schema: s} }
+
+func (c *columnNamer) next() string {
+	for {
+		c.n++
+		name := fmt.Sprintf("Column%d", c.n)
+		if c.schema.ColumnIndex(name) < 0 {
+			return name
+		}
+	}
 }
 
 // extendSplitPoint is the index of the first assignment that refers to
@@ -418,6 +465,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		pctValues   []float64 // non-nil only for percentiles() expansion
 		argStarCols []string  // non-nil only for arg_max/arg_min(expr, *) — source column names, in output order, matching colIndices positionally
 		argWantMax  bool      // only meaningful when argStarCols != nil
+		pick        *pickRow  // arg_max/arg_min/take_any: columns read from one chosen row
 		colIndices  []int     // output column indices for this aggregation
 	}
 	outSchema := types.Schema{}
@@ -437,50 +485,26 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		byNames[byExpr.Name] = true
 	}
 
+	gen := newColumnNamer(&input.Schema)
+	byExprs := make([]parser.ByExpr, len(op.ByExprs))
+	copy(byExprs, op.ByExprs)
+	for i := range byExprs {
+		if byExprs[i].Name == "" {
+			byExprs[i].Name = gen.next()
+		}
+		byNames[byExprs[i].Name] = true
+	}
+	op = &parser.SummarizeOp{Aggregations: op.Aggregations, ByExprs: byExprs}
+
 	for _, agg := range op.Aggregations {
-		if (agg.Function == "arg_max" || agg.Function == "arg_min") &&
-			len(agg.Args) == 2 {
-			if _, isStar := agg.Args[1].(*parser.StarExpr); isStar {
-				// Aggregation columns are built before group-by
-				// columns here; byColumnsFirst moves the group-by
-				// block to the front at the end, giving ADX's order
-				// (Fruit, Version, Color for arg_max(Version, *) by
-				// Fruit). Within the aggregation block, source order
-				// is preserved: expr's own column first if it is a
-				// bare ColumnRef, then remaining source columns.
-				included := make(map[string]bool, len(input.Schema.Columns))
-				for name := range byNames {
-					included[name] = true
-				}
-				var starCols []string
-				if ref, ok := agg.Args[0].(*parser.ColumnRef); ok && !included[ref.Name] {
-					starCols = append(starCols, ref.Name)
-					included[ref.Name] = true
-				}
-				for _, col := range input.Schema.Columns {
-					if !included[col.Name] {
-						starCols = append(starCols, col.Name)
-						included[col.Name] = true
-					}
-				}
-				var indices []int
-				for _, colName := range starCols {
-					srcCol := input.Schema.ColumnByName(colName)
-					colType := types.TypeDynamic
-					if srcCol != nil {
-						colType = srcCol.Type
-					}
-					indices = append(indices, len(outSchema.Columns))
-					outSchema.Columns = append(outSchema.Columns, types.Column{Name: colName, Type: colType})
-				}
-				slots = append(slots, aggSlot{
-					agg:         agg,
-					argStarCols: starCols,
-					argWantMax:  agg.Function == "arg_max",
-					colIndices:  indices,
-				})
-				continue
+		if pick := pickRowColumns(agg, input, byNames, gen); pick != nil {
+			var indices []int
+			for i, ex := range pick.exprs {
+				indices = append(indices, len(outSchema.Columns))
+				outSchema.Columns = append(outSchema.Columns, types.Column{Name: pick.names[i], Type: inferExprType(ex, &input.Schema)})
 			}
+			slots = append(slots, aggSlot{agg: agg, pick: pick, colIndices: indices})
+			continue
 		}
 		if first := percentileFirstPct(agg.Function); first > 0 && len(agg.Args) > first+1 {
 			// percentiles(expr, p1, ..., pN) / percentilesw(expr, w, p1, ..., pN)
@@ -513,6 +537,17 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 			outSchema.Columns = append(outSchema.Columns, types.Column{Name: agg.Name, Type: outType})
 			slots = append(slots, aggSlot{agg: agg, colIndices: []int{idx}})
 		}
+	}
+	// Aggregate columns whose names repeat a group-by column or an
+	// earlier aggregate column get a numeric suffix (count_, count_1).
+	taken := map[string]bool{}
+	for n := range byNames {
+		taken[n] = true
+	}
+	for i := range outSchema.Columns {
+		n := parser.UniqueName(outSchema.Columns[i].Name, func(x string) bool { return taken[x] })
+		taken[n] = true
+		outSchema.Columns[i].Name = n
 	}
 	byOffset := len(outSchema.Columns)
 	for _, byExpr := range op.ByExprs {
@@ -559,6 +594,37 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 
 		// Aggregation values
 		for _, slot := range slots {
+			if slot.pick != nil {
+				var best types.Row
+				switch slot.agg.Function {
+				case "arg_max", "arg_min":
+					var err error
+					best, err = findArgBestRow(slot.agg.Args[0], g.rows, &input.Schema, slot.agg.Function == "arg_max")
+					if err != nil {
+						return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
+					}
+				default: // take_any: the first row whose first value is not null
+					for _, r := range g.rows {
+						if v, err := evalExpr(slot.pick.exprs[0], &input.Schema, r); err == nil && v != nil {
+							best = r
+							break
+						}
+					}
+					if best == nil && len(g.rows) > 0 {
+						best = g.rows[0]
+					}
+				}
+				if best != nil {
+					for i, ex := range slot.pick.exprs {
+						v, err := evalExpr(ex, &input.Schema, best)
+						if err != nil {
+							return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
+						}
+						outRow[slot.colIndices[i]] = v
+					}
+				}
+				continue
+			}
 			if slot.argStarCols != nil {
 				// arg_max/arg_min(expr, *) — find the best row once,
 				// then pull every star-expanded column's value from
@@ -616,6 +682,83 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 
 // applyUnion stacks rows from additional sources onto the input table.
 // Schema is the superset of all input schemas — missing columns filled with nil.
+// pickRow is an aggregate whose columns are all read from one row of
+// the group: arg_max/arg_min(Expr, Return... | *) — Expr itself, then
+// the returned expressions — and take_any(Expr... | *).
+type pickRow struct {
+	exprs []parser.Expr
+	names []string
+}
+
+// pickRowColumns lays out a row-picking aggregate's columns, or
+// returns nil for any other aggregate. Names follow Kusto.Language: a
+// written name (or tuple of names) applies in order; otherwise the
+// expression's derived name, "max_"/"min_" for an arg_max/arg_min
+// expression without one, ColumnN for others; * expands to the input
+// columns not already present and not grouped by.
+func pickRowColumns(agg parser.Aggregation, input *types.Table, byNames map[string]bool, gen *columnNamer) *pickRow {
+	isArg := agg.Function == "arg_max" || agg.Function == "arg_min"
+	isAny := agg.Function == "take_any" || (agg.Function == "any" && len(agg.Args) > 1)
+	if !(isArg && len(agg.Args) >= 2) && !isAny {
+		return nil
+	}
+	if isAny && len(agg.Args) == 1 {
+		if _, star := agg.Args[0].(*parser.StarExpr); !star && !agg.AutoNamed {
+			return nil // take_any(x) with a written name: the ordinary path
+		}
+	}
+	var written []string
+	if !agg.AutoNamed && agg.Name != "" {
+		if strings.HasPrefix(agg.Name, "(") && strings.HasSuffix(agg.Name, ")") {
+			for _, n := range strings.Split(agg.Name[1:len(agg.Name)-1], ",") {
+				written = append(written, strings.TrimSpace(n))
+			}
+		} else {
+			written = []string{agg.Name}
+		}
+	}
+	p := &pickRow{}
+	present := map[string]bool{}
+	add := func(ex parser.Expr, fallback string) {
+		i := len(p.exprs)
+		name := ""
+		if i < len(written) {
+			name = written[i]
+		}
+		if name == "" {
+			if n, ok := parser.ExprResultName(ex); ok {
+				name = n
+			} else if fallback != "" {
+				name = fallback
+			} else {
+				name = gen.next()
+			}
+		}
+		if ref, ok := ex.(*parser.ColumnRef); ok {
+			present[ref.Name] = true
+		}
+		p.exprs = append(p.exprs, ex)
+		p.names = append(p.names, name)
+	}
+	args := agg.Args
+	if isArg {
+		add(args[0], strings.TrimPrefix(agg.Function, "arg_")+"_")
+		args = args[1:]
+	}
+	for _, a := range args {
+		if _, star := a.(*parser.StarExpr); star {
+			for _, c := range input.Schema.Columns {
+				if !present[c.Name] && !byNames[c.Name] {
+					add(&parser.ColumnRef{Name: c.Name}, "")
+				}
+			}
+			continue
+		}
+		add(a, "")
+	}
+	return p
+}
+
 // percentileFirstPct is the index of the first percentile argument of
 // a multi-valued percentiles call, 0 for any other aggregate.
 func percentileFirstPct(f string) int {

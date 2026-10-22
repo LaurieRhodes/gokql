@@ -155,6 +155,10 @@ type Engine struct {
 	letContext *LetContext // Active let bindings (set during compound execution)
 	Verbose    bool
 
+	// extraResults collects the result tables after the first that
+	// fork and facet produce; ExecuteAll returns them.
+	extraResults []*types.Table
+
 	// ExternalResolver is nil by default -- purely additive, zero
 	// impact on this engine's own behavior unless a host application
 	// sets it. Deliberately a field on Engine itself, NOT package-level
@@ -972,6 +976,10 @@ func (e *Engine) applyOperator(input *types.Table, op parser.Operator) (*types.T
 		return e.applyMvExpand(input, o)
 	case *parser.MvApplyOp:
 		return e.applyMvApply(input, o)
+	case *parser.ForkOp:
+		return e.applyFork(input, o)
+	case *parser.FacetOp:
+		return e.applyFacet(input, o)
 	case *parser.PartitionOp:
 		return e.applyPartition(input, o)
 	case *parser.ProjectAwayOp:
