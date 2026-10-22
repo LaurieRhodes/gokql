@@ -48,6 +48,11 @@ func collectColumnRefs(expr parser.Expr, out map[string]bool) {
 		collectColumnRefs(e.High, out)
 	case *parser.AccessExpr:
 		collectColumnRefs(e.Object, out)
+		for _, k := range e.Path {
+			if k.Expr != nil {
+				collectColumnRefs(k.Expr, out)
+			}
+		}
 	case *parser.HasAnyAllExpr:
 		collectColumnRefs(e.Column, out)
 		for _, v := range e.Values {

@@ -377,6 +377,11 @@ func exprReferencesColumn(expr parser.Expr, name string) bool {
 	case *parser.BetweenExpr:
 		return exprReferencesColumn(e.Expr, name) || exprReferencesColumn(e.Low, name) || exprReferencesColumn(e.High, name)
 	case *parser.AccessExpr:
+		for _, k := range e.Path {
+			if k.Expr != nil && exprReferencesColumn(k.Expr, name) {
+				return true
+			}
+		}
 		return exprReferencesColumn(e.Object, name)
 	case *parser.HasAnyAllExpr:
 		if exprReferencesColumn(e.Column, name) {

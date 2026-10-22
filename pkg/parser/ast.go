@@ -894,6 +894,11 @@ func (*AccessExpr) exprNode() {}
 type AccessKey struct {
 	Name  string // Property name (for dot or bracket-string access)
 	Index int    // Array index (for bracket-int access, -1 if not used)
+	// Expr is a computed key, d[expr]: evaluated per row, an integer
+	// is an index (negative counts from the end) and a string a key.
+	Expr Expr
+	// FromEnd marks a resolved Expr index, which may be negative.
+	FromEnd bool
 }
 
 // BetweenExpr represents "col between (low .. high)" or "col !between (low .. high)"

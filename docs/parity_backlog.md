@@ -51,14 +51,13 @@ and ASIM parsers, which is this engine's main query population.
 | String operators (`has`, `contains`, `startswith`, `endswith`, `hasprefix`, `like`, `matches regex`, negations, `_cs` forms) take null as `""`; previously any null operand gave false, so `null !startswith "x"` was false | `isStringOperator` |
 | `range()`, `cot`, `erf`, `erfc`, `gamma`, `loggamma`, `replace` (deprecated `replace_regex` order), `assert` (constant arguments checked once per operator, so it fails with no rows) | reference examples exact (range x5 incl. the 2^20 cap, gamma, assert x3) |
 | Named arguments in function calls (`f(len=3, s)`); user function names are case sensitive (a scalar let function named with capitals, e.g. `checkLength`, could not be called) | `FuncCall.ArgNames`, `FuncCall.RawName` |
+| Bracket access with any expression: computed and negative indexes (`r[array_length(r) - 1]`, `r[-1]`) and keys from columns (`d[key]`) | `AccessKey.Expr`; every expression walker visits it, including projection pushdown |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
 ## P2 — real but less frequent
 
 - Scalars: `beta_cdf`, `beta_inv`, `beta_pdf`, `welch_test`.
-- Bracket access with a computed index (`r[array_length(r) - 1]`);
-  only literal indexes and keys parse.
 - Units conversion family, not in any earlier list: `convert_angle`,
   `convert_energy`, `convert_force`, `convert_length`, `convert_mass`,
   `convert_speed`, `convert_temperature`, `convert_volume`.

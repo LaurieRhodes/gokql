@@ -351,6 +351,11 @@ func collectBaseNames(expr parser.Expr, names map[string]bool) (complete bool) {
 		names[e.Name] = true
 		return true
 	case *parser.AccessExpr:
+		for _, k := range e.Path {
+			if k.Expr != nil && !collectBaseNames(k.Expr, names) {
+				return false
+			}
+		}
 		return collectBaseNames(e.Object, names)
 	case *parser.BinaryExpr:
 		return collectBaseNames(e.Left, names) && collectBaseNames(e.Right, names)

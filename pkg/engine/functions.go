@@ -226,6 +226,16 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 // then ".sev"). Real dynamic columns keep plain JSON-access semantics
 // because the base-column check takes precedence.
 func evalAccess(ae *parser.AccessExpr, schema *types.Schema, row types.Row) (types.Value, error) {
+	for _, k := range ae.Path {
+		if k.Expr != nil {
+			path, err := resolveAccessPath(ae.Path, schema, row)
+			if err != nil {
+				return nil, err
+			}
+			ae = &parser.AccessExpr{Object: ae.Object, Path: path}
+			break
+		}
+	}
 	if idx, rest := dottedColumnPrefix(ae, schema); idx >= 0 {
 		if len(rest) == 0 {
 			return row[idx], nil
@@ -238,6 +248,34 @@ func evalAccess(ae *parser.AccessExpr, schema *types.Schema, row types.Row) (typ
 		return nil, err
 	}
 	return accessJSONPath(val, ae.Path), nil
+}
+
+// resolveAccessPath evaluates computed keys for this row: an integer
+// becomes an index (FromEnd: negative counts from the end), anything
+// else a property name. A null key makes the access null.
+func resolveAccessPath(path []parser.AccessKey, schema *types.Schema, row types.Row) ([]parser.AccessKey, error) {
+	out := make([]parser.AccessKey, len(path))
+	for i, k := range path {
+		if k.Expr == nil {
+			out[i] = k
+			continue
+		}
+		v, err := evalExpr(k.Expr, schema, row)
+		if err != nil {
+			return nil, err
+		}
+		switch x := v.(type) {
+		case nil:
+			out[i] = parser.AccessKey{Index: math.MinInt32, FromEnd: true}
+		case int64:
+			out[i] = parser.AccessKey{Index: int(x), FromEnd: true}
+		case int32:
+			out[i] = parser.AccessKey{Index: int(x), FromEnd: true}
+		default:
+			out[i] = parser.AccessKey{Name: fmt.Sprintf("%v", x), Index: -1}
+		}
+	}
+	return out, nil
 }
 
 // accessJSONPath parses val as JSON and walks the access path through it.
@@ -282,8 +320,12 @@ func accessJSONPath(val types.Value, path []parser.AccessKey) types.Value {
 				current = mapped
 				continue
 			}
-			if key.Index >= 0 && key.Index < len(obj) {
-				current = obj[key.Index]
+			ix := key.Index
+			if key.FromEnd && ix < 0 {
+				ix += len(obj)
+			}
+			if ix >= 0 && ix < len(obj) {
+				current = obj[ix]
 			} else {
 				return nil
 			}

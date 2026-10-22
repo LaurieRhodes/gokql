@@ -120,17 +120,33 @@ func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 		return &parser.FuncCall{Name: ex.Name, RawName: ex.RawName, Args: newArgs, ArgNames: ex.ArgNames}, nil
 
 	case *parser.AccessExpr:
-		// Path ([]AccessKey) is static metadata (property names / array
-		// indices, both plain string/int, never a parser.Expr) — never
-		// needs rewriting, only Object itself might.
+		// Object and any computed bracket keys (d[expr]) may contain
+		// toscalar().
 		obj, err := substituteToScalars(e, ex.Object)
 		if err != nil {
 			return nil, err
 		}
-		if obj == ex.Object {
+		path, changed := ex.Path, false
+		for i, k := range ex.Path {
+			if k.Expr == nil {
+				continue
+			}
+			r, err := substituteToScalars(e, k.Expr)
+			if err != nil {
+				return nil, err
+			}
+			if r != k.Expr {
+				if !changed {
+					path = append([]parser.AccessKey(nil), ex.Path...)
+					changed = true
+				}
+				path[i].Expr = r
+			}
+		}
+		if obj == ex.Object && !changed {
 			return expr, nil
 		}
-		return &parser.AccessExpr{Object: obj, Path: ex.Path}, nil
+		return &parser.AccessExpr{Object: obj, Path: path}, nil
 
 	case *parser.InExpr:
 		col, err := substituteToScalars(e, ex.Column)

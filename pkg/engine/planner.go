@@ -302,6 +302,11 @@ func (c *columnCollector) collectExpr(expr parser.Expr) {
 		c.collectExpr(e.High)
 	case *parser.AccessExpr:
 		c.collectExpr(e.Object)
+		for _, k := range e.Path {
+			if k.Expr != nil {
+				c.collectExpr(k.Expr)
+			}
+		}
 	case *parser.HasAnyAllExpr:
 		// Found live: `Findings | where Claim has_any (...) | count`
 		// failed with "column Claim not found" -- has_any/has_all's

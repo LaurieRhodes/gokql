@@ -93,10 +93,30 @@ func rewriteExpr(expr parser.Expr, fn func(parser.Expr) (parser.Expr, error)) (p
 		return &parser.FuncCall{Name: ex.Name, RawName: ex.RawName, Args: args, ArgNames: ex.ArgNames}, nil
 	case *parser.AccessExpr:
 		obj, err := sub(ex.Object)
-		if err != nil || obj == ex.Object {
-			return expr, err
+		if err != nil {
+			return nil, err
 		}
-		return &parser.AccessExpr{Object: obj, Path: ex.Path}, nil
+		path, changed := ex.Path, false
+		for i, k := range ex.Path {
+			if k.Expr == nil {
+				continue
+			}
+			r, err := sub(k.Expr)
+			if err != nil {
+				return nil, err
+			}
+			if r != k.Expr {
+				if !changed {
+					path = append([]parser.AccessKey(nil), ex.Path...)
+					changed = true
+				}
+				path[i].Expr = r
+			}
+		}
+		if obj == ex.Object && !changed {
+			return expr, nil
+		}
+		return &parser.AccessExpr{Object: obj, Path: path}, nil
 	case *parser.InExpr:
 		col, err := sub(ex.Column)
 		if err != nil {

@@ -1225,16 +1225,21 @@ func (p *exprParser) parsePostfixAccess(expr Expr) (Expr, error) {
 					return nil, fmt.Errorf("expected string literal in bracket access")
 				}
 				path = append(path, AccessKey{Name: fmt.Sprintf("%v", lit.Value), Index: -1})
-			} else if p.input[p.pos] >= '0' && p.input[p.pos] <= '9' {
-				// Numeric index: [0]
-				start := p.pos
-				for p.pos < len(p.input) && p.input[p.pos] >= '0' && p.input[p.pos] <= '9' {
-					p.pos++
-				}
-				idx, _ := strconv.Atoi(p.input[start:p.pos])
-				path = append(path, AccessKey{Name: "", Index: idx})
 			} else {
-				return nil, fmt.Errorf("expected string or number in bracket access")
+				// Any other index: a non-negative integer literal is a
+				// plain index; anything else (arr[-1], arr[n - 1],
+				// bag[keyColumn]) is evaluated per row.
+				ix, err := p.parseOr()
+				if err != nil {
+					return nil, fmt.Errorf("bracket access: %w", err)
+				}
+				key := AccessKey{Index: -1, Expr: ix}
+				if lit, ok := ix.(*Literal); ok {
+					if n, ok := lit.Value.(int64); ok && n >= 0 {
+						key = AccessKey{Index: int(n)}
+					}
+				}
+				path = append(path, key)
 			}
 
 			p.skipWhitespace()
