@@ -125,12 +125,15 @@ func (c *Catalog) CreateMergeTable(name string, schema types.Schema) error {
 		return c.save()
 	}
 
-	// Merge: add columns that don't exist yet
+	// Merge: add columns that don't exist yet, keeping _TimeReceived
+	// last (see TimeReceivedColumn).
+	merged := types.Schema{Columns: append([]types.Column(nil), existing.Schema.Columns...)}
 	for _, newCol := range schema.Columns {
-		if existing.Schema.ColumnIndex(newCol.Name) < 0 {
-			existing.Schema.Columns = append(existing.Schema.Columns, newCol)
+		if merged.ColumnIndex(newCol.Name) < 0 {
+			merged.Columns = append(merged.Columns, newCol)
 		}
 	}
+	existing.Schema = timeReceivedLast(merged)
 	return c.save()
 }
 

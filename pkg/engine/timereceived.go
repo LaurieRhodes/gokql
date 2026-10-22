@@ -55,6 +55,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/LaurieRhodes/gokql/pkg/catalog"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
@@ -64,7 +65,7 @@ import (
 // conformance with an existing, real convention, not a fresh okql-only
 // name that would need its own documentation and wouldn't compose with
 // anyone's existing Log-Analytics-derived tooling or muscle memory.
-const timeReceivedColumnName = "_TimeReceived"
+const timeReceivedColumnName = catalog.TimeReceivedColumn
 
 const schemaOptionsFileName = ".okql-schema-options.json"
 

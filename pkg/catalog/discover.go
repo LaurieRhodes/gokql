@@ -167,7 +167,7 @@ func (c *Catalog) rediscoverLocked(force bool) error {
 			if err != nil {
 				return fmt.Errorf("table %q: extent %s: %w", info.table, info.relPath, err)
 			}
-			tbl.Schema = merged
+			tbl.Schema = timeReceivedLast(merged)
 		}
 		// Zero-row extents only assert a table's existence and schema
 		// (see CreateTable in discovery mode): never scanned.
@@ -254,6 +254,29 @@ func parseExtentName(base string) (table, id string) {
 		}
 	}
 	return name[:i], suffix
+}
+
+// TimeReceivedColumn is the engine-stamped ingest-time column. A
+// table's schema always ends with it: positional ingest (CSV, inline)
+// supplies every other column in order and leaves this one to the
+// engine. Extents written before a column was added store it earlier
+// in the file; scans resolve columns by name, so only the logical
+// order matters.
+const TimeReceivedColumn = "_TimeReceived"
+
+// timeReceivedLast returns schema with TimeReceivedColumn, if present,
+// moved to the end.
+func timeReceivedLast(schema types.Schema) types.Schema {
+	n := len(schema.Columns)
+	i := schema.ColumnIndex(TimeReceivedColumn)
+	if i < 0 || i == n-1 {
+		return schema
+	}
+	cols := make([]types.Column, 0, n)
+	cols = append(cols, schema.Columns[:i]...)
+	cols = append(cols, schema.Columns[i+1:]...)
+	cols = append(cols, schema.Columns[i])
+	return types.Schema{Columns: cols}
 }
 
 // mergeSchemas unions columns across extents of one table (schema

@@ -34,9 +34,7 @@ func strEngine(t *testing.T) *Engine {
 	rows := make([]string, 0, 200)
 	for i := 0; i < 200; i++ {
 		id := 400 + i
-		// The empty field is _TimeReceived: .alter-merge places
-		// new columns after it (a separate, known ingest issue).
-		rows = append(rows, row(id)+",,"+names[(id*3)%len(names)])
+		rows = append(rows, row(id)+","+names[(id*3)%len(names)])
 	}
 	diskExec(t, eng, ".ingest inline into table S <| "+joinLines(rows))
 	return eng

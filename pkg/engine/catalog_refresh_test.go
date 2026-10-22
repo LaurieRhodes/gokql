@@ -63,8 +63,7 @@ func TestDiscoveryRefreshEqualsFreshDiscover(t *testing.T) {
 	ingestRows(t, a, "T", 0, 4)
 	diskExec(t, a, `.alter-merge table T (Extra: real)`)
 	// b's statement refreshes first, so it writes the altered schema.
-	// The empty fields are _TimeReceived (placed before Extra) and Extra.
-	diskExec(t, b, ".ingest inline into table T <| 4,r4,,1.5\n5,r5,,2.5")
+	diskExec(t, b, ".ingest inline into table T <| 4,r4,1.5\n5,r5,2.5")
 	if err := a.Catalog.Refresh(); err != nil {
 		t.Fatal(err)
 	}
