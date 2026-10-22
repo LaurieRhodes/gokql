@@ -87,4 +87,3 @@ func TestParseWhereNoMatches(t *testing.T) {
 		t.Errorf("expected 'val' column present in schema even with 0 rows")
 	}
 }
-

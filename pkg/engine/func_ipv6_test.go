@@ -203,4 +203,3 @@ func TestIPv6IsMatchNullPropagation(t *testing.T) {
 		t.Errorf("ipv6_is_match(null, ...) = %v, want nil", result.Rows[0][0])
 	}
 }
-

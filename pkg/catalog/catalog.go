@@ -34,16 +34,16 @@ type Database struct {
 
 // Table represents a table definition with schema and extent references.
 type Table struct {
-	Name     string           `json:"name"`
-	Schema   types.Schema     `json:"schema"`
-	Extents  []ExtentEntry    `json:"extents"`
-	Created  time.Time        `json:"created"`
+	Name    string        `json:"name"`
+	Schema  types.Schema  `json:"schema"`
+	Extents []ExtentEntry `json:"extents"`
+	Created time.Time     `json:"created"`
 }
 
 // ExtentEntry is metadata for a single extent (Vortex file).
 type ExtentEntry struct {
 	ID          string                 `json:"id"`
-	FilePath    string                 `json:"file_path"`    // Relative to database extents dir
+	FilePath    string                 `json:"file_path"` // Relative to database extents dir
 	RowCount    int64                  `json:"row_count"`
 	SizeBytes   int64                  `json:"size_bytes"`
 	CreatedAt   time.Time              `json:"created_at"`

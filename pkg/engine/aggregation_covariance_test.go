@@ -108,4 +108,3 @@ func TestCovarianceInsufficientDataReturnsNull(t *testing.T) {
 		t.Errorf("covariancep over zero input rows with no by-clause = %d rows, want 0 (matching this engine's existing zero-row summarize behavior)", len(result2.Rows))
 	}
 }
-

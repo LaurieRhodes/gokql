@@ -88,4 +88,3 @@ func TestAsDoesNotLeakAcrossQueries(t *testing.T) {
 		t.Fatalf("expected 'table not found' for LeakedName in a later query, got no error (a leak across queries)")
 	}
 }
-

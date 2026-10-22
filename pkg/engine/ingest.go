@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LaurieRhodes/gokql/pkg/catalog"	
+	"github.com/LaurieRhodes/gokql/pkg/catalog"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
@@ -404,7 +404,7 @@ func splitCSVLine(line string) []string {
 	var fields []string
 	var current strings.Builder
 	inQuote := false
-	braceDepth := 0  // Track {}/[] nesting for JSON dynamic columns
+	braceDepth := 0 // Track {}/[] nesting for JSON dynamic columns
 	bracketDepth := 0
 
 	for i := 0; i < len(line); i++ {

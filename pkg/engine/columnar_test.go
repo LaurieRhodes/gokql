@@ -12,7 +12,7 @@ import (
 
 // --- selectChunkRows unit tests (pure vector logic) ---
 
-func i64Vec(vals ...int64) *colVec  { return &colVec{kt: types.TypeLong, i64: vals} }
+func i64Vec(vals ...int64) *colVec   { return &colVec{kt: types.TypeLong, i64: vals} }
 func f64Vec(vals ...float64) *colVec { return &colVec{kt: types.TypeReal, f64: vals} }
 
 func selCount(t *testing.T, filter *vortex.RowFilter, cols map[string]*colVec, n int) (int, int) {
@@ -81,8 +81,9 @@ func TestSelectChunkRowsConservativeSkips(t *testing.T) {
 // --- integration: chunk filtering + zone extraction scope on disk ---
 
 // filterEngine builds a disk table with two extents:
-//   extent 1: Sev = Id (0..99),   Score = Id * 1.0
-//   extent 2: Sev = Id (100..199), Score = Id * 1.0
+//
+//	extent 1: Sev = Id (0..99),   Score = Id * 1.0
+//	extent 2: Sev = Id (100..199), Score = Id * 1.0
 func filterEngine(t *testing.T) *Engine {
 	t.Helper()
 	eng := diskEngineWith(t, `.create table F (Sev: long, Score: real, Host: string)`, func(ext, i int) string {
@@ -157,10 +158,10 @@ func TestChunkFilterCorrectness(t *testing.T) {
 		{`F | where Sev != 137 | count`, "199"},
 		{`F | where Sev > 50 and Sev < 60 | count`, "9"},
 		{`F | where Score > 150.5 | count`, "49"},
-		{`F | where Sev > 50 | where Score < 60.0 | count`, "9"},   // leading consecutive wheres
-		{`F | where Sev > 1000 | count`, "0"},                      // nothing matches
-		{`F | where Sev > 2.5 | count`, "197"},                     // float-vs-long: conservative skip, where decides
-		{`F | where Host == "host1" and Sev > 150 | count`, "17"},  // mixed pushable + unpushable conjuncts
+		{`F | where Sev > 50 | where Score < 60.0 | count`, "9"},  // leading consecutive wheres
+		{`F | where Sev > 1000 | count`, "0"},                     // nothing matches
+		{`F | where Sev > 2.5 | count`, "197"},                    // float-vs-long: conservative skip, where decides
+		{`F | where Host == "host1" and Sev > 150 | count`, "17"}, // mixed pushable + unpushable conjuncts
 	}
 	for _, tc := range cases {
 		tbl := diskQuery(t, eng, tc.q)

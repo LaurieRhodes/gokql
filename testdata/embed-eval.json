@@ -1,0 +1,55 @@
+{
+  "k": 5,
+  "query_template": "{{TABLE}}\n| extend __sim = series_cosine_similarity(Embedding, embed_text(\"{{QUERY}}\"))\n| top {{K}} by __sim desc\n| join kind=inner ({{CHUNKS}}) on Id\n| project Id, Text",
+  "cases": [
+    {
+      "query": "how does the retry policy decide what is worth retrying",
+      "expect_contains": ["retryable distinguishes transient", "permanent failures", "isPermanent5xx"],
+      "note": "retry classification lives in openai.go and ollama.go"
+    },
+    {
+      "query": "what happens if two different embedding models are mixed in one table",
+      "expect_contains": ["mix two vector spaces", "checkModelIdentity", "different models compare"]
+    },
+    {
+      "query": "why must pooling be set explicitly",
+      "expect_contains": ["pooling", "right shape and the wrong meaning"]
+    },
+    {
+      "query": "how are embedding vectors encoded for storage",
+      "expect_contains": ["kql.vec32", "float32 little-endian", "compact encoding"]
+    },
+    {
+      "query": "how is a paragraph split when it exceeds the maximum chunk size",
+      "expect_contains": ["splitOversized", "ChunkMaxChars", "splitBySentence"]
+    },
+    {
+      "query": "parsing an IPv6 address that carries an embedded prefix",
+      "expect_contains": ["parse_ipv6_mask", "embedded prefix", "ipv6"]
+    },
+    {
+      "query": "what makes a bulk embed resumable after a failure",
+      "expect_contains": ["EmbedCommitRows", "resume", "already written and durable"]
+    },
+    {
+      "query": "why are scalar function results cached per statement",
+      "expect_contains": ["memo", "one HTTP request per row", "Caching"]
+    },
+    {
+      "query": "how does the engine avoid one engine's backend leaking into another",
+      "expect_contains": ["activeEmbedding", "reference counted", "ErrConcurrentEmbedders"]
+    },
+    {
+      "query": "how are time series gaps filled",
+      "expect_contains": ["make-series", "series_fill", "gap-filling"]
+    },
+    {
+      "query": "what does the cosine similarity function do with mismatched vector lengths",
+      "expect_contains": ["vector length mismatch", "len(a) != len(b)"]
+    },
+    {
+      "query": "how is a table's schema discovered without a catalog file",
+      "expect_contains": ["discover", "vtx footer", "catalog-free"]
+    }
+  ]
+}

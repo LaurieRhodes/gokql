@@ -1,13 +1,14 @@
 // Package engine executes KQL statements against the catalog and storage layer.
 //
 // The execution model:
-//   1. Resolve table in catalog (or let-bound table)
-//   2. Per-extent: scan with column projection + zone map filter pushdown
-//   3. Apply remaining operators (where, extend, summarize, join, order, take)
-//   4. Return result table
+//  1. Resolve table in catalog (or let-bound table)
+//  2. Per-extent: scan with column projection + zone map filter pushdown
+//  3. Apply remaining operators (where, extend, summarize, join, order, take)
+//  4. Return result table
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	vortex "github.com/LaurieRhodes/vortex-go"
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
+	"github.com/LaurieRhodes/gokql/pkg/embed"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
@@ -120,6 +122,29 @@ type Engine struct {
 	// motivation and contract.
 	ExternalResolver ExternalFunctionResolver
 
+	// Embedder supplies vectors for embed_text() and .embed-into.
+	// nil means "use the default" (GOKQL_EMBED, else Ollama at
+	// EmbedEndpoint), so this is purely additive: an engine that sets
+	// nothing behaves exactly as it did before this field existed.
+	//
+	// A per-instance field for the same reason ExternalResolver is one
+	// -- see its comment above. The embedding backend is host
+	// configuration, and a host running two engines against two
+	// different models must not have one clobber the other. The
+	// package-level activeEmbedder in embedder.go is a bridge for the
+	// scalar-function path only, and carries activeLetContext's
+	// existing caveat, not a new one.
+	Embedder embed.Embedder
+
+	// Ctx, when set by a host, makes long-running BULK operations
+	// (.embed-into) cancellable. nil means context.Background().
+	//
+	// Not a substitute for threading a context through expression
+	// evaluation, which is what the per-row scalar path would need.
+	// This covers the bulk paths, which are the ones that can run for
+	// minutes and previously could not be interrupted at all.
+	Ctx context.Context
+
 	// dictCache holds lazily-loaded shared dictionaries (see
 	// shareddict.go), keyed by "table.column". aggregateExtent/
 	// topNExtent/ScanExtent all run per-extent scans concurrently
@@ -203,6 +228,29 @@ func (e *Engine) getSharedDict(table, column string) (*sharedDict, error) {
 
 // Execute runs a parsed statement and returns the result table (if any).
 func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
+	// Publish this engine's embedder to the ambient reference the
+	// scalar embed_text() path reads, for the duration of this
+	// statement. Same lockstep discipline as setLetContext, and same
+	// defer-restore so an error path cannot leak one engine's backend
+	// into another's next statement. Only meaningful when the host has
+	// set one; an unconfigured engine leaves the ambient nil and
+	// currentEmbedder() falls through to the default.
+	// Install a statement-scoped memo in front of this engine's
+	// backend. KQL evaluates scalar functions per row, so a CONSTANT
+	// argument to embed_text() was issuing one HTTP request per row:
+	// measured at 10 requests for a 10-row search, which scales to
+	// 10,000 identical requests to embed one query string over a
+	// 10,000-chunk corpus. The memo collapses that to one.
+	//
+	// Always installed and always restored, so no engine's backend
+	// outlives its own statement. See activeEmbedding in embedder.go
+	// for the contamination bug that made this unconditional.
+	leaveEmbedderScope, err := e.beginEmbedderScope()
+	if err != nil {
+		return nil, err
+	}
+	defer leaveEmbedderScope()
+
 	switch s := stmt.(type) {
 	case *parser.CompoundStatement:
 		return e.executeCompound(s)
@@ -682,6 +730,7 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 //     NumCPU); per-extent results are merged in extent order so output
 //     is deterministic and identical to the sequential scan
 //   - single extent, no limit: direct scan, no goroutine overhead
+//
 // scanTableProjected runs the pushdown-projected, zone-pruned scan
 // shared by both a local table read (executeQuery, above) and a
 // federated (cross-scope) table read (federation.go's

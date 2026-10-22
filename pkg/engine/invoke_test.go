@@ -129,4 +129,3 @@ func TestInvokeDoesNotLeakAcrossQueries(t *testing.T) {
 		t.Fatalf("expected 'table not found' for __invoke_source__ in a later query, got no error (a leak across queries)")
 	}
 }
-

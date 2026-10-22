@@ -264,6 +264,15 @@ Functions are organized across focused source files.
 
 Vector similarity as native KQL, no external vector database required.
 
+> **Extension boundary.** `series_cosine_similarity` and
+> `series_dot_product` are real ADX functions and are parity surface.
+> `embed_text()` is **not** an ADX function; together with
+> `.embed-into` and `.chunk-file` it is the only non-Microsoft surface
+> in this engine, and the only surface that talks outside the process.
+> The parity engine itself carries no inference dependencies:
+> `pkg/embed` is stdlib only. See `docs/embeddings.md` for backend
+> configuration, the `--pooling` trap, and the known gaps.
+
 | Function                    | Notes                                                                 |
 | ------------------------------ | -------------------------------------------------------------------------- |
 | embed_text                       | Generate an embedding vector via Ollama's native embedding endpoint          |

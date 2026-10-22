@@ -25,4 +25,3 @@ func parseSampleDistinct(s string) (Operator, error) {
 	}
 	return &SampleDistinctOp{Count: countExpr, Column: column}, nil
 }
-

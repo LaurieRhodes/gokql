@@ -124,4 +124,3 @@ func TestExternalResolverPrecedenceOverSameNamedStoredFunction(t *testing.T) {
 	tbl := diskQuery(t, eng, `connectors() | project name`)
 	expectCell(t, tbl, 0, 0, "from-external")
 }
-

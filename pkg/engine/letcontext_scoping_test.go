@@ -84,4 +84,3 @@ func TestSiblingNestedScopesDontLeakIntoEachOther(t *testing.T) {
 		t.Errorf("b = %v, want 102 (100 + this side's own y=2, not leaked from the other sibling's y=1)", tbl.Rows[0][bIdx])
 	}
 }
-

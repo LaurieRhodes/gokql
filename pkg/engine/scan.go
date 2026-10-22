@@ -172,4 +172,3 @@ func coerceScanValue(v types.Value, t types.KQLType) types.Value {
 		return v
 	}
 }
-

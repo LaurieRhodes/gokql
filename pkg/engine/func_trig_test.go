@@ -123,4 +123,3 @@ func TestSeriesTrigMatchesScalarTrig(t *testing.T) {
 		t.Errorf("cos(0.5) = %v but series_cos([0.5])[0] = %v — should match exactly", scalar, series)
 	}
 }
-

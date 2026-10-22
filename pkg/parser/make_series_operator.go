@@ -6,8 +6,9 @@ import (
 )
 
 // parseMakeSeries parses:
-//   [kind=nonempty] [hint.shufflekey=...] [Column=]Aggregation[default=DefaultValue][, ...]
-//   on AxisColumn [from start] [to end] step step [by [Column=]GroupExpr[, ...]]
+//
+//	[kind=nonempty] [hint.shufflekey=...] [Column=]Aggregation[default=DefaultValue][, ...]
+//	on AxisColumn [from start] [to end] step step [by [Column=]GroupExpr[, ...]]
 //
 // Verified against real ADX docs (make-series-operator.md). See
 // MakeSeriesOp's own doc comment for exactly which parts of the real
@@ -229,4 +230,3 @@ func parseMakeSeriesAggregation(s string) (*MakeSeriesAggregation, error) {
 	}
 	return msAgg, nil
 }
-

@@ -43,4 +43,3 @@ func TestMakeSeriesWithNewlineAfterKeyword(t *testing.T) {
 		t.Errorf("expected 1 row, got %d", result.RowCount())
 	}
 }
-

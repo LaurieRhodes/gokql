@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LaurieRhodes/gokql/pkg/parser"	
+	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
@@ -588,8 +588,6 @@ func (e *Engine) applyUnion(input *types.Table, op *parser.UnionOp) (*types.Tabl
 	// Build merged schema: superset of all columns preserving order
 	mergedSchema := buildUnionSchema(tables)
 
-
-
 	// Create output table and map rows from each input
 	output := types.NewTable(input.Name, mergedSchema)
 
@@ -633,7 +631,6 @@ func buildUnionSchema(tables []*types.Table) types.Schema {
 
 	return types.Schema{Columns: columns}
 }
-
 
 // applyMvExpand flattens array-valued columns into separate rows.
 // For each row, the array column is parsed as JSON array, and one output row
@@ -749,8 +746,6 @@ func (e *Engine) applyMvExpand(input *types.Table, op *parser.MvExpandOp) (*type
 }
 
 // parseJSONArray attempts to parse a value as a JSON array.
-
-
 
 // applyProjectAway removes specified columns from the output.
 

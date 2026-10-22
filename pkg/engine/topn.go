@@ -66,10 +66,10 @@ type rowHeap struct {
 	spec *sortSpec
 }
 
-func (h *rowHeap) Len() int            { return len(h.rows) }
-func (h *rowHeap) Less(i, j int) bool  { return h.spec.less(h.rows[j], h.rows[i]) }
-func (h *rowHeap) Swap(i, j int)       { h.rows[i], h.rows[j] = h.rows[j], h.rows[i] }
-func (h *rowHeap) Push(x interface{})  { h.rows = append(h.rows, x.(types.Row)) }
+func (h *rowHeap) Len() int           { return len(h.rows) }
+func (h *rowHeap) Less(i, j int) bool { return h.spec.less(h.rows[j], h.rows[i]) }
+func (h *rowHeap) Swap(i, j int)      { h.rows[i], h.rows[j] = h.rows[j], h.rows[i] }
+func (h *rowHeap) Push(x interface{}) { h.rows = append(h.rows, x.(types.Row)) }
 func (h *rowHeap) Pop() interface{} {
 	old := h.rows
 	n := len(old)
