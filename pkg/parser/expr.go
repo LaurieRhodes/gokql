@@ -1087,7 +1087,15 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 				return nil, fmt.Errorf("expected ) after date literal in %s(%s...)", name, lit)
 			}
 		} else {
+			var argNames []string
 			for {
+				argName := p.tryArgName()
+				if argName != "" && argNames == nil {
+					argNames = make([]string, len(args), len(args)+1)
+				}
+				if argNames != nil {
+					argNames = append(argNames, argName)
+				}
 				arg, err := p.parseOr()
 				if err != nil {
 					return nil, fmt.Errorf("function %s arg: %w", name, err)
@@ -1104,8 +1112,12 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 				}
 				return nil, fmt.Errorf("expected , or ) in function call %s", name)
 			}
+			if argNames != nil {
+				fc := &FuncCall{Name: lower, RawName: name, Args: args, ArgNames: argNames}
+				return p.parsePostfixAccess(fc)
+			}
 		}
-		fc := &FuncCall{Name: lower, Args: args}
+		fc := &FuncCall{Name: lower, RawName: name, Args: args}
 		return p.parsePostfixAccess(fc)
 	}
 
@@ -1149,6 +1161,31 @@ func (p *exprParser) trySpecialTypedLiteral(lower string, openParenIdx int) (Exp
 	}
 	p.pos = closeIdx + 1
 	return lit, true
+}
+
+// tryArgName consumes "name =" at the start of a function argument
+// (a named argument, f(len=3)) and returns the name, or returns "" and
+// consumes nothing. "==", "=~" and "!=" are comparisons, not names.
+func (p *exprParser) tryArgName() string {
+	save := p.pos
+	p.skipWhitespace()
+	start := p.pos
+	if p.pos >= len(p.input) || !isIdentStart(p.input[p.pos]) {
+		p.pos = save
+		return ""
+	}
+	for p.pos < len(p.input) && isIdentChar(p.input[p.pos]) {
+		p.pos++
+	}
+	name := p.input[start:p.pos]
+	p.skipWhitespace()
+	if p.pos < len(p.input) && p.input[p.pos] == '=' &&
+		!(p.pos+1 < len(p.input) && (p.input[p.pos+1] == '=' || p.input[p.pos+1] == '~')) {
+		p.pos++
+		return name
+	}
+	p.pos = save
+	return ""
 }
 
 func (p *exprParser) parsePostfixAccess(expr Expr) (Expr, error) {

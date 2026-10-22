@@ -90,7 +90,7 @@ func rewriteExpr(expr parser.Expr, fn func(parser.Expr) (parser.Expr, error)) (p
 		if err != nil || !changed {
 			return expr, err
 		}
-		return &parser.FuncCall{Name: ex.Name, Args: args}, nil
+		return &parser.FuncCall{Name: ex.Name, RawName: ex.RawName, Args: args, ArgNames: ex.ArgNames}, nil
 	case *parser.AccessExpr:
 		obj, err := sub(ex.Object)
 		if err != nil || obj == ex.Object {

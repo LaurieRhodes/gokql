@@ -84,6 +84,9 @@ func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 	if v, ok, err := evalDynamicFunc(fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalMathExtraFunc(fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalColumnIfExists(fc, schema, row); ok {
 		return v, err
 	}
@@ -128,7 +131,10 @@ var errUDFDepth = errors.New("UDF call depth exceeded (recursive user-defined fu
 // in an isolated scope where only the parameters are visible as columns.
 // Scalar let bindings remain visible through activeLetContext, matching KQL.
 func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	fn, ok := activeLetContext.LookupFunction(fc.Name)
+	fn, ok := activeLetContext.LookupFunction(fc.RawName)
+	if !ok {
+		fn, ok = activeLetContext.LookupFunction(fc.Name)
+	}
 	if !ok {
 		return nil, false, nil
 	}
@@ -145,6 +151,33 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 		return nil, true, fmt.Errorf("function %s: expected %d to %d arguments, got %d",
 			fc.Name, required, len(fn.Params), len(fc.Args))
 	}
+	// Map arguments to parameters: positional ones in order, named
+	// ones by name; unfilled parameters take their defaults.
+	argFor := make([]parser.Expr, len(fn.Params))
+	next := 0
+	for i, a := range fc.Args {
+		if fc.ArgNames != nil && fc.ArgNames[i] != "" {
+			k := -1
+			for j, p := range fn.Params {
+				if p.Name == fc.ArgNames[i] {
+					k = j
+				}
+			}
+			if k < 0 {
+				return nil, true, fmt.Errorf("function %s has no parameter %q", fc.Name, fc.ArgNames[i])
+			}
+			argFor[k] = a
+			continue
+		}
+		for next < len(argFor) && argFor[next] != nil {
+			next++
+		}
+		if next >= len(argFor) {
+			return nil, true, fmt.Errorf("function %s: too many arguments", fc.Name)
+		}
+		argFor[next] = a
+		next++
+	}
 	if udfDepth >= maxUDFDepth {
 		return nil, true, fmt.Errorf("function %s: %w", fc.Name, errUDFDepth)
 	}
@@ -155,8 +188,10 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 	for i, param := range fn.Params {
 		var val types.Value
 		var err error
-		if i < len(fc.Args) {
-			val, err = evalExpr(fc.Args[i], schema, row)
+		if argFor[i] != nil {
+			val, err = evalExpr(argFor[i], schema, row)
+		} else if !param.HasDefault {
+			return nil, true, fmt.Errorf("function %s: missing argument %s", fc.Name, param.Name)
 		} else {
 			// Omitted trailing argument: the declared default,
 			// evaluated without the caller's row.

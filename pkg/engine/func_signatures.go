@@ -287,6 +287,7 @@ var scalarReturnTypes = map[string]types.KQLType{
 	"array_sort_desc": types.TypeDynamic,
 	"bag_pack":        types.TypeDynamic,
 	"pack":            types.TypeDynamic,
+	"range":           types.TypeDynamic,
 	"pack_all":        types.TypeDynamic,
 	"pack_array":      types.TypeDynamic,
 	"pack_dictionary": types.TypeDynamic,

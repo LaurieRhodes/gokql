@@ -865,6 +865,14 @@ func (*UnaryExpr) exprNode() {}
 type FuncCall struct {
 	Name string
 	Args []Expr
+	// RawName is the name as written. Name is lowercased for built-in
+	// lookup; user-defined (let and stored) function names are case
+	// sensitive and resolve by RawName.
+	RawName string
+	// ArgNames holds argument names for a call with named arguments
+	// (f(len=3, s)); nil when every argument is positional, otherwise
+	// one entry per argument, "" for a positional one.
+	ArgNames []string
 }
 
 func (*FuncCall) exprNode() {}

@@ -38,6 +38,21 @@ import (
 // silent wrong-value one: evalExpr's own default case already returns
 // a clear "unsupported expression type" error for exactly this,
 // rather than misbehaving quietly.
+// exprReferencesAnyColumn reports whether expr reads a column (or a
+// parameter, which a UDF body sees as a column).
+func exprReferencesAnyColumn(e *Engine, expr parser.Expr) bool {
+	found := false
+	_, _ = rewriteExpr(expr, func(x parser.Expr) (parser.Expr, error) {
+		if ref, ok := x.(*parser.ColumnRef); ok {
+			if _, isLet := e.letContext.LookupScalar(ref.Name); !isLet {
+				found = true
+			}
+		}
+		return nil, nil
+	})
+	return found
+}
+
 func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 	switch ex := expr.(type) {
 	case nil:
@@ -78,6 +93,15 @@ func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 		return &parser.UnaryExpr{Op: ex.Op, Expr: inner}, nil
 
 	case *parser.FuncCall:
+		// assert() with constant arguments is evaluated here, once per
+		// operator before any row: ADX checks it at query analysis, so
+		// it fails even when no rows reach it.
+		if ex.Name == "assert" && len(ex.Args) == 2 && !exprReferencesAnyColumn(e, ex) {
+			if _, _, err := evalAssert(ex, &types.Schema{}, types.Row{}); err != nil {
+				return nil, err
+			}
+			return &parser.Literal{Value: true, Type: types.TypeBool}, nil
+		}
 		newArgs := make([]parser.Expr, len(ex.Args))
 		changed := false
 		for i, arg := range ex.Args {
@@ -93,7 +117,7 @@ func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 		if !changed {
 			return expr, nil
 		}
-		return &parser.FuncCall{Name: ex.Name, Args: newArgs}, nil
+		return &parser.FuncCall{Name: ex.Name, RawName: ex.RawName, Args: newArgs, ArgNames: ex.ArgNames}, nil
 
 	case *parser.AccessExpr:
 		// Path ([]AccessKey) is static metadata (property names / array
