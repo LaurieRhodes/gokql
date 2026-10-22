@@ -1126,14 +1126,16 @@ const joinFixture = `let T1 = datatable (K: long, A: string) [1, "x", 2, "y", 3,
 	`let T2 = datatable (K: long, B: string) [2, "bb", 3, "cc", 4, "dd"]; `
 
 func TestJoinInner(t *testing.T) {
+	// The right key is kept, renamed K1 (Kusto.Language's join schema).
 	tbl := queryResult(t, joinFixture+`T1 | join kind=inner (T2) on K | sort by K asc`)
 	expectRows(t, tbl, 2)
-	expectColNames(t, tbl, "K", "A", "B")
+	expectColNames(t, tbl, "K", "A", "K1", "B")
 	expectCell(t, tbl, 0, 0, "2")
 	expectCell(t, tbl, 0, 1, "y")
-	expectCell(t, tbl, 0, 2, "bb")
+	expectCell(t, tbl, 0, 2, "2")
+	expectCell(t, tbl, 0, 3, "bb")
 	expectCell(t, tbl, 1, 0, "3")
-	expectCell(t, tbl, 1, 2, "cc")
+	expectCell(t, tbl, 1, 3, "cc")
 }
 
 // TestJoinInnerUniqueDedupsLeftNotOutput guards the actual semantics
@@ -1153,10 +1155,11 @@ func TestJoinInnerUniqueDedupsLeftNotOutput(t *testing.T) {
 	expectRows(t, tbl, 3)
 	// key=1: only "Apple" (first-encountered), joined against BOTH
 	// right matches -- "Pear" (the left duplicate) never appears at all.
+	// Columns: number, fruit, number1, prep.
 	expectCell(t, tbl, 0, 1, "Apple")
-	expectCell(t, tbl, 0, 2, "Juice")
+	expectCell(t, tbl, 0, 3, "Juice")
 	expectCell(t, tbl, 1, 1, "Apple")
-	expectCell(t, tbl, 1, 2, "Slices")
+	expectCell(t, tbl, 1, 3, "Slices")
 	for _, row := range tbl.Rows {
 		if row[1] == "Pear" {
 			t.Fatalf("expected the duplicate left row (Pear) to be dropped entirely, found: %v", row)
@@ -1164,7 +1167,7 @@ func TestJoinInnerUniqueDedupsLeftNotOutput(t *testing.T) {
 	}
 	// key=2: no left duplicates, works exactly like plain inner.
 	expectCell(t, tbl, 2, 1, "Banana")
-	expectCell(t, tbl, 2, 2, "Smoothie")
+	expectCell(t, tbl, 2, 3, "Smoothie")
 }
 
 // TestJoinBareDefaultsToInnerUnique guards the actual default-kind
@@ -1194,14 +1197,16 @@ func TestJoinBareDefaultsToInnerUnique(t *testing.T) {
 func TestJoinLeftouter(t *testing.T) {
 	tbl := queryResult(t, joinFixture+`T1 | join kind=leftouter (T2) on K | sort by K asc`)
 	expectRows(t, tbl, 3)
-	// Unmatched left row (K=1) keeps A but has null B
+	// Columns K, A, K1, B. Unmatched left row (K=1) keeps A but has
+	// null K1 and B.
+	expectColNames(t, tbl, "K", "A", "K1", "B")
 	expectCell(t, tbl, 0, 0, "1")
 	expectCell(t, tbl, 0, 1, "x")
-	if cellVal(t, tbl, 0, 2) != nil {
-		t.Error("leftouter unmatched row should have nil B")
+	if cellVal(t, tbl, 0, 2) != nil || cellVal(t, tbl, 0, 3) != nil {
+		t.Error("leftouter unmatched row should have nil K1 and B")
 	}
-	expectCell(t, tbl, 1, 2, "bb")
-	expectCell(t, tbl, 2, 2, "cc")
+	expectCell(t, tbl, 1, 3, "bb")
+	expectCell(t, tbl, 2, 3, "cc")
 }
 
 func TestJoinLeftanti(t *testing.T) {
@@ -1954,4 +1959,22 @@ func TestFormatDatetimeSpecifiers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestJoinOuterKeepsBothKeys: an unmatched right row of a full or right
+// outer join keeps its key in the right key column; the left key is
+// null. Previously the right key was dropped and the value was lost.
+func TestJoinOuterKeepsBothKeys(t *testing.T) {
+	for _, kind := range []string{"fullouter", "rightouter"} {
+		tbl := queryResult(t, joinFixture+`T1 | join kind=`+kind+` (T2) on K | where isnull(K)`)
+		expectRows(t, tbl, 1)
+		expectColNames(t, tbl, "K", "A", "K1", "B")
+		expectCell(t, tbl, 0, 2, "4")
+		expectCell(t, tbl, 0, 3, "dd")
+	}
+	// Clashing names skip every name either side already has.
+	tbl := queryResult(t, `datatable(a:string)["x"] | join (datatable(k:string, a:string, a1:string)["x","p","q"]) on $left.a == $right.k`)
+	expectColNames(t, tbl, "a", "k", "a2", "a1")
+	tbl = queryResult(t, `datatable(a:string, x:long)["q",1] | lookup (datatable(k:string, a:string, x:long)["q","w",2]) on $left.a == $right.k`)
+	expectColNames(t, tbl, "a", "x", "a1", "x1")
 }

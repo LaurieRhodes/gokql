@@ -84,6 +84,9 @@ and ASIM parsers, which is this engine's main query population.
 | Graph core: `graph-match` comma-separated sequences sharing node variables, repeated variables, anonymous `()`/`-->`/`<--`/`--`/`-[*a..b]->`, `*0..n`, `cycles=none/all/unique_edges`, `map`/`all`/`any`/`inner_nodes`; `make-graph with_node_id=` and two node tables | `graph_match.go` (traversal planned from the bound end of each element), `graph_parse.go`; every graph-match / make-graph / map / all / any / inner_nodes reference example exact (`graph_compliance_test.go`). Found on the way: `set_union`/`set_intersect`/`set_difference` sorted their result; ADX keeps first-seen order |
 | Graph operators: `graph-shortest-paths` (output=any/all), `graph-mark-components` (weak/strong), `graph-to-table` with_node_id/with_source_id/with_target_id (hash ids) and `nodes as N, edges as E`, `make-graph ... partitioned-by Col (...)`; query batches (`Q1; Q2` returns both results, `as` names visible to later statements); `geo_distance_2points` | `graph_components.go`, `graph_match.go` (shared walker), `graph.go`; every reference example of the four operators exact (`graph_ops_test.go`). Found on the way: a batch silently returned only its last statement's result; a line break inside a parenthesised sub-pipeline (fork, partitioned-by) failed to parse; graph-to-table node order now follows ADX (node-table rows, then edge-only nodes) |
 | Persistent graph models: `.create-or-alter graph_model` (versions), `.show graph_model(s)`, `.drop graph_model`, `.make [async] graph_snapshot`, `.show graph_snapshot(s)`, `.drop graph_snapshot(s)`, `graph("M" [, "S"])`, `labels()` | `graph_model.go`, `graph_model_parse.go`; append-only system tables like `_Functions`, snapshot data frozen per snapshot GUID with typed values round-tripping exactly; the graph-sample-data and labels() reference queries return their documented rows over equivalent data (`graph_model_test.go`). `.show graph_*` commands can be piped |
+| Docs sweep of every graph code block (dataexplorer-docs, 153 blocks): node_id/node_degree_in/node_degree_out, `graph()` snapshot=/bool arguments, let-bound and function-returned graphs, scalar hop bounds, cycles= on shortest paths, snapshot statistics/data statistics/failures, model policies, showAll, `.show operations` | `docs_sweep_test.go`; remaining failures all need Microsoft's sample graphs, external tables, the python plugin, or are doc errors (an "Ellen" row absent from its data, `project x as y`, two commands on adjacent lines) |
+| General fixes found by the sweep: a keyword after a line break (`summarize ... \n by a` grouped nothing; `order by\n`, `parse ... with\n`); `summarize count() * 2` silently dropped `* 2` — expressions over aggregates (`toint(sum(x))`, `sum(a)/count()`, `array_slice(make_list(x),0,5)`) now computed, nested aggregates rejected; join dropped the right key (ADX keeps it, `a1`; unmatched outer rows lost their key) — lookup keeps dropping it; `let x = (multi-line tabular);`, `let n = union (...), (...);`, `let X = TabularFn();` | `findKeyword`/`keywordFold`, `applySummarizePost`, `buildJoinSchema` (Kusto.Language's rename rule); the nine stored functions in the scopes that use join give identical output |
+| Also: `take`/`top` with scalar counts, `table(name)`, named function arguments, triple-backtick multi-line strings, `kind = inner` spacing and `kind=inner(T)`, `withsource=['quoted name']`, `column_ifexists(paramName, ...)`, `array_strcat` | parser and engine; covered in `docs_sweep_test.go` |
 
 ## P2 — real but less frequent
 
@@ -99,6 +102,11 @@ and ASIM parsers, which is this engine's main query population.
   Pattern-mining plugins (`autocluster`,
   `basket`, `diffpatterns`) have the same specification problem as
   `reduce` and need their algorithm pinned before work starts.
+
+- GQL and openCypher graph query languages (MATCH ... RETURN ...
+  NEXT, with a `#crp query_graph_reference` client property), each
+  with its own reference section in the docs. The `python` plugin
+  (plotly_graph_fl).
 
 ### Remaining plugin output schemas (Kusto.Language 12.4.1)
 

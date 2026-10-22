@@ -100,6 +100,12 @@ func loadFederationConfig(dbPath string) (*federationConfig, error) {
 // listed nowhere here since they can never appear mid-pipeline in the
 // first place.
 func isPushableFederationOp(op parser.Operator) bool {
+	if tk, ok := op.(*parser.TakeOp); ok && tk.CountExpr != nil {
+		return false // its count may name a local let
+	}
+	if tp, ok := op.(*parser.TopOp); ok && tp.CountExpr != nil {
+		return false
+	}
 	switch op.(type) {
 	case *parser.WhereOp, *parser.ProjectOp, *parser.ProjectAwayOp,
 		*parser.ProjectRenameOp, *parser.ProjectReorderOp,

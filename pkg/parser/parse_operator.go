@@ -50,7 +50,7 @@ func parseParsePatternClause(opName, s string) (column, kind, flags string, frag
 	kind = "simple"
 
 	// Check for kind=...
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 	if strings.HasPrefix(lower, "kind=") {
 		eqEnd := strings.IndexByte(s[5:], ' ')
 		if eqEnd < 0 {
@@ -63,7 +63,7 @@ func parseParsePatternClause(opName, s string) (column, kind, flags string, frag
 	// Check for flags=... (kind=regex only, but accepted syntactically
 	// regardless -- matching real KQL, which defines the parameter as
 	// simply ignored/inapplicable for other kinds rather than an error).
-	lower = strings.ToLower(s)
+	lower = keywordFold(s)
 	if strings.HasPrefix(lower, "flags=") {
 		eqEnd := strings.IndexByte(s[6:], ' ')
 		if eqEnd < 0 {
@@ -75,7 +75,7 @@ func parseParsePatternClause(opName, s string) (column, kind, flags string, frag
 
 	// Find "with" keyword (word boundary)
 	withIdx := -1
-	lowerS := strings.ToLower(s)
+	lowerS := keywordFold(s)
 	idx := strings.Index(lowerS, " with ")
 	if idx >= 0 {
 		withIdx = idx

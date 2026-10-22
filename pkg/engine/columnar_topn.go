@@ -76,13 +76,16 @@ func planColumnarTopN(eng *Engine, ops []parser.Operator, schema *types.Schema) 
 			return nil
 		}
 		take, ok := ops[i+1].(*parser.TakeOp)
-		if !ok {
+		if !ok || take.CountExpr != nil {
 			return nil
 		}
 		plan.clauses = op.Clauses
 		plan.n = take.Count
 		plan.consumed = i + 2
 	case *parser.TopOp:
+		if op.CountExpr != nil {
+			return nil
+		}
 		plan.clauses = []parser.OrderClause{{Column: op.By, Desc: op.Desc}}
 		plan.n = op.Count
 		plan.consumed = i + 1

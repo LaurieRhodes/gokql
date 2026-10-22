@@ -491,6 +491,9 @@ type Assignment struct {
 // TakeOp: | take N  (alias: | limit N)
 type TakeOp struct {
 	Count int64
+	// CountExpr is a non-literal count (take n, take toint(x) * 2):
+	// evaluated as a scalar when the operator runs. Count is then -1.
+	CountExpr Expr
 }
 
 func (*TakeOp) operatorNode() {}
@@ -556,6 +559,9 @@ type TopOp struct {
 	Count int64
 	By    string
 	Desc  bool
+	// CountExpr is a non-literal count (top n by x), evaluated as a
+	// scalar when the operator runs; Count is then -1.
+	CountExpr Expr
 }
 
 func (*TopOp) operatorNode() {}
@@ -583,6 +589,31 @@ type Aggregation struct {
 	// AutoNamed is true when Name was generated rather than written
 	// (percentiles() gives a written name to its first column only).
 	AutoNamed bool
+	// Post, for an item that is a scalar expression over aggregates
+	// (count() * 2, toint(sum(x)), array_slice(make_list(x), 0, 5)),
+	// is that expression with each aggregate replaced by a reference to
+	// one of Inner's hidden columns; Function is then PostAggregation.
+	Post  Expr
+	Inner []Aggregation
+}
+
+// PostAggregation marks an Aggregation computed from Inner aggregates.
+const PostAggregation = "__post"
+
+// postAggPrefix names Inner's hidden result columns.
+const postAggPrefix = "\x00agg:"
+
+// IsAggregateFunction reports whether name is an aggregation function.
+func IsAggregateFunction(name string) bool {
+	if _, ok := aggregateResultNames[name]; ok {
+		return true
+	}
+	switch name {
+	case "arg_max", "arg_min", "take_any", "percentile", "percentiles", "percentiles_array",
+		"percentilew", "percentilesw", "percentilesw_array":
+		return true
+	}
+	return false
 }
 
 // JoinOp: join kind=X (subquery) on col1[, col2]
@@ -590,6 +621,9 @@ type JoinOp struct {
 	Kind      JoinKind
 	Right     *Query          // Right-side subquery
 	OnClauses []JoinCondition // Join key pairs
+	// DropRightKeys leaves the right side's key columns out of the
+	// result, as lookup does (join keeps them, suffixed on a clash).
+	DropRightKeys bool
 }
 
 func (*JoinOp) operatorNode() {}
@@ -1098,6 +1132,9 @@ func (*LetStatement) statementNode() {}
 // ScalarExpr wraps an Expr as a Statement for scalar let bindings.
 type ScalarExpr struct {
 	Expr Expr
+	// Raw is the value's source text: a bare call f(...) is re-read
+	// as a query when f turns out to be a tabular function.
+	Raw string
 }
 
 func (*ScalarExpr) statementNode() {}
@@ -1439,6 +1476,10 @@ type GraphMatchEdge struct {
 	// VarLength is set when the edge was written with a hop range
 	// (even *1..1): its variable is then an array of edges.
 	VarLength bool
+	// MinExpr / MaxExpr hold a bound written as a scalar expression
+	// (-[e*lo..hi]->, -[e*1..(n+1)]->), resolved when the pattern is
+	// planned; MinHops / MaxHops are then placeholders.
+	MinExpr, MaxExpr Expr
 }
 
 // EdgeDirection is a graph-match edge traversal direction.

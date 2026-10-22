@@ -44,7 +44,18 @@ func evalColumnIfExists(eng *Engine, fc *parser.FuncCall, schema *types.Schema, 
 	}
 	name, err := columnIfExistsName(fc)
 	if err != nil {
-		return nil, true, err
+		// A name held in a let or function parameter is constant for
+		// the query too: column_ifexists(colName, '').
+		ref, isRef := fc.Args[0].(*parser.ColumnRef)
+		if !isRef || len(fc.Args) != 2 || schema.ColumnIndex(ref.Name) >= 0 {
+			return nil, true, err
+		}
+		v, ok := eng.lets().LookupScalar(ref.Name)
+		s, isStr := v.(string)
+		if !ok || !isStr {
+			return nil, true, err
+		}
+		name = s
 	}
 	if idx := schema.ColumnIndex(name); idx >= 0 {
 		if idx < len(row) {

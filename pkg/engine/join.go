@@ -16,9 +16,12 @@ import (
 //  3. Stream left rows and probe the hash table
 //  4. Emit output rows based on join kind
 //
-// KQL join semantics:
-//   - Join key columns from right side are excluded from output (they duplicate left keys)
-//   - Non-key right columns that conflict with left names get a "1" suffix
+// KQL join semantics (Kusto.Language's result schema):
+//   - every right column is kept, the join keys included, after the
+//     left columns; a name already taken gets the next free numeric
+//     suffix (a → a1), so `T | join (U) on a` has a and a1
+//   - unmatched rows of an outer join carry nulls on the missing side,
+//     the missing side's keys included
 //   - inner: only rows with matches on both sides
 //   - leftouter: all left rows; unmatched get nulls for right columns
 //   - leftanti: left rows with NO match (only left columns in output)
@@ -229,13 +232,8 @@ func (e *Engine) applyJoin(left *types.Table, op *parser.JoinOp) (*types.Table, 
 	return result, nil
 }
 
-// buildJoinSchema constructs the output schema for a join.
-// Returns the schema and the indices of right-side columns to include in output.
-//
-// KQL rules:
-//   - All left columns are included
-//   - Right join key columns are excluded (they duplicate left keys)
-//   - Right non-key columns are included, with "1" suffix if name conflicts with left
+// buildJoinSchema constructs the output schema for a join and the
+// right-side columns to emit (all of them, keys included).
 func buildJoinSchema(left, right *types.Schema, op *parser.JoinOp) (types.Schema, []int) {
 	// For anti/semi joins, output is just the probe side
 	switch op.Kind {
@@ -245,39 +243,48 @@ func buildJoinSchema(left, right *types.Schema, op *parser.JoinOp) (types.Schema
 		return *right, nil
 	}
 
-	// Build set of right-side join key column indices to exclude
-	rightKeySet := make(map[int]bool)
-	for _, clause := range op.OnClauses {
-		idx := right.ColumnIndex(clause.RightColumn)
-		if idx >= 0 {
-			rightKeySet[idx] = true
+	// A right column whose name a left column has is renamed to the
+	// first name+N (N = 1, 2, ...) used by neither input nor an earlier
+	// rename, as Kusto.Language does: left (a) with right (k, a, a1)
+	// gives a, k, a2, a1.
+	leftNames := make(map[string]bool, len(left.Columns))
+	taken := make(map[string]bool, len(left.Columns)+len(right.Columns))
+	schema := types.Schema{Columns: make([]types.Column, 0, len(left.Columns)+len(right.Columns))}
+	for _, col := range left.Columns {
+		schema.Columns = append(schema.Columns, col)
+		leftNames[col.Name] = true
+		taken[col.Name] = true
+	}
+	for _, col := range right.Columns {
+		taken[col.Name] = true
+	}
+	rightKeys := make(map[int]bool)
+	if op.DropRightKeys {
+		for _, clause := range op.OnClauses {
+			if idx := right.ColumnIndex(clause.RightColumn); idx >= 0 {
+				rightKeys[idx] = true
+			}
 		}
 	}
-
-	// Build left column name set for conflict detection
-	leftNames := make(map[string]bool)
-	for _, col := range left.Columns {
-		leftNames[col.Name] = true
-	}
-
-	schema := types.Schema{Columns: make([]types.Column, 0, len(left.Columns)+len(right.Columns))}
-	// All left columns
-	schema.Columns = append(schema.Columns, left.Columns...)
-
-	// Non-key right columns
-	var rightOutputIdxs []int
+	rightOutputIdxs := make([]int, 0, len(right.Columns))
 	for i, col := range right.Columns {
-		if rightKeySet[i] {
-			continue // Skip join key columns
+		if rightKeys[i] {
+			continue
 		}
 		name := col.Name
 		if leftNames[name] {
-			name = name + "1" // KQL conflict resolution
+			for n := 1; ; n++ {
+				cand := fmt.Sprintf("%s%d", col.Name, n)
+				if !taken[cand] {
+					name = cand
+					break
+				}
+			}
 		}
+		taken[name] = true
 		schema.Columns = append(schema.Columns, types.Column{Name: name, Type: col.Type})
 		rightOutputIdxs = append(rightOutputIdxs, i)
 	}
-
 	return schema, rightOutputIdxs
 }
 
@@ -328,9 +335,10 @@ func (e *Engine) applyLookup(left *types.Table, op *parser.LookupOp) (*types.Tab
 		right = &parser.Query{Source: op.TableName}
 	}
 	joinOp := &parser.JoinOp{
-		Kind:      op.Kind,
-		Right:     right,
-		OnClauses: op.OnClauses,
+		Kind:          op.Kind,
+		Right:         right,
+		OnClauses:     op.OnClauses,
+		DropRightKeys: true,
 	}
 	result, err := e.applyJoin(left, joinOp)
 	if err != nil {

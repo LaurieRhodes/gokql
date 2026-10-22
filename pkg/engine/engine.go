@@ -32,6 +32,7 @@ type LetContext struct {
 	Functions   map[string]*parser.FunctionDef // UDF let bindings: name → definition
 	Tables      map[string]*types.Table        // Tabular let bindings: name → result table
 	Views       map[string]bool                // Names bound by a view lambda; in scope for union wildcards
+	Graphs      map[string]*Graph              // Graph-valued let bindings: let G = graph("M"); or let G = E | make-graph ...;
 
 	// Parent is the enclosing scope's own LetContext, if any — nil for
 	// a top-level context. Added 2026-08-17 to fix a real, live
@@ -108,6 +109,17 @@ func (ctx *LetContext) LookupTable(name string) (*types.Table, bool) {
 		return t, true
 	}
 	return ctx.Parent.LookupTable(name)
+}
+
+// LookupGraph is LookupTable for graph-valued lets.
+func (ctx *LetContext) LookupGraph(name string) (*Graph, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	if g, ok := ctx.Graphs[name]; ok {
+		return g, true
+	}
+	return ctx.Parent.LookupGraph(name)
 }
 
 // ViewNames returns every view-lambda name visible from ctx, inner
@@ -246,6 +258,13 @@ type Engine struct {
 	// goroutines dictCache's comment describes; it's plain sequential
 	// call-stack tracking within one query's execution).
 	resolvingFunctions map[string]bool
+
+	// graphResultDepth > 0 while a function body or let value is being
+	// evaluated where a graph is an acceptable result: a pipeline that
+	// ends in a graph then returns a placeholder table registered in
+	// graphResults (see graph.go's wrapGraphResult).
+	graphResultDepth int
+	graphResults     map[*types.Table]*Graph
 }
 
 func New(cat *catalog.Catalog) *Engine {
@@ -409,6 +428,10 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 		return e.applyShowGraphSnapshots(s)
 	case *parser.DropGraphSnapshotCmd:
 		return e.applyDropGraphSnapshot(s)
+	case *parser.GraphModelPolicyCmd:
+		return e.applyGraphModelPolicy(s)
+	case *parser.ShowOperationsCmd:
+		return e.applyShowOperations(s)
 	case *parser.ShowMaterializedViewsCmd:
 		return e.applyShowMaterializedViews()
 	case *parser.DropMaterializedViewCmd:
@@ -524,7 +547,8 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 	defer e.setLetContext(prevCtx)
 
 	// bindLet evaluates one let binding into ctx.
-	bindLet := func(let *parser.LetStatement) error {
+	var bindLet func(let *parser.LetStatement) error
+	bindLet = func(let *parser.LetStatement) error {
 		switch v := let.Value.(type) {
 		case *parser.CompoundStatement:
 			// A tabular let bound to a value that ITSELF has its own
@@ -549,8 +573,30 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			ctx.Tables[let.Name] = result
 
 		case *parser.Query:
-			// Tabular let: execute the query and store result
+			if e.queryYieldsGraph(v) {
+				g, err := e.executeGraphQuery(v)
+				if err != nil {
+					return fmt.Errorf("let %s: %w", let.Name, err)
+				}
+				if ctx.Graphs == nil {
+					ctx.Graphs = make(map[string]*Graph)
+				}
+				ctx.Graphs[let.Name] = g
+				break
+			}
+			// Tabular let: execute the query and store result. A value
+			// that turns out to be a graph (a function returning one)
+			// binds as a graph.
+			e.graphResultDepth++
 			result, err := e.executeQuery(v)
+			e.graphResultDepth--
+			if g := e.takeGraphResult(result); err == nil && g != nil {
+				if ctx.Graphs == nil {
+					ctx.Graphs = make(map[string]*Graph)
+				}
+				ctx.Graphs[let.Name] = g
+				break
+			}
 			if err != nil {
 				return fmt.Errorf("let %s: %w", let.Name, err)
 			}
@@ -567,6 +613,17 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			ctx.Tables[let.Name] = v.Table
 
 		case *parser.ScalarExpr:
+			// A bare call of a tabular function (stored or let-bound)
+			// parses as a scalar call; bind it as the query it is.
+			// (FuncCall names are lowercased; the raw text keeps the
+			// function's own spelling.)
+			if _, ok := v.Expr.(*parser.FuncCall); ok && e.isTabularFunction(strings.TrimSpace(strings.SplitN(v.Raw, "(", 2)[0])) {
+				if q, err := parser.Parse(v.Raw); err == nil {
+					if qq, ok := q.(*parser.Query); ok {
+						return bindLet(&parser.LetStatement{Name: let.Name, Value: qq, IsView: let.IsView})
+					}
+				}
+			}
 			// Scalar let: evaluate the expression. substituteToScalars
 			// runs first (see its own doc comment, eval.go, for why —
 			// evalExpr itself has no case for ToScalarExpr at all, by
@@ -739,6 +796,10 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 		return e.applyPipeline(result, q.Operators)
 	}
 
+	if g, ok := e.letContext.LookupGraph(q.Source); ok && q.Source != "" {
+		return e.applyGraphPipeline(g, q.Operators)
+	}
+
 	// Table-valued function source (csv, json, ndjson, vortex)
 	if q.SourceFunc != nil {
 		return e.executeTableFunc(q)
@@ -766,6 +827,15 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	// stored_functions.go's resolveStoredFunction. Same shape as the
 	// federation case immediately above: resolve at the source, then
 	// hand off to the normal pipeline unchanged.
+	if q.SourceFuncCall != nil && q.SourceFuncCall.Name == "table" {
+		// table(name): a table (or tabular let) named by a scalar,
+		// e.g. a function parameter: table(edgesTableName).
+		name, err := e.evalSourceNameArg("table", q.SourceFuncCall)
+		if err != nil {
+			return nil, err
+		}
+		return e.executeQueryRaw(&parser.Query{Source: name, Operators: q.Operators})
+	}
 	if q.SourceFuncCall != nil && q.SourceFuncCall.Name == "graph" {
 		g, err := e.resolveGraphSource(q.SourceFuncCall)
 		if err != nil {
@@ -774,9 +844,15 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 		return e.applyGraphPipeline(g, q.Operators)
 	}
 	if q.SourceFuncCall != nil {
+		e.graphResultDepth++
 		result, err := e.resolveStoredFunction(q.SourceFuncCall)
+		e.graphResultDepth--
 		if err != nil {
 			return nil, err
+		}
+		if g := e.takeGraphResult(result); g != nil {
+			// A function returning a graph: f(x) | graph-match ...
+			return e.applyGraphPipeline(g, q.Operators)
 		}
 		return e.applyPipeline(result, q.Operators)
 	}
@@ -1140,4 +1216,35 @@ func rowKey(row types.Row, indices []int, schema *types.Schema) string {
 		parts[i] = types.FormatValue(row[idx], schema.Columns[idx].Type)
 	}
 	return strings.Join(parts, "\x00")
+}
+
+// evalSourceNameArg evaluates the single string argument of a
+// name-taking source function such as table("T").
+func (e *Engine) evalSourceNameArg(fn string, call *parser.StoredFunctionCall) (string, error) {
+	if len(call.ArgTexts) != 1 {
+		return "", fmt.Errorf("%s() expects one argument, the name", fn)
+	}
+	expr, err := parser.ParseExpr(call.ArgTexts[0])
+	if err != nil {
+		return "", fmt.Errorf("%s(): %w", fn, err)
+	}
+	v, err := evalExpr(e, expr, &types.Schema{}, types.Row{})
+	if err != nil {
+		return "", fmt.Errorf("%s(): %w", fn, err)
+	}
+	name, ok := v.(string)
+	if !ok || name == "" {
+		return "", fmt.Errorf("%s(): the name must be a non-empty string", fn)
+	}
+	return name, nil
+}
+
+// isTabularFunction reports whether name is a let-bound or stored
+// function with a tabular body.
+func (e *Engine) isTabularFunction(name string) bool {
+	if fn, ok := e.letContext.LookupFunction(name); ok {
+		return fn.Tabular
+	}
+	fn, ever, err := e.lookupStoredFunction(name)
+	return err == nil && ever && !fn.Deleted && parser.IsTabularFunctionBody(fn.Body, fn.Parameters)
 }

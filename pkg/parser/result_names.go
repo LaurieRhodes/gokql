@@ -116,3 +116,22 @@ func UniqueName(name string, taken func(string) bool) string {
 		}
 	}
 }
+
+// GraphResultName is ExprResultName inside graph-match / graph-
+// shortest-paths, where Kusto.Language names a function of a pattern
+// property by the property alone: strlen(a.name) → strlen_name, while
+// a bare a.name stays a_name. isVar reports pattern variable names.
+func GraphResultName(e Expr, isVar func(string) bool) (string, bool) {
+	fc, ok := e.(*FuncCall)
+	if !ok || len(fc.Args) == 0 {
+		return ExprResultName(e)
+	}
+	if ae, ok := fc.Args[0].(*AccessExpr); ok && len(ae.Path) == 1 && ae.Path[0].Name != "" {
+		if ref, ok := ae.Object.(*ColumnRef); ok && isVar(ref.Name) {
+			c := *fc
+			c.Args = append([]Expr{&ColumnRef{Name: ae.Path[0].Name}}, fc.Args[1:]...)
+			return callResultName(&c, scalarResultNames)
+		}
+	}
+	return ExprResultName(e)
+}

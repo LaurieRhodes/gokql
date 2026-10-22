@@ -269,9 +269,17 @@ func extendSplitPoint(as []parser.Assignment) int {
 }
 
 func (e *Engine) applyTake(input *types.Table, op *parser.TakeOp) (*types.Table, error) {
+	count := op.Count
+	if op.CountExpr != nil {
+		n, err := e.evalCount("take", op.CountExpr)
+		if err != nil {
+			return nil, err
+		}
+		count = n
+	}
 	result := types.NewTable(input.Name, input.Schema)
 	for i, row := range input.Rows {
-		if int64(i) >= op.Count {
+		if int64(i) >= count {
 			break
 		}
 		result.AddRow(row)
@@ -425,10 +433,35 @@ func (e *Engine) applyOrderBy(input *types.Table, op *parser.OrderByOp) (*types.
 }
 
 func (e *Engine) applyTop(input *types.Table, op *parser.TopOp) (*types.Table, error) {
+	count := op.Count
+	if op.CountExpr != nil {
+		n, err := e.evalCount("top", op.CountExpr)
+		if err != nil {
+			return nil, err
+		}
+		count = n
+	}
 	// Bounded top-N heap instead of full sort + take.
 	return e.applyTopN(input, &parser.OrderByOp{
 		Clauses: []parser.OrderClause{{Column: op.By, Desc: op.Desc}},
-	}, op.Count)
+	}, count)
+}
+
+// evalCount evaluates the scalar count of take/top.
+func (e *Engine) evalCount(op string, x parser.Expr) (int64, error) {
+	v, err := evalExpr(e, x, &types.Schema{}, types.Row{})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	switch n := v.(type) {
+	case int64:
+		return n, nil
+	case int32:
+		return int64(n), nil
+	case float64:
+		return int64(n), nil
+	}
+	return 0, fmt.Errorf("%s: count must be a number, got %v", op, v)
 }
 
 // byColumnsFirst moves the trailing nBy group-by columns of a
@@ -455,6 +488,9 @@ func byColumnsFirst(t *types.Table, nBy int) *types.Table {
 }
 
 func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*types.Table, error) {
+	if hasPostAggregation(op) {
+		return e.applySummarizePost(input, op)
+	}
 	// Build output schema: aggregation columns + group-by columns.
 	// percentiles() is special — one call expands to N output columns.
 	// arg_max(expr, *)/arg_min(expr, *) are the same shape, expanding
@@ -2040,4 +2076,106 @@ func (e *Engine) applyGetSchema(input *types.Table) (*types.Table, error) {
 	}
 
 	return output, nil
+}
+
+func hasPostAggregation(op *parser.SummarizeOp) bool {
+	for _, a := range op.Aggregations {
+		if a.Function == parser.PostAggregation {
+			return true
+		}
+	}
+	return false
+}
+
+// applySummarizePost runs a summarize whose items include scalar
+// expressions over aggregates: the inner aggregates are computed as
+// hidden columns, each expression is evaluated per group over them,
+// and the result keeps the written order (group-by columns, then the
+// items) without the hidden columns.
+func (e *Engine) applySummarizePost(input *types.Table, op *parser.SummarizeOp) (*types.Table, error) {
+	base := &parser.SummarizeOp{ByExprs: op.ByExprs}
+	for _, a := range op.Aggregations {
+		if a.Function == parser.PostAggregation {
+			base.Aggregations = append(base.Aggregations, a.Inner...)
+		} else {
+			base.Aggregations = append(base.Aggregations, a)
+		}
+	}
+	inner, err := e.applySummarize(input, base)
+	if err != nil {
+		return nil, err
+	}
+	nBy := len(op.ByExprs)
+	// Columns of a plain item, in inner's order after the group-by
+	// columns (percentiles() and arg_max(*, ...) expand to several).
+	var schema types.Schema
+	schema.Columns = append(schema.Columns, inner.Schema.Columns[:nBy]...)
+	type part struct {
+		cols []int       // inner columns copied as they are
+		post parser.Expr // or one evaluated column
+	}
+	var parts []part
+	used := map[string]bool{}
+	for _, c := range schema.Columns {
+		used[c.Name] = true
+	}
+	namer := newColumnNamer(&inner.Schema)
+	pos := nBy
+	for _, a := range op.Aggregations {
+		if a.Function == parser.PostAggregation {
+			pos += len(a.Inner)
+			name := a.Name
+			if name == "" {
+				name = namer.next()
+			}
+			name = parser.UniqueName(name, func(n string) bool { return used[n] })
+			used[name] = true
+			schema.Columns = append(schema.Columns, types.Column{Name: name, Type: inferExprType(e, a.Post, &inner.Schema)})
+			parts = append(parts, part{post: a.Post})
+			continue
+		}
+		// A plain item: the inner columns up to the next item's.
+		var cols []int
+		for pos < len(inner.Schema.Columns) && !strings.HasPrefix(inner.Schema.Columns[pos].Name, "\x00agg:") {
+			cols = append(cols, pos)
+			schema.Columns = append(schema.Columns, inner.Schema.Columns[pos])
+			used[inner.Schema.Columns[pos].Name] = true
+			pos++
+			if !aggregationExpands(a) {
+				break
+			}
+		}
+		parts = append(parts, part{cols: cols})
+	}
+	out := types.NewTable(inner.Name, schema)
+	for _, row := range inner.Rows {
+		nr := make(types.Row, 0, len(schema.Columns))
+		nr = append(nr, row[:nBy]...)
+		for _, p := range parts {
+			if p.post == nil {
+				for _, c := range p.cols {
+					nr = append(nr, row[c])
+				}
+				continue
+			}
+			v, err := evalExpr(e, p.post, &inner.Schema, row)
+			if err != nil {
+				return nil, fmt.Errorf("summarize: %w", err)
+			}
+			nr = append(nr, v)
+		}
+		out.AddRow(nr)
+	}
+	return out, nil
+}
+
+// aggregationExpands reports whether an aggregation can produce more
+// than one output column (percentiles, arg_max/arg_min with several or
+// * outputs).
+func aggregationExpands(a parser.Aggregation) bool {
+	switch a.Function {
+	case "percentiles", "percentilesw", "arg_max", "arg_min", "take_any", "take_anyif":
+		return true
+	}
+	return false
 }

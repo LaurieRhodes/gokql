@@ -14,7 +14,7 @@ import (
 // clear error).
 func parseScan(s string) (Operator, error) {
 	s = strings.TrimSpace(s)
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 
 	if strings.HasPrefix(lower, "with_match_id") {
 		return nil, fmt.Errorf("scan: with_match_id is not implemented")
@@ -37,7 +37,7 @@ func parseScan(s string) (Operator, error) {
 		}
 		op.Declares = decls
 		s = strings.TrimSpace(rest[close+1:])
-		lower = strings.ToLower(s)
+		lower = keywordFold(s)
 	}
 	if len(op.Declares) == 0 {
 		return nil, fmt.Errorf("scan: declare(...) is required — at least one declared column")

@@ -48,7 +48,7 @@ func parseParseKVOperator(s string) (Operator, error) {
 	}
 
 	rest = strings.TrimSpace(rest[keysClose+1:])
-	lowerRest := strings.ToLower(rest)
+	lowerRest := keywordFold(rest)
 	if !strings.HasPrefix(lowerRest, "with") {
 		return nil, fmt.Errorf("parse-kv: expected 'with (...)' after KeysList")
 	}

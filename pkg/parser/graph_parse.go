@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
 // graph_parse.go — make-graph and graph-match operator syntax.
@@ -58,7 +60,7 @@ func parseMakeGraph(s string) (*MakeGraphOp, error) {
 	rest = strings.TrimSpace(rest[end:])
 
 	for rest != "" {
-		lower := strings.ToLower(rest)
+		lower := keywordFold(rest)
 		switch {
 		case strings.HasPrefix(lower, "with_node_id"):
 			r := strings.TrimSpace(rest[len("with_node_id"):])
@@ -161,6 +163,7 @@ func parseGraphPatternOp(s, opName string) (*GraphMatchOp, error) {
 	op := &GraphMatchOp{Cycles: "unique_edges"}
 	if opName == "graph-shortest-paths" {
 		op.Shortest = "any"
+		op.Cycles = "" // the search default: no node revisited
 	}
 
 	// Leading operator properties: cycles= (graph-match) and output=
@@ -181,7 +184,7 @@ func parseGraphPatternOp(s, opName string) (*GraphMatchOp, error) {
 		}
 		v := strings.ToLower(r[:e])
 		switch {
-		case key == "cycles" && opName == "graph-match":
+		case key == "cycles":
 			if v != "none" && v != "all" && v != "unique_edges" {
 				return nil, fmt.Errorf("graph-match: cycles must be none, all or unique_edges, got %q", r[:e])
 			}
@@ -357,10 +360,43 @@ func parseGraphEdgeInner(inner string, edge *GraphMatchEdge) error {
 	if dotIdx < 0 {
 		return fmt.Errorf("graph-match: expected '*min..max' hop range, got %q", inner)
 	}
-	minVal, err1 := strconv.Atoi(strings.TrimSpace(rangeStr[:dotIdx]))
-	maxVal, err2 := strconv.Atoi(strings.TrimSpace(rangeStr[dotIdx+2:]))
-	if err1 != nil || err2 != nil || minVal < 0 || maxVal < minVal || maxVal < 1 {
-		return fmt.Errorf("graph-match: invalid hop range %q (expected *min..max with 0 <= min <= max, max >= 1)", inner)
+	minText, maxText := strings.TrimSpace(rangeStr[:dotIdx]), strings.TrimSpace(rangeStr[dotIdx+2:])
+	minVal, err1 := strconv.Atoi(minText)
+	maxVal, err2 := strconv.Atoi(maxText)
+	if err1 != nil || err2 != nil {
+		// Scalar-expression bounds (let names, function parameters):
+		// checked when the pattern is planned.
+		if minText == "" || maxText == "" {
+			return fmt.Errorf("graph-match: expected '*min..max' hop range, got %q", inner)
+		}
+		if err1 != nil {
+			e, err := ParseExpr(minText)
+			if err != nil {
+				return fmt.Errorf("graph-match: hop range %q: %w", inner, err)
+			}
+			edge.MinExpr = e
+		} else {
+			edge.MinExpr = &Literal{Value: int64(minVal), Type: types.TypeLong}
+		}
+		if err2 != nil {
+			e, err := ParseExpr(maxText)
+			if err != nil {
+				return fmt.Errorf("graph-match: hop range %q: %w", inner, err)
+			}
+			edge.MaxExpr = e
+		} else {
+			edge.MaxExpr = &Literal{Value: int64(maxVal), Type: types.TypeLong}
+		}
+		edge.MinHops, edge.MaxHops = 1, 1
+		return nil
+	}
+	return CheckHopRange(minVal, maxVal, inner, edge)
+}
+
+// CheckHopRange validates and sets a hop range.
+func CheckHopRange(minVal, maxVal int, text string, edge *GraphMatchEdge) error {
+	if minVal < 0 || maxVal < minVal || maxVal < 1 {
+		return fmt.Errorf("graph-match: invalid hop range %q (expected *min..max with 0 <= min <= max, max >= 1)", text)
 	}
 	if maxVal > MaxGraphHops {
 		return fmt.Errorf("graph-match: hop range max %d exceeds limit %d", maxVal, MaxGraphHops)

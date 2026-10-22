@@ -33,12 +33,8 @@ func (g *Graph) setNodeProperty(name string, typ types.KQLType, vals []types.Val
 	width := len(g.NodeSchema.Columns)
 	for i, id := range g.NodeIDs {
 		key := graphKey(id)
-		row := g.nodeElemRow(id)
-		if len(row) < width {
-			grown := make(types.Row, width)
-			copy(grown, row)
-			row = grown
-		}
+		row := make(types.Row, width) // copy on write: rows may be shared
+		copy(row, g.nodeElemRow(id))
 		row[col] = vals[i]
 		g.NodeRows[key] = row
 	}

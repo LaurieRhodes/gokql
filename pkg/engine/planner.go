@@ -292,6 +292,9 @@ func (c *columnCollector) collectExpr(expr parser.Expr) {
 		if isColumnIfExists(e.Name) {
 			if name, err := columnIfExistsName(e); err == nil {
 				c.addColumn(name)
+			} else {
+				// The name is a let or parameter: any column may be read.
+				c.needsAll = true
 			}
 		}
 		for _, arg := range e.Args {
@@ -380,6 +383,9 @@ func ScanRowLimit(operators []parser.Operator) (int64, bool) {
 	for _, op := range operators {
 		switch o := op.(type) {
 		case *parser.TakeOp:
+			if o.CountExpr != nil {
+				return 0, false
+			}
 			return o.Count, true
 		case *parser.ProjectOp, *parser.ExtendOp, *parser.ProjectAwayOp,
 			*parser.ProjectRenameOp, *parser.ProjectReorderOp,

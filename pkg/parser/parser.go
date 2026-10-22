@@ -17,7 +17,7 @@ import (
 // materialize(X).
 func unwrapMaterialize(source string) (string, bool) {
 	t := strings.TrimSpace(source)
-	lower := strings.ToLower(t)
+	lower := keywordFold(t)
 	if !strings.HasPrefix(lower, "materialize") {
 		return "", false
 	}
@@ -37,7 +37,7 @@ func parseTopNested(seg string) (*TopNestedOp, error) {
 	op := &TopNestedOp{}
 	for i, clause := range splitRespectingParens(seg, ',') {
 		clause = strings.TrimSpace(clause)
-		lower := strings.ToLower(clause)
+		lower := keywordFold(clause)
 		if !strings.HasPrefix(lower, "top-nested") {
 			return nil, fmt.Errorf("top-nested clause %d: expected 'top-nested', got %q", i+1, clause)
 		}
@@ -123,6 +123,70 @@ func parseTopNested(seg string) (*TopNestedOp, error) {
 // and '...' with backslash escapes, and @-prefixed verbatim strings
 // where only a doubled quote escapes. .ingest inline is exempt: its
 // payload is data, not KQL.
+// rewriteMultilineStrings turns each ```...``` multi-line string
+// literal into an equivalent escaped "..." literal, so every splitter
+// downstream sees an ordinary string (no ; | // inside it can split or
+// truncate the statement). Quoted strings and // comments are skipped.
+func rewriteMultilineStrings(s string) string {
+	if !strings.Contains(s, "```") {
+		return s
+	}
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+			b.WriteByte(c)
+		case c == '/' && i+1 < len(s) && s[i+1] == '/':
+			end := strings.IndexByte(s[i:], '\n')
+			if end < 0 {
+				end = len(s) - i
+			}
+			b.WriteString(s[i : i+end])
+			i += end - 1
+		case strings.HasPrefix(s[i:], "```"):
+			end := strings.Index(s[i+3:], "```")
+			if end < 0 {
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			body := s[i+3 : i+3+end]
+			b.WriteByte('"')
+			for k := 0; k < len(body); k++ {
+				switch ch := body[k]; ch {
+				case '\\':
+					b.WriteString(`\\`)
+				case '"':
+					b.WriteString(`\"`)
+				case '\n':
+					b.WriteString(`\n`)
+				case '\r':
+					b.WriteString(`\r`)
+				case '\t':
+					b.WriteString(`\t`)
+				default:
+					b.WriteByte(ch)
+				}
+			}
+			b.WriteByte('"')
+			i += 3 + end + 2
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 func stripLineComments(s string) string {
 	var b strings.Builder
 	var quote byte
@@ -166,7 +230,14 @@ func stripLineComments(s string) string {
 }
 
 func Parse(input string) (Statement, error) {
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(input)), ".ingest inline") {
+	head := keywordFold(strings.TrimSpace(stripLineComments(input)))
+	if !strings.HasPrefix(head, ".ingest inline") && !strings.HasPrefix(head, ".create-or-alter graph_model") &&
+		!(strings.HasPrefix(head, ".alter graph_model") && strings.Contains(head, " policy ")) {
+		// Commands above fence a payload with ```; everywhere else ```
+		// opens a multi-line string literal.
+		input = rewriteMultilineStrings(input)
+	}
+	if !strings.HasPrefix(head, ".ingest inline") {
 		input = stripLineComments(input)
 	}
 	input = strings.TrimSpace(input)
@@ -178,7 +249,7 @@ func Parse(input string) (Statement, error) {
 	stmts := splitStatements(input)
 
 	// If single statement with no let prefix, parse directly
-	if len(stmts) == 1 && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(stmts[0])), "let ") {
+	if len(stmts) == 1 && !strings.HasPrefix(keywordFold(strings.TrimSpace(stmts[0])), "let ") {
 		return parseSingleStatement(stmts[0])
 	}
 
@@ -195,7 +266,7 @@ func Parse(input string) (Statement, error) {
 		if s == "" {
 			continue
 		}
-		lower := strings.ToLower(s)
+		lower := keywordFold(s)
 		if strings.HasPrefix(lower, "let ") {
 			letStmt, err := parseLetStatement(s)
 			if err != nil {
@@ -261,7 +332,7 @@ func Parse(input string) (Statement, error) {
 // nothing about either command's own grammar conflicts with piping.
 var pipeableSimpleCommandPrefixes = []string{
 	".show tables", ".show database", ".help", ".show table ",
-	".show graph_model", ".show graph_snapshot",
+	".show graph_model", ".show graph_snapshot", ".show operations",
 }
 
 func parseSingleStatement(input string) (Statement, error) {
@@ -270,7 +341,7 @@ func parseSingleStatement(input string) (Statement, error) {
 		return nil, fmt.Errorf("empty input")
 	}
 	if input[0] == '.' {
-		lower := strings.ToLower(input)
+		lower := keywordFold(input)
 		for _, prefix := range pipeableSimpleCommandPrefixes {
 			if !strings.HasPrefix(lower, prefix) {
 				continue
@@ -366,6 +437,15 @@ func parseLetStatement(input string) (*LetStatement, error) {
 	// Also if it looks like a bare table name (identifier with no operators), treat as tabular.
 	// datatable and table-valued functions (csv, json, ndjson, parquet, vortex) are
 	// always tabular even without a pipe, so route them to the query parser directly.
+	// A parenthesised tabular expression, `let x = ( T | where ... );`,
+	// is the same expression: unwrap it.
+	for strings.HasPrefix(valueStr, "(") && matchingClose(valueStr, 0, '(', ')') == len(valueStr)-1 {
+		inner := strings.TrimSpace(valueStr[1 : len(valueStr)-1])
+		if !(isTabularSource(inner) || isTabularExpression(inner)) {
+			break
+		}
+		valueStr = inner
+	}
 	if isTabularSource(valueStr) || isTabularExpression(valueStr) {
 		query, err := parseQuery(valueStr)
 		if err != nil {
@@ -379,13 +459,13 @@ func parseLetStatement(input string) (*LetStatement, error) {
 	if err != nil {
 		return nil, fmt.Errorf("let %s: %w", name, err)
 	}
-	return &LetStatement{Name: name, Value: &ScalarExpr{Expr: expr}}, nil
+	return &LetStatement{Name: name, Value: &ScalarExpr{Expr: expr, Raw: valueStr}}, nil
 }
 
 // splitViewLambda recognises "view (params) { body }" and returns the
 // body and the parameter text.
 func splitViewLambda(s string) (body, params string, ok bool) {
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 	if !strings.HasPrefix(lower, "view") || len(s) == 4 || isIdentChar(s[4]) {
 		return "", "", false
 	}
@@ -484,7 +564,7 @@ func isTabularExpression(s string) bool {
 // (csv, json, ndjson, parquet, vortex). These must be parsed as queries even
 // when no pipe operator is present.
 func isTabularSource(s string) bool {
-	lower := strings.ToLower(strings.TrimSpace(s))
+	lower := keywordFold(strings.TrimSpace(s))
 	if strings.HasPrefix(lower, "datatable") {
 		rest := lower[len("datatable"):]
 		// Word boundary: next non-space char must be '(' so an identifier like
@@ -503,6 +583,14 @@ func isTabularSource(s string) bool {
 		if rest == "" || !isIdentChar(rest[0]) {
 			return true
 		}
+	}
+	// union legs: `let n = union (A), (B);`
+	if strings.HasPrefix(lower, "union ") {
+		return true
+	}
+	// graph("Model" [, ...]) is a graph-valued source.
+	if strings.HasPrefix(lower, "graph(") || strings.HasPrefix(lower, "graph (") {
+		return true
 	}
 	return parseTableFunc(strings.TrimSpace(s)) != nil
 }
@@ -586,6 +674,13 @@ func tryParseFunctionDef(s string) (*FunctionDef, bool, error) {
 // it has let statements or a top-level pipe, starts with a tabular
 // source (datatable, print, range, union, ...), or is a bare name that
 // is not one of the function's own scalar parameters (a table).
+// IsTabularFunctionBody reports whether a stored function body is a
+// tabular expression (rather than a scalar one).
+func IsTabularFunctionBody(body, paramsText string) bool {
+	params, _ := ParseFunctionParams(paramsText)
+	return isTabularFunctionBody(strings.TrimSpace(body), params)
+}
+
 func isTabularFunctionBody(body string, params []FunctionParam) bool {
 	if isTabularSource(body) || isTabularExpression(body) {
 		return true
@@ -593,7 +688,7 @@ func isTabularFunctionBody(body string, params []FunctionParam) bool {
 	if len(splitStatements(body)) > 1 {
 		return true
 	}
-	lower := strings.ToLower(body)
+	lower := keywordFold(body)
 	for _, kw := range []string{"print ", "range ", "union ", "search ", "find "} {
 		if strings.HasPrefix(lower, kw) {
 			return true
@@ -689,7 +784,7 @@ func splitStatements(s string) []string {
 // --- Management Command Parsing ---
 
 func parseCommand(input string) (Statement, error) {
-	lower := strings.ToLower(input)
+	lower := keywordFold(input)
 
 	// .show tables
 	if lower == ".help" || lower == "help" {
@@ -756,7 +851,7 @@ func parseCommand(input string) (Statement, error) {
 	// .ingest csv into table T from "path"
 	if strings.HasPrefix(lower, ".ingest csv into table ") {
 		rest := input[len(".ingest csv into table "):]
-		fromIdx := strings.Index(strings.ToLower(rest), " from ")
+		fromIdx := strings.Index(keywordFold(rest), " from ")
 		if fromIdx < 0 {
 			return nil, fmt.Errorf(".ingest csv requires 'from path'")
 		}
@@ -819,7 +914,7 @@ func parseCommand(input string) (Statement, error) {
 		path, _ := pathLit.Value.(string)
 
 		remainder := strings.TrimSpace(rest[ep.pos:])
-		if !strings.HasPrefix(strings.ToLower(remainder), "into ") {
+		if !strings.HasPrefix(keywordFold(remainder), "into ") {
 			return nil, fmt.Errorf(".chunk-file: expected 'into TableName' after the path, got %q", remainder)
 		}
 		tableName := strings.TrimSpace(remainder[len("into "):])
@@ -831,7 +926,7 @@ func parseCommand(input string) (Statement, error) {
 		if sp := strings.IndexAny(tableName, " \t("); sp > 0 {
 			cmd.TableName = tableName[:sp]
 			props := strings.TrimSpace(tableName[sp:])
-			lp := strings.ToLower(props)
+			lp := keywordFold(props)
 			if !strings.HasPrefix(lp, "with (") && !strings.HasPrefix(lp, "with(") {
 				return nil, fmt.Errorf(".chunk-file into %s: expected with (...) after the table name, got %q", cmd.TableName, props)
 			}
@@ -882,7 +977,7 @@ func parseCommand(input string) (Statement, error) {
 		if sp := strings.IndexAny(target, " \t("); sp > 0 {
 			cmd.TableName = target[:sp]
 			props := strings.TrimSpace(target[sp:])
-			lp := strings.ToLower(props)
+			lp := keywordFold(props)
 			if !strings.HasPrefix(lp, "with (") && !strings.HasPrefix(lp, "with(") {
 				return nil, fmt.Errorf(".embed-into %s: expected with (...) before <|, got %q", cmd.TableName, props)
 			}
@@ -1014,7 +1109,7 @@ func parseCommand(input string) (Statement, error) {
 		// than error, so the common case (just the name) works and an
 		// unused property clause is silently a no-op instead of a hard
 		// failure over an option this implementation doesn't need yet.
-		if idx := strings.Index(strings.ToLower(name), " with "); idx >= 0 {
+		if idx := strings.Index(keywordFold(name), " with "); idx >= 0 {
 			name = strings.TrimSpace(name[:idx])
 		}
 		if name == "" {
@@ -1090,7 +1185,7 @@ func parseCreateMaterializedView(rest string, ifNotExists bool) (Statement, erro
 	rest = strings.TrimSpace(rest)
 	cmd := &CreateMaterializedViewCmd{IfNotExists: ifNotExists}
 
-	if strings.HasPrefix(strings.ToLower(rest), "with (") || strings.HasPrefix(strings.ToLower(rest), "with(") {
+	if strings.HasPrefix(keywordFold(rest), "with (") || strings.HasPrefix(keywordFold(rest), "with(") {
 		openIdx := strings.Index(rest, "(")
 		closeIdx := findMatchingParen(rest, openIdx)
 		if closeIdx < 0 {
@@ -1135,7 +1230,7 @@ func parseCreateMaterializedView(rest string, ifNotExists bool) (Statement, erro
 	rest = strings.TrimSpace(rest[nameEnd:])
 
 	const onTablePrefix = "on table "
-	if !strings.HasPrefix(strings.ToLower(rest), onTablePrefix) {
+	if !strings.HasPrefix(keywordFold(rest), onTablePrefix) {
 		return nil, fmt.Errorf("create materialized-view %q: expected 'on table SourceTable'", cmd.Name)
 	}
 	rest = strings.TrimSpace(rest[len(onTablePrefix):])
@@ -1189,7 +1284,7 @@ func parseCreateFunction(rest string, orAlter, ifNotExists bool) (Statement, err
 
 	cmd := &CreateFunctionCmd{OrAlter: orAlter, IfNotExists: ifNotExists}
 
-	if strings.HasPrefix(strings.ToLower(rest), "with (") || strings.HasPrefix(strings.ToLower(rest), "with(") {
+	if strings.HasPrefix(keywordFold(rest), "with (") || strings.HasPrefix(keywordFold(rest), "with(") {
 		openIdx := strings.Index(rest, "(")
 		closeIdx := findMatchingParen(rest, openIdx)
 		if closeIdx < 0 {
@@ -1505,28 +1600,28 @@ func parseQuery(input string) (Statement, error) {
 	}
 
 	// Standalone union: "union T1, T2, T3 | where ..."
-	if strings.HasPrefix(strings.ToLower(source), "union ") {
+	if strings.HasPrefix(keywordFold(source), "union ") {
 		return parseStandaloneUnion(source[6:], segments[1:])
 	}
 
 	// print expr1, expr2, ...
-	if strings.HasPrefix(strings.ToLower(source), "print ") {
+	if strings.HasPrefix(keywordFold(source), "print ") {
 		return parsePrintStatement(source[6:], segments[1:])
 	}
 
 	// search "term" or search in (T1, T2) "term"
-	if strings.HasPrefix(strings.ToLower(source), "search ") {
+	if strings.HasPrefix(keywordFold(source), "search ") {
 		return parseSearchStatement(source[7:], segments[1:])
 	}
 
 	// find [withsource=X] [in (T1, T2)] where Predicate [project ...]
 	// or find Predicate [project ...] (no "where" in this shorter form)
-	if strings.HasPrefix(strings.ToLower(source), "find ") {
+	if strings.HasPrefix(keywordFold(source), "find ") {
 		return parseFindStatement(source[5:], segments[1:])
 	}
 
 	// datatable (Col1: type, Col2: type) [val1, val2, ...]
-	if strings.HasPrefix(strings.ToLower(source), "datatable") {
+	if strings.HasPrefix(keywordFold(source), "datatable") {
 		return parseDataTableStatement(source, segments[1:])
 	}
 
@@ -1633,7 +1728,7 @@ func parseQuery(input string) (Statement, error) {
 
 func parseOperator(seg string) (Operator, error) {
 	seg = normalizeLeadingKeywordWhitespace(seg)
-	lower := strings.ToLower(seg)
+	lower := keywordFold(seg)
 
 	// | count
 	if lower == "count" {
@@ -1894,7 +1989,11 @@ func parseOperator(seg string) (Operator, error) {
 		}
 		n, err := strconv.ParseInt(numStr, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("take: expected number, got %q", numStr)
+			expr, perr := ParseExpr(numStr)
+			if perr != nil || numStr == "" {
+				return nil, fmt.Errorf("take: expected a number or scalar expression, got %q", numStr)
+			}
+			return &TakeOp{Count: -1, CountExpr: expr}, nil
 		}
 		return &TakeOp{Count: n}, nil
 	}
@@ -2036,6 +2135,14 @@ func parseUnionParams(s string) (*UnionOp, string, error) {
 		}
 		after := strings.TrimLeft(rest[eq+1:], " \t\r\n")
 		end := strings.IndexAny(after, " \t\r\n")
+		if strings.HasPrefix(after, "[") { // ['quoted name'] may contain spaces
+			if c := matchingClose(after, 0, '[', ']'); c > 0 {
+				end = c + 1
+				if end == len(after) {
+					end = -1
+				}
+			}
+		}
 		if end < 0 {
 			return nil, "", fmt.Errorf("parameter %q has no tables after it", key)
 		}
@@ -2048,7 +2155,9 @@ func parseUnionParams(s string) (*UnionOp, string, error) {
 			}
 			op.Kind = v
 		case "withsource":
-			if !isIdentifier(val) {
+			if q := unquoteIdent(val); q != val {
+				val = q
+			} else if !isIdentifier(val) {
 				return nil, "", fmt.Errorf("withsource: invalid column name %q", val)
 			}
 			op.WithSource = val
@@ -2194,7 +2303,7 @@ func parseMvExpandColumns(s string, allowUnnamed bool) (*MvExpandOp, error) {
 		col := MvExpandColumn{Type: types.TypeDynamic}
 		if i := findKeyword(part, " to "); i >= 0 {
 			typePart := strings.TrimSpace(part[i+len(" to "):])
-			lower := strings.ToLower(typePart)
+			lower := keywordFold(typePart)
 			if !strings.HasPrefix(lower, "typeof(") || !strings.HasSuffix(typePart, ")") {
 				return nil, fmt.Errorf("mv-expand: expected 'to typeof(type)', got %q", typePart)
 			}
@@ -2249,7 +2358,7 @@ func parseMvApply(s string) (*MvApplyOp, error) {
 
 	// The column list has mv-expand's grammar except bag expansion,
 	// which mv-apply does not have.
-	if l := strings.ToLower(head); strings.HasPrefix(l, "kind") || strings.HasPrefix(l, "bagexpansion") {
+	if l := keywordFold(head); strings.HasPrefix(l, "kind") || strings.HasPrefix(l, "bagexpansion") {
 		return nil, fmt.Errorf("mv-apply: bag expansion (kind=/bagexpansion=) is not supported; use mv-expand inside the subquery")
 	}
 	exp, err := parseMvExpandColumns(head, true)
@@ -2311,7 +2420,7 @@ func stripHints(s string) string {
 	s = strings.TrimSpace(s)
 	for {
 		fields := strings.Fields(s)
-		if len(fields) == 0 || !strings.HasPrefix(strings.ToLower(fields[0]), "hint.") {
+		if len(fields) == 0 || !strings.HasPrefix(keywordFold(fields[0]), "hint.") {
 			return s
 		}
 		tok := fields[0]
@@ -2350,7 +2459,7 @@ func parsePartition(s string) (Operator, error) {
 		if len(fields) == 0 {
 			return nil, fmt.Errorf("partition: expected 'by Column (SubQuery)'")
 		}
-		if !strings.HasPrefix(strings.ToLower(fields[0]), "hint.") {
+		if !strings.HasPrefix(keywordFold(fields[0]), "hint.") {
 			break
 		}
 		// Consume "hint.xxx", then an optional "=" and its value,
@@ -2366,7 +2475,7 @@ func parsePartition(s string) (Operator, error) {
 		}
 	}
 
-	if !strings.HasPrefix(strings.ToLower(s), "by ") {
+	if !strings.HasPrefix(keywordFold(s), "by ") {
 		return nil, fmt.Errorf("partition: expected 'by Column (SubQuery)', got %q", s)
 	}
 	s = strings.TrimSpace(s[len("by "):])
@@ -2527,7 +2636,7 @@ func parseDataTableStatement(source string, remaining []string) (Statement, erro
 // requiring word boundaries on both sides (so "tomorrow" doesn't match
 // a search for "to"). Returns -1 if not found.
 func findTopLevelKeyword(s, keyword string) int {
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 	kw := strings.ToLower(keyword)
 	depth := 0
 	inStr := byte(0)
@@ -2657,7 +2766,7 @@ func parseEvaluate(s string) (Operator, error) {
 		if len(fields) == 0 {
 			return nil, fmt.Errorf("evaluate: expected a plugin name")
 		}
-		if strings.HasPrefix(strings.ToLower(fields[0]), "hint.") {
+		if strings.HasPrefix(keywordFold(fields[0]), "hint.") {
 			s = strings.TrimSpace(s[len(fields[0]):])
 			continue
 		}
@@ -2877,9 +2986,14 @@ func parseTop(s string) (*TopOp, error) {
 		return nil, fmt.Errorf("expected 'top N by column [asc|desc]'")
 	}
 
+	var countExpr Expr
 	n, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("top: expected number, got %q", parts[0])
+		e, perr := ParseExpr(parts[0])
+		if perr != nil {
+			return nil, fmt.Errorf("top: expected a number or scalar expression, got %q", parts[0])
+		}
+		n, countExpr = -1, e
 	}
 
 	if strings.Contains(s, ",") {
@@ -2899,7 +3013,7 @@ func parseTop(s string) (*TopOp, error) {
 		}
 	}
 
-	return &TopOp{Count: n, By: col, Desc: desc}, nil
+	return &TopOp{Count: n, By: col, Desc: desc, CountExpr: countExpr}, nil
 }
 
 func parseOrderBy(s string) (*OrderByOp, error) {
@@ -2973,6 +3087,19 @@ func parseSummarize(s string) (*SummarizeOp, error) {
 	if len(aggs) == 0 {
 		return nil, fmt.Errorf("summarize: no aggregations specified")
 	}
+	// Hidden inner-aggregate columns must be unique across items.
+	for k := range aggs {
+		if aggs[k].Function != PostAggregation {
+			continue
+		}
+		rename := map[string]string{}
+		for j := range aggs[k].Inner {
+			n := fmt.Sprintf("%s%d_%d", postAggPrefix, k, j)
+			rename[aggs[k].Inner[j].Name] = n
+			aggs[k].Inner[j].Name = n
+		}
+		aggs[k].Post = renameColumnRefs(aggs[k].Post, rename)
+	}
 
 	// Parse group-by expressions (columns or function calls like bin())
 	var byExprs []ByExpr
@@ -3029,6 +3156,12 @@ func parseAggregation(s string) (*Aggregation, error) {
 		s = strings.TrimSpace(s[eqIdx+1:])
 	}
 
+	// Anything other than one aggregate call is a scalar expression over
+	// aggregates: count() * 2, toint(sum(x)), sum(x) / count().
+	if !isSingleAggregateCall(s) {
+		return parsePostAggregation(s, agg.Name)
+	}
+
 	// Parse function call: func(args...)
 	parenIdx := strings.Index(s, "(")
 	if parenIdx < 0 {
@@ -3065,6 +3198,9 @@ func parseAggregation(s string) (*Aggregation, error) {
 			expr, err := ParseExpr(ap)
 			if err != nil {
 				return nil, fmt.Errorf("aggregation arg: %w", err)
+			}
+			if containsAggregateCall(expr) {
+				return nil, fmt.Errorf("summarize: aggregates cannot be nested in %s()", agg.Function)
 			}
 			agg.Args = append(agg.Args, expr)
 		}
@@ -3303,20 +3439,13 @@ func parseJoin(s string) (*JoinOp, error) {
 	// change to anything that currently exists.
 	kind := JoinInnerUnique
 	s = stripHints(s)
-	if strings.HasPrefix(strings.ToLower(s), "kind=") {
-		eqIdx := strings.Index(s, "=")
-		// Find the end of the kind value (next space)
-		spaceIdx := strings.Index(s[eqIdx+1:], " ")
-		if spaceIdx < 0 {
-			return nil, fmt.Errorf("join: expected (subquery) after kind=X")
-		}
-		kindStr := strings.TrimSpace(s[eqIdx+1 : eqIdx+1+spaceIdx])
+	if kindStr, rest, ok := splitKindProperty(s); ok {
 		var err error
 		kind, err = parseJoinKind(kindStr)
 		if err != nil {
 			return nil, err
 		}
-		s = stripHints(s[eqIdx+1+spaceIdx:])
+		s = stripHints(rest)
 	}
 
 	// Parse (subquery) — find matching parentheses
@@ -3355,7 +3484,7 @@ func parseJoin(s string) (*JoinOp, error) {
 	}
 
 	// Parse on clause
-	if !strings.HasPrefix(strings.ToLower(rest), "on ") {
+	if !strings.HasPrefix(keywordFold(rest), "on ") {
 		return nil, fmt.Errorf("join: expected 'on' clause after subquery")
 	}
 	onStr := strings.TrimSpace(rest[3:])
@@ -3370,6 +3499,28 @@ func parseJoin(s string) (*JoinOp, error) {
 		Right:     rightQuery,
 		OnClauses: clauses,
 	}, nil
+}
+
+// splitKindProperty reads a leading kind = Name (spaces around = are
+// optional, and the value ends at the first non-identifier character,
+// so kind=inner(T) works), returning the name and the remaining text.
+func splitKindProperty(s string) (kind, rest string, ok bool) {
+	if !strings.HasPrefix(keywordFold(s), "kind") {
+		return "", s, false
+	}
+	t := strings.TrimLeft(s[len("kind"):], " \t\r\n")
+	if !strings.HasPrefix(t, "=") {
+		return "", s, false
+	}
+	t = strings.TrimLeft(t[1:], " \t\r\n")
+	end := 0
+	for end < len(t) && isIdentChar(t[end]) {
+		end++
+	}
+	if end == 0 {
+		return "", s, false
+	}
+	return t[:end], t[end:], true
 }
 
 func parseJoinKind(s string) (JoinKind, error) {
@@ -3519,7 +3670,7 @@ func parseLookup(s string) (*LookupOp, error) {
 	op := &LookupOp{Kind: JoinLeftOuter} // default kind for lookup
 
 	// Optional kind=X
-	if strings.HasPrefix(strings.ToLower(s), "kind=") {
+	if strings.HasPrefix(keywordFold(s), "kind=") {
 		eqEnd := strings.Index(s, " ")
 		if eqEnd < 0 {
 			return nil, fmt.Errorf("lookup: expected table name after kind")
@@ -3548,7 +3699,7 @@ func parseLookup(s string) (*LookupOp, error) {
 		}
 		right = strings.TrimSpace(s[1:closeIdx])
 		rest := strings.TrimSpace(s[closeIdx+1:])
-		if !strings.HasPrefix(strings.ToLower(rest), "on ") {
+		if !strings.HasPrefix(keywordFold(rest), "on ") {
 			return nil, fmt.Errorf("lookup: expected 'on' clause after right side")
 		}
 		onPart = strings.TrimSpace(rest[3:])
@@ -3610,7 +3761,7 @@ func parseSearchStatement(s string, remaining []string) (Statement, error) {
 func parseSearchOp(s string, piped bool) (*SearchOp, error) {
 	s = strings.TrimSpace(s)
 	op := &SearchOp{Piped: piped}
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 	if strings.HasPrefix(lower, "kind") {
 		rest := strings.TrimSpace(s[len("kind"):])
 		if !strings.HasPrefix(rest, "=") {
@@ -3629,7 +3780,7 @@ func parseSearchOp(s string, piped bool) (*SearchOp, error) {
 			return nil, fmt.Errorf("search: unknown kind %q (case_sensitive, case_insensitive, default)", rest[:end])
 		}
 		s = strings.TrimSpace(rest[end:])
-		lower = strings.ToLower(s)
+		lower = keywordFold(s)
 	}
 	if strings.HasPrefix(lower, "in ") || strings.HasPrefix(lower, "in(") {
 		if piped {
@@ -3784,7 +3935,7 @@ func parseFindStatement(s string, remaining []string) (Statement, error) {
 
 	sawWithsourceOrIn := false
 
-	if strings.HasPrefix(strings.ToLower(s), "withsource=") {
+	if strings.HasPrefix(keywordFold(s), "withsource=") {
 		rest := s[len("withsource="):]
 		fields := strings.Fields(rest)
 		if len(fields) == 0 || !isValidIdentifier(fields[0]) {
@@ -3795,7 +3946,7 @@ func parseFindStatement(s string, remaining []string) (Statement, error) {
 		sawWithsourceOrIn = true
 	}
 
-	lowerS := strings.ToLower(s)
+	lowerS := keywordFold(s)
 	if strings.HasPrefix(lowerS, "in ") || strings.HasPrefix(lowerS, "in(") {
 		rest := strings.TrimSpace(s[2:])
 		if !strings.HasPrefix(rest, "(") {
@@ -3816,11 +3967,11 @@ func parseFindStatement(s string, remaining []string) (Statement, error) {
 	}
 
 	if sawWithsourceOrIn {
-		if !strings.HasPrefix(strings.ToLower(s), "where ") {
+		if !strings.HasPrefix(keywordFold(s), "where ") {
 			return nil, fmt.Errorf("find: expected 'where' after withsource=/in(...)")
 		}
 		s = strings.TrimSpace(s[len("where "):])
-	} else if strings.HasPrefix(strings.ToLower(s), "where ") {
+	} else if strings.HasPrefix(keywordFold(s), "where ") {
 		// Lenient extension: an explicit "where" is also accepted even
 		// without withsource=/in(...), a harmless superset of the
 		// shorter documented form rather than a strict rejection of it.
@@ -3885,7 +4036,7 @@ func parseFindStatement(s string, remaining []string) (Statement, error) {
 	}
 
 	if projectText != "" {
-		if strings.HasPrefix(strings.ToLower(projectText), "project-smart") {
+		if strings.HasPrefix(keywordFold(projectText), "project-smart") {
 			op.ProjectSmart = true
 		} else {
 			op.ProjectSmart = false
@@ -3964,4 +4115,186 @@ func PercentileAutoName(agg *Aggregation, i int) string {
 		}
 	}
 	return "percentile_" + col + "_" + pct
+}
+
+// isSingleAggregateCall reports whether s is exactly one call of an
+// aggregation function: name(args), the closing paren ending s.
+func isSingleAggregateCall(s string) bool {
+	open := strings.IndexByte(s, '(')
+	if open <= 0 {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(s[:open]))
+	if !isIdentifier(name) || !IsAggregateFunction(name) {
+		return false
+	}
+	return matchingClose(s, open, '(', ')') == len(s)-1
+}
+
+// parsePostAggregation parses an expression over aggregates: each
+// aggregate call becomes a hidden Inner aggregation, referenced from
+// Post by its hidden column name.
+func parsePostAggregation(s, name string) (*Aggregation, error) {
+	expr, err := ParseExpr(s)
+	if err != nil {
+		return nil, fmt.Errorf("summarize: %w", err)
+	}
+	agg := &Aggregation{Name: name, Function: PostAggregation}
+	var rewrite func(e Expr) (Expr, error)
+	rewrite = func(e Expr) (Expr, error) {
+		switch x := e.(type) {
+		case *FuncCall:
+			if isAggregateCall(x) {
+				for _, a := range x.Args {
+					if containsAggregateCall(a) {
+						return nil, fmt.Errorf("summarize: aggregates cannot be nested in %s()", x.Name)
+					}
+				}
+				hidden := fmt.Sprintf("%s%d", postAggPrefix, len(agg.Inner))
+				agg.Inner = append(agg.Inner, Aggregation{Name: hidden, Function: x.Name, Args: x.Args})
+				return &ColumnRef{Name: hidden}, nil
+			}
+			c := *x
+			c.Args = make([]Expr, len(x.Args))
+			for i, a := range x.Args {
+				na, err := rewrite(a)
+				if err != nil {
+					return nil, err
+				}
+				c.Args[i] = na
+			}
+			return &c, nil
+		case *BinaryExpr:
+			l, err := rewrite(x.Left)
+			if err != nil {
+				return nil, err
+			}
+			r, err := rewrite(x.Right)
+			if err != nil {
+				return nil, err
+			}
+			c := *x
+			c.Left, c.Right = l, r
+			return &c, nil
+		case *UnaryExpr:
+			in, err := rewrite(x.Expr)
+			if err != nil {
+				return nil, err
+			}
+			c := *x
+			c.Expr = in
+			return &c, nil
+		case *Literal:
+			return x, nil
+		case *ColumnRef:
+			return nil, fmt.Errorf("summarize: %q is not an aggregate or scalar function result (use it inside an aggregate, or in by)", x.Name)
+		}
+		return nil, fmt.Errorf("summarize: unsupported expression in an aggregation: %s", s)
+	}
+	post, err := rewrite(expr)
+	if err != nil {
+		return nil, err
+	}
+	if len(agg.Inner) == 0 {
+		return nil, fmt.Errorf("summarize: %q contains no aggregation function", s)
+	}
+	agg.Post = post
+	if agg.Name == "" {
+		agg.AutoNamed = true
+		agg.Name, _ = postAggResultName(expr) // "" → ColumnN
+	}
+	return agg, nil
+}
+
+// isAggregateCall reports whether fc is an aggregate call inside an
+// expression. hll_merge and tdigest_merge are also scalar functions
+// (merging two or more values), so with several arguments they are the
+// scalar.
+func isAggregateCall(fc *FuncCall) bool {
+	if !IsAggregateFunction(fc.Name) {
+		return false
+	}
+	switch fc.Name {
+	case "hll_merge", "tdigest_merge", "merge_tdigest":
+		return len(fc.Args) <= 1
+	}
+	return true
+}
+
+// containsAggregateCall reports whether e calls an aggregate anywhere.
+func containsAggregateCall(e Expr) bool {
+	switch x := e.(type) {
+	case *FuncCall:
+		if isAggregateCall(x) {
+			return true
+		}
+		for _, a := range x.Args {
+			if containsAggregateCall(a) {
+				return true
+			}
+		}
+	case *BinaryExpr:
+		return containsAggregateCall(x.Left) || containsAggregateCall(x.Right)
+	case *UnaryExpr:
+		return containsAggregateCall(x.Expr)
+	}
+	return false
+}
+
+// postAggResultName names an unnamed expression over aggregates as
+// Kusto.Language does: toint(sum(b)) → sum_b; count() * 2 → none.
+func postAggResultName(e Expr) (string, bool) {
+	fc, ok := e.(*FuncCall)
+	if !ok {
+		return "", false
+	}
+	if IsAggregateFunction(fc.Name) {
+		return AggResultName(fc)
+	}
+	rn, ok := scalarResultNames[fc.Name]
+	if !ok || len(fc.Args) == 0 {
+		return "", false
+	}
+	arg := func() (string, bool) {
+		if inner, ok := fc.Args[0].(*FuncCall); ok && IsAggregateFunction(inner.Name) {
+			return AggResultName(inner)
+		}
+		return exprResultName(fc.Args[0], scalarResultNames)
+	}
+	switch rn.kind {
+	case ResultFirstArgument:
+		return arg()
+	case ResultOnlyArgument:
+		if len(fc.Args) == 1 {
+			return arg()
+		}
+	}
+	return "", false
+}
+
+// renameColumnRefs returns e with column references renamed per m.
+func renameColumnRefs(e Expr, m map[string]string) Expr {
+	switch x := e.(type) {
+	case *ColumnRef:
+		if n, ok := m[x.Name]; ok {
+			return &ColumnRef{Name: n}
+		}
+		return x
+	case *FuncCall:
+		c := *x
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = renameColumnRefs(a, m)
+		}
+		return &c
+	case *BinaryExpr:
+		c := *x
+		c.Left, c.Right = renameColumnRefs(x.Left, m), renameColumnRefs(x.Right, m)
+		return &c
+	case *UnaryExpr:
+		c := *x
+		c.Expr = renameColumnRefs(x.Expr, m)
+		return &c
+	}
+	return e
 }

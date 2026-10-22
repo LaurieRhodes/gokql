@@ -156,5 +156,5 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, p
 		}
 	}
 
-	return e.applyProject(matches, op.Project)
+	return e.applyProject(matches, plan.projectWithGraphNames(op.Project))
 }

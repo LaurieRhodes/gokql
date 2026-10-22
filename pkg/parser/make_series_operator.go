@@ -95,7 +95,7 @@ func parseMakeSeries(s string) (Operator, error) {
 	}
 	cursor := strings.TrimSpace(rest[axisEnd:])
 
-	if strings.HasPrefix(strings.ToLower(cursor), "from ") {
+	if strings.HasPrefix(keywordFold(cursor), "from ") {
 		cursor = cursor[len("from "):]
 		toPos := findKeyword(cursor, " to ")
 		stepPos := findKeyword(cursor, " step ")
@@ -116,7 +116,7 @@ func parseMakeSeries(s string) (Operator, error) {
 		cursor = strings.TrimSpace(cursor[end:])
 	}
 
-	if strings.HasPrefix(strings.ToLower(cursor), "to ") {
+	if strings.HasPrefix(keywordFold(cursor), "to ") {
 		cursor = cursor[len("to "):]
 		stepPos := findKeyword(cursor, " step ")
 		if stepPos < 0 {
@@ -130,7 +130,7 @@ func parseMakeSeries(s string) (Operator, error) {
 		cursor = strings.TrimSpace(cursor[stepPos:])
 	}
 
-	if !strings.HasPrefix(strings.ToLower(cursor), "step ") {
+	if !strings.HasPrefix(keywordFold(cursor), "step ") {
 		return nil, fmt.Errorf("make-series: expected 'step step' clause (step is required)")
 	}
 	cursor = strings.TrimSpace(cursor[len("step "):])
@@ -191,7 +191,7 @@ func parseMakeSeriesAggregation(s string) (*MakeSeriesAggregation, error) {
 	// aggregation call's own closing paren, not inside it — scan from
 	// the end since default, if present, is always the trailing clause.
 	defaultIdx := -1
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 	searchFrom := 0
 	for {
 		idx := strings.Index(lower[searchFrom:], "default")

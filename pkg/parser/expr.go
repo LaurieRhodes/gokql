@@ -982,7 +982,7 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 		p.pos++
 	}
 	name := p.input[start:p.pos]
-	lower := strings.ToLower(name)
+	lower := keywordFold(name)
 
 	// Boolean literals
 	if lower == "true" {

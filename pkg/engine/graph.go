@@ -194,7 +194,7 @@ func (e *Engine) applyPipelineState(st pipeState, ops []parser.Operator) (*types
 	for i := 0; i < len(ops); i++ {
 		if st.graph == nil {
 			if ob, isOrder := ops[i].(*parser.OrderByOp); isOrder && i+1 < len(ops) {
-				if tk, isTake := ops[i+1].(*parser.TakeOp); isTake {
+				if tk, isTake := ops[i+1].(*parser.TakeOp); isTake && tk.CountExpr == nil {
 					t, err := e.applyTopN(st.table, ob, tk.Count)
 					if err != nil {
 						return nil, err
@@ -212,6 +212,9 @@ func (e *Engine) applyPipelineState(st pipeState, ops []parser.Operator) (*types
 		}
 	}
 	if st.graph != nil {
+		if e.graphResultDepth > 0 {
+			return e.wrapGraphResult(st.graph), nil
+		}
 		return nil, fmt.Errorf("query result is a graph; add graph-to-table (or graph-match) to produce tabular output")
 	}
 	return st.table, nil
@@ -250,8 +253,9 @@ func (e *Engine) applyOperatorState(st pipeState, op parser.Operator) (pipeState
 		if st.graph == nil {
 			return st, fmt.Errorf("graph-mark-components: input is not a graph (make-graph must precede it)")
 		}
-		markComponents(st.graph, o)
-		return st, nil
+		g := st.graph.cloneForNodeUpdate()
+		markComponents(g, o)
+		return pipeState{graph: g}, nil
 
 	case *parser.GraphMatchOp:
 		if st.graph == nil {
@@ -636,4 +640,121 @@ func (e *Engine) applyGraphToTable(g *Graph, op *parser.GraphToTableOp) (*types.
 	}
 	bind(op.EdgesAs, edges)
 	return edges, nil
+}
+
+// cloneForNodeUpdate copies the graph so node properties can be changed
+// without touching the input, which a let binding may share. Edges and
+// adjacency are shared read-only; setNodeProperty copies node rows on
+// write.
+func (g *Graph) cloneForNodeUpdate() *Graph {
+	c := &Graph{
+		EdgeSchema:    g.EdgeSchema,
+		NodeSchema:    types.Schema{Columns: append([]types.Column(nil), g.NodeSchema.Columns...)},
+		Edges:         g.Edges,
+		NodeIDs:       g.NodeIDs,
+		NodeRows:      make(map[string]types.Row, len(g.NodeRows)),
+		Adjacency:     g.Adjacency,
+		SourceIdx:     g.SourceIdx,
+		TargetIdx:     g.TargetIdx,
+		NodeIdIdx:     g.NodeIdIdx,
+		hasNodeTable:  g.hasNodeTable,
+		NodeIdName:    g.NodeIdName,
+		withNodeIdIdx: g.withNodeIdIdx,
+		coercedIds:    g.coercedIds,
+		idType:        g.idType,
+		idTypeSet:     g.idTypeSet,
+		nodeLabels:    g.nodeLabels,
+		edgeLabels:    g.edgeLabels,
+		isModel:       g.isModel,
+	}
+	for k, r := range g.NodeRows {
+		c.NodeRows[k] = r
+	}
+	return c
+}
+
+// queryYieldsGraph reports whether q's result is a graph: a graph
+// source or make-graph, followed only by graph-to-graph operators.
+func (e *Engine) queryYieldsGraph(q *parser.Query) bool {
+	graph := false
+	if q.SourceFuncCall != nil && q.SourceFuncCall.Name == "graph" {
+		graph = true
+	} else if _, ok := e.letContext.LookupGraph(q.Source); ok && q.Source != "" {
+		graph = true
+	}
+	for _, op := range q.Operators {
+		switch o := op.(type) {
+		case *parser.MakeGraphOp:
+			graph = o.PartitionBy == ""
+		case *parser.GraphMarkComponentsOp:
+		default:
+			graph = false
+		}
+	}
+	return graph
+}
+
+// executeGraphQuery evaluates a query whose result is a graph.
+func (e *Engine) executeGraphQuery(q *parser.Query) (*Graph, error) {
+	var st pipeState
+	ops := q.Operators
+	if q.SourceFuncCall != nil && q.SourceFuncCall.Name == "graph" {
+		g, err := e.resolveGraphSource(q.SourceFuncCall)
+		if err != nil {
+			return nil, err
+		}
+		st.graph = g
+	} else if g, ok := e.letContext.LookupGraph(q.Source); ok && q.Source != "" {
+		st.graph = g
+	} else {
+		// The tabular prefix runs through the normal query path.
+		k := 0
+		for k < len(ops) {
+			if _, ok := ops[k].(*parser.MakeGraphOp); ok {
+				break
+			}
+			k++
+		}
+		t, err := e.executeQuery(&parser.Query{Source: q.Source, SourceFunc: q.SourceFunc, SourceDB: q.SourceDB,
+			SourceFuncCall: q.SourceFuncCall, Operators: ops[:k]})
+		if err != nil {
+			return nil, err
+		}
+		st.table = t
+		ops = ops[k:]
+	}
+	for _, op := range ops {
+		var err error
+		if st, err = e.applyOperatorState(st, op); err != nil {
+			return nil, err
+		}
+	}
+	if st.graph == nil {
+		return nil, fmt.Errorf("expected a graph")
+	}
+	return st.graph, nil
+}
+
+// graphResultName marks the placeholder table a graph result travels
+// in out of a function body or let value (see Engine.graphResultDepth).
+const graphResultName = "\x00graph-result"
+
+func (e *Engine) wrapGraphResult(g *Graph) *types.Table {
+	t := types.NewTable(graphResultName, types.Schema{})
+	if e.graphResults == nil {
+		e.graphResults = make(map[*types.Table]*Graph)
+	}
+	e.graphResults[t] = g
+	return t
+}
+
+// takeGraphResult returns the graph t stands for (nil when t is an
+// ordinary table) and forgets it.
+func (e *Engine) takeGraphResult(t *types.Table) *Graph {
+	if t == nil || t.Name != graphResultName {
+		return nil
+	}
+	g := e.graphResults[t]
+	delete(e.graphResults, t)
+	return g
 }

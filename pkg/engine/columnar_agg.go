@@ -108,6 +108,9 @@ func planColumnarAggregate(eng *Engine, ops []parser.Operator, schema *types.Sch
 		return nil
 	}
 	sum, ok := ops[i].(*parser.SummarizeOp)
+	if ok && hasPostAggregation(sum) {
+		return nil // expressions over aggregates: the row path
+	}
 	if !ok {
 		// `where ... | count` is `where ... | summarize count()` with
 		// one divergence handled at output: count on empty input emits

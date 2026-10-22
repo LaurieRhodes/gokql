@@ -92,7 +92,7 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		return int64(len(arr)), true, nil
 
-	case "strcat_array":
+	case "strcat_array", "array_strcat": // array_strcat: Kusto.Language alias
 		// strcat_array(array, delimiter) — join array elements into a
 		// string. Elements format per their JSON value.
 		if len(fc.Args) != 2 {
@@ -1507,3 +1507,7 @@ func collectPaths(prefix string, v interface{}) []string {
 
 // strcat_delim scalar helper — used if needed
 var _ = strings.Join // ensure import
+
+// array_strcat is Kusto.Language's alias of strcat_array (the
+// generated signature table lists documented names only).
+func init() { scalarReturnTypes["array_strcat"] = types.TypeString }

@@ -103,6 +103,7 @@ type gmVar struct {
 	offset    int    // first column in the match schema (-1 = anonymous)
 	pos       int    // plan position at which it becomes bound
 	labelsOff int    // hidden labels column (-1 = not used)
+	nodeOff   int    // hidden node reference column (-1 = not used)
 }
 
 // gmElem is one edge element of the pattern, between node variables
@@ -155,6 +156,22 @@ const (
 
 func graphPathColumn(name string) string   { return graphPathPrefix + name }
 func graphLabelsColumn(name string) string { return graphLabelsPrefix + name }
+
+// graphNodePrefix names the hidden column holding a *graphNodeRef for a
+// node variable read by node_id/node_degree_in/node_degree_out;
+// graphElemNodeColumn holds the current inner node inside map/all/any.
+const (
+	graphNodePrefix     = "\x00graph-node:"
+	graphElemNodeColumn = "\x00graph-elem-node"
+)
+
+func graphNodeColumn(name string) string { return graphNodePrefix + name }
+
+// graphNodeRef identifies one node of a graph for the node functions.
+type graphNodeRef struct {
+	g  *Graph
+	id types.Value
+}
 
 // graphPath is the traversal behind an edge variable: the node it
 // starts from in written (left-to-right) order and its edges in order.
@@ -229,12 +246,16 @@ func walkFuncCalls(expr parser.Expr, fn func(*parser.FuncCall)) (complete bool) 
 // the edge variables map/all/any iterate (paths), the variables
 // labels(v) reads, and whether labels() appears without an argument.
 type graphUses struct {
-	paths, labels map[string]bool
-	all           bool // some expression was not understood: assume everything
+	paths, labels, nodes map[string]bool
+	all                  bool // some expression was not understood: assume everything
 }
 
+// graphNodeFuncs take a node variable (or, inside map/all/any over
+// inner_nodes, no argument) and read the node's identity or degree.
+var graphNodeFuncs = map[string]bool{"node_id": true, "node_degree_in": true, "node_degree_out": true}
+
 func collectGraphUses(op *parser.GraphMatchOp) graphUses {
-	u := graphUses{paths: map[string]bool{}, labels: map[string]bool{}}
+	u := graphUses{paths: map[string]bool{}, labels: map[string]bool{}, nodes: map[string]bool{}}
 	fn := func(fc *parser.FuncCall) {
 		switch {
 		case (fc.Name == "map" || fc.Name == "all" || fc.Name == "any") && len(fc.Args) == 2:
@@ -248,6 +269,10 @@ func collectGraphUses(op *parser.GraphMatchOp) graphUses {
 		case fc.Name == "labels" && len(fc.Args) == 1:
 			if r, ok := fc.Args[0].(*parser.ColumnRef); ok {
 				u.labels[r.Name] = true
+			}
+		case graphNodeFuncs[fc.Name] && len(fc.Args) == 1:
+			if r, ok := fc.Args[0].(*parser.ColumnRef); ok {
+				u.nodes[r.Name] = true
 			}
 		}
 	}
@@ -264,9 +289,42 @@ func collectGraphUses(op *parser.GraphMatchOp) graphUses {
 	return u
 }
 
-func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
+func (e *Engine) buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 	if len(op.Sequences) == 0 {
 		return nil, fmt.Errorf("graph-match: missing pattern")
+	}
+	// resolve evaluates scalar hop bounds (-[e*lo..hi]->).
+	resolve := func(spec parser.GraphMatchEdge) (parser.GraphMatchEdge, error) {
+		if spec.MinExpr == nil {
+			return spec, nil
+		}
+		bound := func(x parser.Expr) (int, error) {
+			v, err := evalExpr(e, x, &types.Schema{}, types.Row{})
+			if err != nil {
+				return 0, fmt.Errorf("graph-match hop range: %w", err)
+			}
+			switch n := v.(type) {
+			case int64:
+				return int(n), nil
+			case int32:
+				return int(n), nil
+			case float64:
+				if n == float64(int(n)) {
+					return int(n), nil
+				}
+			}
+			return 0, fmt.Errorf("graph-match hop range: bounds must be integer constants, got %v", v)
+		}
+		lo, err := bound(spec.MinExpr)
+		if err != nil {
+			return spec, err
+		}
+		hi, err := bound(spec.MaxExpr)
+		if err != nil {
+			return spec, err
+		}
+		err = parser.CheckHopRange(lo, hi, fmt.Sprintf("*%d..%d", lo, hi), &spec)
+		return spec, err
 	}
 	plan := &gmPlan{varPos: make(map[string]int)}
 	named := make(map[string]int) // node var name → var index
@@ -279,7 +337,7 @@ func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 			}
 			named[name] = len(plan.vars)
 		}
-		plan.vars = append(plan.vars, gmVar{name: name, offset: -1, pos: -1, labelsOff: -1})
+		plan.vars = append(plan.vars, gmVar{name: name, offset: -1, pos: -1, labelsOff: -1, nodeOff: -1})
 		return len(plan.vars) - 1
 	}
 	for _, seq := range op.Sequences {
@@ -288,6 +346,10 @@ func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 		}
 		prev := varFor(seq.Nodes[0])
 		for i, spec := range seq.Edges {
+			spec, err := resolve(spec)
+			if err != nil {
+				return nil, err
+			}
 			next := varFor(seq.Nodes[i+1])
 			if spec.Name != "" {
 				if edgeNames[spec.Name] {
@@ -398,6 +460,11 @@ func buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan, error) {
 	}
 	for i := range plan.vars {
 		v := &plan.vars[i]
+		if v.name != "" && (uses.all || uses.nodes[v.name]) {
+			v.nodeOff = len(plan.schema.Columns)
+			plan.schema.Columns = append(plan.schema.Columns,
+				types.Column{Name: graphNodeColumn(v.name), Type: types.TypeDynamic})
+		}
 		if v.name != "" && (uses.all || uses.labels[v.name]) {
 			v.labelsOff = len(plan.schema.Columns)
 			plan.schema.Columns = append(plan.schema.Columns,
@@ -461,6 +528,9 @@ func (plan *gmPlan) writeNode(g *Graph, row types.Row, v int, id types.Value) {
 	copy(row[off:], g.nodeElemRow(id))
 	if lo := plan.vars[v].labelsOff; lo >= 0 {
 		row[lo] = g.nodeLabelsJSON(id)
+	}
+	if no := plan.vars[v].nodeOff; no >= 0 {
+		row[no] = &graphNodeRef{g: g, id: id}
 	}
 }
 
@@ -530,7 +600,7 @@ const graphMatchCollectCap = 64
 // at most once (a repeated node variable is the same visit); all only
 // bounds the hop ranges. Total output is capped at maxGraphMatches.
 func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Table, error) {
-	plan, err := buildGraphMatchPlan(g, op)
+	plan, err := e.buildGraphMatchPlan(g, op)
 	if err != nil {
 		return nil, err
 	}
@@ -565,7 +635,22 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 	if err != nil {
 		return nil, err
 	}
-	return e.applyProject(matches, op.Project)
+	return e.applyProject(matches, plan.projectWithGraphNames(op.Project))
+}
+
+// projectWithGraphNames renames unnamed project items the way
+// Kusto.Language does for pattern properties (GraphResultName).
+func (plan *gmPlan) projectWithGraphNames(p *parser.ProjectOp) *parser.ProjectOp {
+	isVar := func(n string) bool { _, ok := plan.varPos[n]; return ok }
+	out := &parser.ProjectOp{Items: append([]parser.ProjectItem(nil), p.Items...)}
+	for i, it := range out.Items {
+		if it.Unnamed && it.Expr != nil {
+			if n, ok := parser.GraphResultName(it.Expr, isVar); ok {
+				out.Items[i].Name = n
+			}
+		}
+	}
+	return out
 }
 
 // walkGraphMatch enumerates the bindings of plan that satisfy preds,
@@ -794,7 +879,11 @@ func (e *Engine) applyGraphShortestPaths(g *Graph, op *parser.GraphMatchOp, plan
 	var order []string
 	all := op.Shortest == "all"
 	total := 0
-	err := e.walkGraphMatch(g, plan, preds, "none", func(row types.Row, bindKey []string, hops int) error {
+	cycles := op.Cycles
+	if cycles == "" {
+		cycles = "none"
+	}
+	err := e.walkGraphMatch(g, plan, preds, cycles, func(row types.Row, bindKey []string, hops int) error {
 		pair := bindKey[first] + "\x00" + bindKey[last]
 		b := byPair[pair]
 		if b == nil {
@@ -827,7 +916,7 @@ func (e *Engine) applyGraphShortestPaths(g *Graph, op *parser.GraphMatchOp, plan
 			matches.AddRow(r)
 		}
 	}
-	return e.applyProject(matches, op.Project)
+	return e.applyProject(matches, plan.projectWithGraphNames(op.Project))
 }
 
 // --- graph path functions: map, all, any, inner_nodes ---
@@ -847,7 +936,7 @@ func (g *Graph) elemSchema(outer *types.Schema, nodes bool) (*types.Schema, int)
 	} else {
 		cols = g.EdgeSchema.Columns
 	}
-	width := len(cols) + 1 // + the element's labels
+	width := len(cols) + 2 // + the element's labels and node reference
 	g.elemMu.Lock()
 	defer g.elemMu.Unlock()
 	key := elemSchemaKey{outer, nodes}
@@ -856,7 +945,8 @@ func (g *Graph) elemSchema(outer *types.Schema, nodes bool) (*types.Schema, int)
 	}
 	s := &types.Schema{}
 	s.Columns = append(s.Columns, cols...)
-	s.Columns = append(s.Columns, types.Column{Name: graphElemLabelsColumn, Type: types.TypeDynamic})
+	s.Columns = append(s.Columns, types.Column{Name: graphElemLabelsColumn, Type: types.TypeDynamic},
+		types.Column{Name: graphElemNodeColumn, Type: types.TypeDynamic})
 	s.Columns = append(s.Columns, outer.Columns...)
 	if g.elemSchemas == nil {
 		g.elemSchemas = make(map[elemSchemaKey]*types.Schema)
@@ -876,6 +966,8 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 	switch fc.Name {
 	case "labels":
 		return evalGraphLabels(fc, schema, row)
+	case "node_id", "node_degree_in", "node_degree_out":
+		return evalGraphNodeFunc(fc, schema, row)
 	case "inner_nodes":
 		if schemaHasGraphPaths(schema) {
 			return nil, true, fmt.Errorf("inner_nodes() can only be used as the first argument of all(), any() or map()")
@@ -920,16 +1012,19 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 	elemSchema, width := g.elemSchema(schema, innerNodes)
 	var elems []types.Row
 	var elemLabels []string
+	var elemNodes []types.Value
 	if innerNodes {
 		nodes := path.nodes()
 		for i := 1; i < len(nodes)-1; i++ {
 			elems = append(elems, g.nodeElemRow(nodes[i]))
 			elemLabels = append(elemLabels, g.nodeLabelsJSON(nodes[i]))
+			elemNodes = append(elemNodes, &graphNodeRef{g: g, id: nodes[i]})
 		}
 	} else {
 		for _, ei := range path.edges {
 			elems = append(elems, g.Edges[ei].Row)
 			elemLabels = append(elemLabels, g.edgeLabelsJSON(ei))
+			elemNodes = append(elemNodes, nil)
 		}
 	}
 
@@ -943,7 +1038,8 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 	}
 	for i, er := range elems {
 		copy(buf, er)
-		buf[width-1] = elemLabels[i]
+		buf[width-2] = elemLabels[i]
+		buf[width-1] = elemNodes[i]
 		v, err := evalExpr(eng, fc.Args[1], elemSchema, buf)
 		if err != nil {
 			return nil, true, err
@@ -983,6 +1079,12 @@ func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, r
 func graphPathFuncType(fc *parser.FuncCall, schema *types.Schema) (types.KQLType, bool) {
 	if fc.Name == "labels" && len(fc.Args) <= 1 && schemaHasGraphPaths(schema) {
 		return types.TypeDynamic, true
+	}
+	if graphNodeFuncs[fc.Name] && len(fc.Args) <= 1 && schemaHasGraphPaths(schema) {
+		if fc.Name == "node_id" {
+			return types.TypeString, true
+		}
+		return types.TypeLong, true
 	}
 	if (fc.Name != "map" && fc.Name != "all" && fc.Name != "any") || len(fc.Args) != 2 || !schemaHasGraphPaths(schema) {
 		return types.TypeDynamic, false
@@ -1029,4 +1131,50 @@ func evalGraphLabels(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		return nil, true, fmt.Errorf("labels(): %q is not a node or edge variable of the pattern", ref.Name)
 	}
 	return nil, true, fmt.Errorf("labels() expects at most one argument")
+}
+
+// evalGraphNodeFunc is node_id(v), node_degree_in(v) and
+// node_degree_out(v) for a node variable, or the argument-less forms
+// for the current inner node inside map/all/any. node_id is the node's
+// id as a string; the degrees count incoming and outgoing edges.
+func evalGraphNodeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	if !schemaHasGraphPaths(schema) {
+		return nil, false, nil
+	}
+	var ref *graphNodeRef
+	switch len(fc.Args) {
+	case 0:
+		idx := schema.ColumnIndex(graphElemNodeColumn)
+		if idx < 0 {
+			return nil, true, fmt.Errorf("%s() without an argument is only valid inside all(), any() or map() over inner_nodes()", fc.Name)
+		}
+		ref, _ = row[idx].(*graphNodeRef)
+		if ref == nil {
+			return nil, true, fmt.Errorf("%s() without an argument needs inner_nodes(): edges have no %s", fc.Name, fc.Name)
+		}
+	case 1:
+		r, ok := fc.Args[0].(*parser.ColumnRef)
+		if !ok {
+			return nil, true, fmt.Errorf("%s() expects a node variable", fc.Name)
+		}
+		idx := schema.ColumnIndex(graphNodeColumn(r.Name))
+		if idx < 0 {
+			return nil, true, fmt.Errorf("%s(): %q is not a node variable of the pattern", fc.Name, r.Name)
+		}
+		ref, _ = row[idx].(*graphNodeRef)
+		if ref == nil {
+			return nil, true, nil
+		}
+	default:
+		return nil, true, fmt.Errorf("%s() expects at most one argument", fc.Name)
+	}
+	key := graphKey(ref.id)
+	switch fc.Name {
+	case "node_id":
+		return fmt.Sprintf("%v", ref.id), true, nil
+	case "node_degree_in":
+		return int64(len(ref.g.reverseAdjacency()[key])), true, nil
+	default:
+		return int64(len(ref.g.Adjacency[key])), true, nil
+	}
 }

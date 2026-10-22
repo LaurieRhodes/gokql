@@ -89,14 +89,14 @@ func parseFork(rest string) (*ForkOp, error) {
 
 func parseFacet(rest string) (*FacetOp, error) {
 	s := strings.TrimSpace(rest)
-	if !strings.HasPrefix(strings.ToLower(s), "by ") {
+	if !strings.HasPrefix(keywordFold(s), "by ") {
 		return nil, fmt.Errorf("facet: expected 'by Column [, ...] [with (subquery)]'")
 	}
 	s = strings.TrimSpace(s[3:])
 	op := &FacetOp{}
 	cols := s
 	// "with (" at the top level starts the with clause
-	lower := strings.ToLower(s)
+	lower := keywordFold(s)
 	for i := 0; i+4 <= len(lower); i++ {
 		if lower[i:i+4] != "with" || (i > 0 && isIdentChar(lower[i-1])) {
 			continue

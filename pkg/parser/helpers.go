@@ -117,10 +117,28 @@ func splitAndTrim(s string, sep byte) []string {
 	return result
 }
 
-// findKeyword finds a case-insensitive keyword surrounded by word boundaries.
+// keywordFold lowercases ASCII letters and maps tabs and line breaks
+// to spaces, byte for byte, so indices into the result are indices into
+// s and a keyword written " by " also matches across a line break.
+func keywordFold(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			b[i] = c + ('a' - 'A')
+		case c == '\t' || c == '\n' || c == '\r':
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// findKeyword finds a case-insensitive keyword surrounded by word
+// boundaries, outside parentheses and quotes. Spaces in kw also match
+// tabs and line breaks.
 func findKeyword(s string, kw string) int {
-	lower := strings.ToLower(s)
-	kwLower := strings.ToLower(kw)
+	lower := keywordFold(s)
+	kwLower := keywordFold(kw)
 
 	idx := 0
 	for {
@@ -172,7 +190,7 @@ func findKeyword(s string, kw string) int {
 // reference in this parser.
 func parseDatabaseTableRef(source string) *DatabaseTableRef {
 	const prefix = "database("
-	lower := strings.ToLower(source)
+	lower := keywordFold(source)
 	if !strings.HasPrefix(lower, prefix) {
 		return nil
 	}
@@ -408,7 +426,7 @@ func isValidIdentifier(s string) bool {
 }
 
 func parseTableFunc(source string) *TableFunc {
-	lower := strings.ToLower(source)
+	lower := keywordFold(source)
 	for _, name := range []string{"csv", "json", "ndjson", "parquet", "vortex"} {
 		prefix := name + "("
 		if strings.HasPrefix(lower, prefix) && strings.HasSuffix(strings.TrimSpace(source), ")") {

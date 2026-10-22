@@ -485,13 +485,46 @@ func (e *Engine) bindStoredFunctionArgs(fnName string, declared []parser.Functio
 	if len(argTexts) > len(declared) {
 		return nil, fmt.Errorf("function %q: too many arguments (got %d, expected at most %d)", fnName, len(argTexts), len(declared))
 	}
+	// Positional arguments first, then named ones (param = value), as
+	// KQL allows: f(T, 5, mode="x") binds mode by name.
+	bound := make([]*string, len(declared))
+	named := false
+	for k := range argTexts {
+		text := argTexts[k]
+		if name, value, ok := splitNamedArgument(text); ok {
+			idx := -1
+			for i, p := range declared {
+				if p.Name == name {
+					idx = i
+				}
+			}
+			if idx >= 0 {
+				if bound[idx] != nil {
+					return nil, fmt.Errorf("function %q: argument %q given twice", fnName, name)
+				}
+				bound[idx] = &value
+				named = true
+				continue
+			}
+		}
+		if named {
+			return nil, fmt.Errorf("function %q: positional argument %d follows a named argument", fnName, k+1)
+		}
+		bound[k] = &argTexts[k]
+	}
 
 	emptySchema := types.Schema{}
 	emptyRow := types.Row{}
 
 	var lets []*parser.LetStatement
+	argTexts = make([]string, len(declared))
+	for i := range bound {
+		if bound[i] != nil {
+			argTexts[i] = *bound[i]
+		}
+	}
 	for i, param := range declared {
-		haveArg := i < len(argTexts)
+		haveArg := bound[i] != nil
 
 		if param.IsTabular {
 			if !haveArg {
@@ -672,4 +705,25 @@ func okResult(message string) *types.Table {
 	}})
 	t.AddRow(types.Row{message})
 	return t
+}
+
+// splitNamedArgument recognises a named call argument, Name = Value
+// (not Name == Value), returning its parts.
+func splitNamedArgument(text string) (name, value string, ok bool) {
+	t := strings.TrimSpace(text)
+	i := 0
+	for i < len(t) && (t[i] == '_' || (t[i] >= 'a' && t[i] <= 'z') || (t[i] >= 'A' && t[i] <= 'Z') || (i > 0 && t[i] >= '0' && t[i] <= '9')) {
+		i++
+	}
+	if i == 0 {
+		return "", "", false
+	}
+	j := i
+	for j < len(t) && (t[j] == ' ' || t[j] == '\t') {
+		j++
+	}
+	if j >= len(t) || t[j] != '=' || (j+1 < len(t) && t[j+1] == '=') {
+		return "", "", false
+	}
+	return t[:i], strings.TrimSpace(t[j+1:]), true
 }
