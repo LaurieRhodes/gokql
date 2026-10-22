@@ -28,6 +28,9 @@ const (
 	extKQLTimespan = "kql.timespan"
 	extKQLGUID     = "kql.guid"
 	extKQLDynamic  = "kql.dynamic"
+	// extKQLDecimal stores a decimal as its exact text (types.Decimal
+	// String), so no digit is lost to a binary representation.
+	extKQLDecimal = "kql.decimal"
 	// extKQLDictRef marks a column whose on-disk storage is plain
 	// integer codes (StorageDType: an unsigned PType) referencing a
 	// database-wide shared dictionary (see shareddict.go) rather than
@@ -46,6 +49,9 @@ func kqlTypeToVortexDType(kt types.KQLType) *vortex.DType {
 			StorageDType: &vortex.DType{Kind: vortex.DTypeUtf8}}
 	case types.TypeDynamic:
 		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLDynamic,
+			StorageDType: &vortex.DType{Kind: vortex.DTypeUtf8}}
+	case types.TypeDecimal:
+		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLDecimal,
 			StorageDType: &vortex.DType{Kind: vortex.DTypeUtf8}}
 	case types.TypeLong:
 		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64}
@@ -84,6 +90,8 @@ func vortexDTypeToKQL(dt *vortex.DType) types.KQLType {
 			return types.TypeGUID
 		case extKQLDynamic:
 			return types.TypeDynamic
+		case extKQLDecimal:
+			return types.TypeDecimal
 		case extKQLDictRef:
 			return types.TypeString
 		}

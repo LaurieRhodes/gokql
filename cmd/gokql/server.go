@@ -361,7 +361,15 @@ func kustoTable(name string, t *types.Table) kustoTableResult {
 			})
 		}
 		for _, row := range t.Rows {
-			table.Rows = append(table.Rows, append([]interface{}(nil), row...))
+			cells := append([]interface{}(nil), row...)
+			for i, v := range cells {
+				// ADX's REST protocol carries decimals as strings, so
+				// clients do not round them through float64.
+				if d, ok := v.(types.Decimal); ok {
+					cells[i] = d.String()
+				}
+			}
+			table.Rows = append(table.Rows, cells)
 		}
 	}
 	return table

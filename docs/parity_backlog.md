@@ -78,6 +78,9 @@ and ASIM parsers, which is this engine's main query population.
 | `search` (ADX form): `[T \|] search [kind=case_sensitive] [in (T1, T*)] Predicate`; bare terms (has/hasprefix/hassuffix/contains/regex by wildcard position), `Col:"term"`, `Col == ...`, `matches regex`, `and`/`or`/`not`, `search *`; every column via tostring; output `$table` + union kind=outer schema. Replaces the gokql hit-list form (TableName, Column, RowKey, Value) | `search.go`; the reference syntax table and examples; output schema checked against Kusto.Language (`$table, a, b_long, b_string, n, c` for heterogeneous tables) |
 | `union` kind=outer: a name's typed variants together at the name's first-seen position (`a, b_long, b_string, n, c`) | `buildUnionSchema`; both leg orders against Kusto.Language |
 | `sort by ['quoted name']` | `parseOrderBy` |
+| `decimal`: `TypeDecimal` (exact base-10, 38 digits; + − × exact, ÷ to 28 places), `decimal(...)` literals from source text, `todecimal`, `parse_version`, comparison and arithmetic with numbers (decimal dominates), `sum`/`avg`/`min`/`max`/`-if` exact, `abs`/`round`/`floor`/`bin`/`ceiling`, storage as `kql.decimal` text, REST cells as strings | `pkg/types/decimal.go`, `pkg/engine/decimal.go`; todecimal and both parse_version references exact; result types per Kusto.Language |
+| Unary minus on any operand (`-(x)`, `-abs(x)`); previously only before a numeric literal | `parsePrimary` |
+| Result types of `iff`/`iif`/`case`/`coalesce`/`max_of`/`min_of` (common type of the results; were always string, splitting union columns and sorting numbers as text) and of `abs`/`round`/`ceiling`, `real()`/`double()`/`long()`/`int()` | `unifyResultTypes`; Kusto.Language result types. Two odm-pendants stored functions (LogicFrontier, LogicBrief) that failed on the string-typed `coalesce` now run |
 
 ## P2 — real but less frequent
 
@@ -115,7 +118,7 @@ with their own examples.
 
 ## P3 — carried over
 
-Decimal type (`todecimal`, `parse_version`), `hash_combine`/
+`hash_combine`/
 `hash_many`, `series_fit_2lines` (the reference does not say which
 side owns the split point and shows no numbers), series signal
 processing (decompose, outliers, periods),

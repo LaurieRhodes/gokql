@@ -23,6 +23,7 @@ const (
 	TypeTimespan                // timespan — duration (100ns ticks)
 	TypeGUID                    // guid — UUID as string
 	TypeDynamic                 // dynamic — JSON as string
+	TypeDecimal                 // decimal — 128-bit decimal (Decimal); appended last so existing codes keep their values
 )
 
 // String returns the KQL type name.
@@ -46,6 +47,8 @@ func (t KQLType) String() string {
 		return "guid"
 	case TypeDynamic:
 		return "dynamic"
+	case TypeDecimal:
+		return "decimal"
 	default:
 		return "unknown"
 	}
@@ -72,6 +75,8 @@ func ParseType(s string) (KQLType, error) {
 		return TypeGUID, nil
 	case "dynamic":
 		return TypeDynamic, nil
+	case "decimal":
+		return TypeDecimal, nil
 	default:
 		return 0, fmt.Errorf("unknown KQL type: %q", s)
 	}
@@ -79,7 +84,7 @@ func ParseType(s string) (KQLType, error) {
 
 // IsNumeric returns true for types that support arithmetic and comparison.
 func (t KQLType) IsNumeric() bool {
-	return t == TypeLong || t == TypeInt || t == TypeReal || t == TypeDatetime || t == TypeTimespan
+	return t == TypeLong || t == TypeInt || t == TypeReal || t == TypeDatetime || t == TypeTimespan || t == TypeDecimal
 }
 
 // IsString returns true for types stored as UTF-8 strings.
@@ -126,6 +131,8 @@ func (t KQLType) DotNetTypeName() string {
 		return "System.TimeSpan"
 	case TypeDynamic:
 		return "System.Object"
+	case TypeDecimal:
+		return "System.Data.SqlTypes.SqlDecimal"
 	default: // TypeString, TypeGUID, and any future/unrecognized type
 		return "System.String"
 	}
@@ -225,6 +232,13 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 	switch typ {
 	case TypeString, TypeGUID, TypeDynamic:
 		return s, nil
+
+	case TypeDecimal:
+		d, ok := ParseDecimal(s)
+		if !ok {
+			return nil, fmt.Errorf("cannot parse %q as decimal", s)
+		}
+		return d, nil
 
 	case TypeLong:
 		v, err := strconv.ParseInt(s, 10, 64)
@@ -342,6 +356,9 @@ func FormatValue(v Value, typ KQLType) string {
 		return ""
 	}
 
+	if d, ok := v.(Decimal); ok {
+		return d.String()
+	}
 	switch typ {
 	case TypeString, TypeGUID, TypeDynamic:
 		if s, ok := v.(string); ok {
@@ -522,6 +539,18 @@ func CompareValues(a, b Value, typ KQLType) int {
 		return 1
 	}
 
+	// Decimals compare exactly with each other and with integers;
+	// against a real, numerically through float64.
+	_, da := a.(Decimal)
+	_, db := b.(Decimal)
+	if da || db || typ == TypeDecimal {
+		if x, ok := ToDecimal(a); ok {
+			if y, ok := ToDecimal(b); ok {
+				return x.Cmp(y)
+			}
+		}
+	}
+
 	switch typ {
 	case TypeString, TypeGUID, TypeDynamic:
 		// Defensive: declared type can disagree with the stored value
@@ -610,6 +639,9 @@ func toInt64(v Value) int64 {
 		return int64(x)
 	case int:
 		return int64(x)
+	case Decimal:
+		i, _ := x.Int64()
+		return i
 	case string:
 		// tolong("42") previously returned 0 unconditionally (no string
 		// case existed at all) — found live during the backlog pass.
@@ -637,6 +669,9 @@ func toInt32(v Value) int32 {
 		return int32(x)
 	case int:
 		return int32(x)
+	case Decimal:
+		i, _ := x.Int64()
+		return int32(i)
 	case string:
 		if f, err := strconv.ParseFloat(strings.TrimSpace(x), 64); err == nil {
 			return int32(f)
@@ -658,6 +693,8 @@ func toFloat64(v Value) float64 {
 		return float64(x)
 	case int:
 		return float64(x)
+	case Decimal:
+		return x.Float64()
 	case string:
 		if f, err := strconv.ParseFloat(strings.TrimSpace(x), 64); err == nil {
 			return f

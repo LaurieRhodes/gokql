@@ -91,7 +91,7 @@ func binResultType(eng *Engine, args []parser.Expr, schema *types.Schema) types.
 		return types.TypeLong
 	}
 	switch t := inferExprType(eng, args[0], schema); t {
-	case types.TypeDatetime, types.TypeTimespan:
+	case types.TypeDatetime, types.TypeTimespan, types.TypeDecimal:
 		return t
 	}
 	for _, a := range args {

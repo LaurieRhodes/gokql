@@ -356,6 +356,21 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 			}
 			return false, nil
 		}
+		if e.Op == "-" {
+			switch x := val.(type) {
+			case nil:
+				return nil, nil
+			case int64: // long, timespan (ticks)
+				return -x, nil
+			case int32:
+				return -x, nil
+			case float64:
+				return -x, nil
+			case types.Decimal:
+				return x.Neg(), nil
+			}
+			return nil, fmt.Errorf("unary minus: unsupported operand %v", val)
+		}
 		return nil, fmt.Errorf("unsupported unary op: %s", e.Op)
 
 	case *parser.FuncCall:
@@ -539,6 +554,10 @@ func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types
 			return nil, err
 		}
 		return ok, nil
+	}
+
+	if v, ok := evalDecimalOp(left, op, right); ok {
+		return v, nil
 	}
 
 	if v, ok, err := evalMixedNumeric(eng, left, op, right, schema, expr); ok {
@@ -735,6 +754,17 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			return types.TypeDatetime
 		case "bin", "floor", "bin_at":
 			return binResultType(eng, e.Args, schema)
+		case "abs", "round", "ceiling":
+			// Kusto.Language: the argument's type, except abs(int) is
+			// long (round and ceiling keep int).
+			if len(e.Args) == 0 {
+				return types.TypeReal
+			}
+			t := inferExprType(eng, e.Args[0], schema)
+			if t == types.TypeInt && e.Name == "abs" {
+				return types.TypeLong
+			}
+			return t
 		case "column_ifexists", "columnifexists":
 			return columnIfExistsType(eng, e, schema)
 		case "prev", "next":
@@ -754,9 +784,9 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 		case "dayofweek":
 			return types.TypeTimespan
 		case "datetime_diff", "dayofmonth", "getmonth", "getyear",
-			"hourofday", "monthofyear", "strlen", "tolong", "datetime_part", "datepart":
+			"hourofday", "monthofyear", "strlen", "tolong", "long", "datetime_part", "datepart":
 			return types.TypeLong
-		case "toint":
+		case "toint", "int":
 			// Found and fixed 2026-08-18 while implementing tohex():
 			// toint() was previously grouped with tolong() here and
 			// both returned TypeLong, silently erasing the int/long
@@ -771,7 +801,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			// works correctly once toint() is actually distinguishable
 			// from tolong() via inferExprType, not just by name.
 			return types.TypeInt
-		case "todouble", "toreal", "series_cosine_similarity", "series_dot_product", "array_sum", "jaccard_index":
+		case "todouble", "toreal", "real", "double", "series_cosine_similarity", "series_dot_product", "array_sum", "jaccard_index":
 			return types.TypeReal
 		case "tolower", "toupper", "tostring", "strcat", "format_datetime",
 			"substring", "replace_string", "replace_regex", "trim", "trim_start", "trim_end",
@@ -821,8 +851,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			"isascii", "isutf8":
 			return types.TypeBool
 		case "iff", "iif", "case", "coalesce", "max_of", "min_of":
-			// Return type depends on arguments — default to string
-			return types.TypeString
+			return unifyResultTypes(eng, resultArgs(e.Name, e.Args), schema)
 		default:
 			return types.TypeString
 		}
@@ -862,6 +891,11 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 		default:
 			return inferExprType(eng, e.Left, schema)
 		}
+	case *parser.UnaryExpr:
+		if e.Op == "not" {
+			return types.TypeBool
+		}
+		return inferExprType(eng, e.Expr, schema)
 	case *parser.AccessExpr:
 		// A fully-consumed literal dotted column (graph-match pattern
 		// variable) keeps its true type; any residual JSON descent —
@@ -1006,17 +1040,139 @@ func hasTermSuffix(s, suffix string, caseSensitive bool) bool {
 // real if either is real, otherwise long (int arithmetic widens to
 // long, as in ADX). A non-numeric left operand is returned unchanged.
 func numericPromote(lt, rt types.KQLType) types.KQLType {
-	isNum := func(t types.KQLType) bool { return t == types.TypeInt || t == types.TypeLong || t == types.TypeReal }
+	isNum := func(t types.KQLType) bool {
+		return t == types.TypeInt || t == types.TypeLong || t == types.TypeReal || t == types.TypeDecimal
+	}
 	if !isNum(lt) {
 		return lt
 	}
 	if !isNum(rt) {
 		return lt
 	}
+	// decimal dominates, real included (Kusto.Language: decimal + 1.0
+	// is decimal)
+	if lt == types.TypeDecimal || rt == types.TypeDecimal {
+		return types.TypeDecimal
+	}
 	if lt == types.TypeReal || rt == types.TypeReal {
 		return types.TypeReal
 	}
 	return types.TypeLong
+}
+
+// resultArgs returns the arguments whose values a conditional or
+// choice function can return: iff's two branches, case's values and
+// else, and every argument of coalesce, max_of and min_of.
+func resultArgs(name string, args []parser.Expr) []parser.Expr {
+	switch name {
+	case "iff", "iif":
+		if len(args) == 3 {
+			return args[1:]
+		}
+	case "case":
+		var out []parser.Expr
+		for i := 1; i < len(args); i += 2 {
+			out = append(out, args[i])
+		}
+		if len(args)%2 == 1 && len(args) > 0 {
+			out = append(out, args[len(args)-1])
+		}
+		return out
+	}
+	return args
+}
+
+// unifyResultTypes is Kusto.Language's common type for a conditional's
+// results: one type stays that type; numerics promote (int and long to
+// long, then real, then decimal); dynamic defers to the others; any
+// other mix is dynamic.
+func unifyResultTypes(eng *Engine, args []parser.Expr, schema *types.Schema) types.KQLType {
+	var ts []types.KQLType
+	for _, a := range args {
+		if lit, ok := a.(*parser.Literal); ok && lit.Value == nil && lit.Type == types.TypeString {
+			continue // untyped null
+		}
+		if t := inferExprType(eng, a, schema); t != types.TypeDynamic {
+			ts = append(ts, t)
+		}
+	}
+	if len(ts) == 0 {
+		if len(args) > 0 {
+			return types.TypeDynamic
+		}
+		return types.TypeString
+	}
+	out := ts[0]
+	isNum := func(t types.KQLType) bool {
+		return t == types.TypeInt || t == types.TypeLong || t == types.TypeReal || t == types.TypeDecimal
+	}
+	for _, t := range ts[1:] {
+		switch {
+		case t == out:
+		case isNum(t) && isNum(out):
+			out = numericPromote(out, t)
+		default:
+			return types.TypeDynamic
+		}
+	}
+	return out
+}
+
+// evalDecimalOp evaluates arithmetic and comparison when either operand
+// is a decimal and the other is a number: the result is decimal
+// (decimal dominates, as in Kusto.Language's typing), or null when out
+// of range or dividing by zero.
+func evalDecimalOp(left types.Value, op parser.BinaryOp, right types.Value) (types.Value, bool) {
+	_, ld := left.(types.Decimal)
+	_, rd := right.(types.Decimal)
+	if (!ld && !rd) || !isArithOrCompare(op) {
+		return nil, false
+	}
+	isNum := func(v types.Value) bool {
+		switch v.(type) {
+		case types.Decimal, int64, int32, int, float64:
+			return true
+		}
+		return false
+	}
+	if !isNum(left) || !isNum(right) {
+		return nil, false
+	}
+	a, ok1 := types.ToDecimal(left)
+	b, ok2 := types.ToDecimal(right)
+	if !ok1 || !ok2 {
+		return nil, true // NaN or infinity: no decimal value
+	}
+	var r types.Decimal
+	var ok bool
+	switch op {
+	case parser.OpEQ:
+		return a.Cmp(b) == 0, true
+	case parser.OpNEQ:
+		return a.Cmp(b) != 0, true
+	case parser.OpLT:
+		return a.Cmp(b) < 0, true
+	case parser.OpLTE:
+		return a.Cmp(b) <= 0, true
+	case parser.OpGT:
+		return a.Cmp(b) > 0, true
+	case parser.OpGTE:
+		return a.Cmp(b) >= 0, true
+	case parser.OpAdd:
+		r, ok = a.Add(b)
+	case parser.OpSub:
+		r, ok = a.Sub(b)
+	case parser.OpMul:
+		r, ok = a.Mul(b)
+	case parser.OpDiv:
+		r, ok = a.Quo(b)
+	case parser.OpMod:
+		r, ok = a.Rem(b)
+	}
+	if !ok {
+		return nil, true
+	}
+	return r, true
 }
 
 func isArithOrCompare(op parser.BinaryOp) bool {

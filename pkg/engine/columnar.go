@@ -94,6 +94,19 @@ func decodeColumnVec(e *Engine, tableName, colName string, arr *vortex.Array, kt
 // value boxes element i as a types.Value. Out-of-range indices yield nil
 // (ragged chunks from schema evolution).
 func (c *colVec) value(i int) types.Value {
+	if c.kt == types.TypeDecimal {
+		// Stored as text (kql.decimal); "" is a null cell.
+		if s, ok := c.rawValue(i).(string); ok && s != "" {
+			if d, ok := types.ParseDecimal(s); ok {
+				return d
+			}
+		}
+		return nil
+	}
+	return c.rawValue(i)
+}
+
+func (c *colVec) rawValue(i int) types.Value {
 	switch {
 	case c.i64 != nil:
 		if i < len(c.i64) {

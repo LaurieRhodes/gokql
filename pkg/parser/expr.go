@@ -707,6 +707,22 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 		return p.parseStringSequence()
 	}
 
+	// Unary minus on a non-literal operand: -(x), -abs(x), -decimal(1.5).
+	if ch == '-' {
+		j := p.pos + 1
+		for j < len(p.input) && (p.input[j] == ' ' || p.input[j] == '\t') {
+			j++
+		}
+		if j < len(p.input) && !(p.input[j] >= '0' && p.input[j] <= '9') && p.input[j] != '.' {
+			p.pos = j
+			operand, err := p.parsePrimary()
+			if err != nil {
+				return nil, err
+			}
+			return &UnaryExpr{Op: "-", Expr: operand}, nil
+		}
+	}
+
 	// Number literal (including negative)
 	if ch == '-' || (ch >= '0' && ch <= '9') {
 		return p.parseNumber()
@@ -1151,7 +1167,8 @@ var guidLiteralPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9
 func (p *exprParser) trySpecialTypedLiteral(lower string, openParenIdx int) (Expr, bool) {
 	isReal := lower == "real" || lower == "double"
 	isGUID := lower == "guid" || lower == "uuid" || lower == "uniqueid"
-	if !isReal && !isGUID {
+	isDecimal := lower == "decimal"
+	if !isReal && !isGUID && !isDecimal {
 		return nil, false
 	}
 	closeIdx := findMatchingParen(p.input, openParenIdx)
@@ -1173,6 +1190,14 @@ func (p *exprParser) trySpecialTypedLiteral(lower string, openParenIdx int) (Exp
 	case isGUID:
 		if guidLiteralPattern.MatchString(raw) {
 			lit = &Literal{Value: strings.ToLower(raw), Type: types.TypeGUID}
+		}
+	case isDecimal:
+		// decimal(123.45678), decimal(1e5), decimal(null): parsed from
+		// the source text, so the value never passes through float64.
+		if strings.EqualFold(raw, "null") {
+			lit = &Literal{Value: nil, Type: types.TypeDecimal}
+		} else if d, ok := types.ParseDecimal(raw); ok {
+			lit = &Literal{Value: d, Type: types.TypeDecimal}
 		}
 	}
 	if lit == nil {

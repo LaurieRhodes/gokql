@@ -43,6 +43,34 @@ func evalConvertFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		return types.ToInt64(val), true, nil
 
+	case "todecimal":
+		// Numbers exactly (reals via their shortest decimal form),
+		// numeric strings by parsing; anything else null.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("todecimal requires 1 argument")
+		}
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if d, ok := types.ToDecimal(val); ok {
+			return d, true, nil
+		}
+		return nil, true, nil
+
+	case "parse_version":
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("parse_version requires 1 argument")
+		}
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil || val == nil {
+			return nil, true, err
+		}
+		if d, ok := parseVersion(fmtV(val)); ok {
+			return d, true, nil
+		}
+		return nil, true, nil
+
 	case "todouble", "toreal", "real", "double":
 		// Bare real()/double() alias, same reasoning as int/long
 		// above — real KQL treats "real" and "double" as synonymous

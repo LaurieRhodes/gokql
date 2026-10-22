@@ -146,6 +146,10 @@ depend on the same `inferExprType`-driven static-type-resolution
 pattern `hash()` established in Sprint 24, not because of file
 organization alone.
 
+**Closed 2026-10-22:** `todecimal` and `parse_version` are implemented
+on the new `TypeDecimal` (`pkg/types/decimal.go`); both reference
+examples are exact. The notes below record why they were blocked.
+
 **`todecimal` scope note (2026-08-18, genuinely BLOCKED, same root
 cause as `parse_version`)**: real ADX's own docs confirm `todecimal()`
 returns a genuine `decimal` scalar (128-bit), verified via its own

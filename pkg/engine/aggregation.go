@@ -93,6 +93,9 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("sum requires 1 argument")
 		}
+		if inferExprType(eng, agg.Args[0], schema) == types.TypeDecimal {
+			return decimalSumAvg(eng, rows, agg.Args[0], nil, schema, false)
+		}
 		integral := sumIsIntegral(eng, agg.Args[0], schema)
 		sum := float64(0)
 		var isum int64
@@ -117,6 +120,9 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 	case "avg":
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("avg requires 1 argument")
+		}
+		if inferExprType(eng, agg.Args[0], schema) == types.TypeDecimal {
+			return decimalSumAvg(eng, rows, agg.Args[0], nil, schema, true)
 		}
 		sum := float64(0)
 		count := 0
@@ -971,6 +977,9 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("sumif requires 2 arguments")
 		}
+		if inferExprType(eng, agg.Args[0], schema) == types.TypeDecimal {
+			return decimalSumAvg(eng, rows, agg.Args[0], agg.Args[1], schema, false)
+		}
 		integral := sumIsIntegral(eng, agg.Args[0], schema)
 		sum := float64(0)
 		var isum int64
@@ -1003,6 +1012,9 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 		// avgif(expr, predicate)
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("avgif requires 2 arguments")
+		}
+		if inferExprType(eng, agg.Args[0], schema) == types.TypeDecimal {
+			return decimalSumAvg(eng, rows, agg.Args[0], agg.Args[1], schema, true)
 		}
 		sum := float64(0)
 		count := 0
@@ -1167,14 +1179,16 @@ func inferAggType(eng *Engine, funcName string, args []parser.Expr, schema *type
 	case "count", "countif", "dcount", "dcountif", "count_distinct", "count_distinctif":
 		return types.TypeLong
 	case "sum", "sumif":
-		// ADX: sum of int or long is long, of timespan is timespan,
-		// otherwise real.
+		// ADX: sum of int or long is long, of timespan is timespan, of
+		// decimal is decimal, otherwise real.
 		if len(args) > 0 {
 			switch t := inferExprType(eng, args[0], schema); t {
 			case types.TypeInt, types.TypeLong:
 				return types.TypeLong
 			case types.TypeTimespan:
 				return types.TypeTimespan
+			case types.TypeDecimal:
+				return types.TypeDecimal
 			}
 		}
 		return types.TypeReal
@@ -1182,7 +1196,12 @@ func inferAggType(eng *Engine, funcName string, args []parser.Expr, schema *type
 		return percentileResultType(eng, args, schema)
 	case "hll", "hll_if", "hll_merge", "tdigest", "tdigest_merge", "merge_tdigest", "buildschema":
 		return types.TypeDynamic
-	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "covariance", "covariancep", "covarianceif", "covariancepif":
+	case "avg", "avgif":
+		if len(args) > 0 && inferExprType(eng, args[0], schema) == types.TypeDecimal {
+			return types.TypeDecimal
+		}
+		return types.TypeReal
+	case "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "covariance", "covariancep", "covarianceif", "covariancepif":
 		return types.TypeReal
 	case "min", "max", "minif", "maxif":
 		if len(args) > 0 {
