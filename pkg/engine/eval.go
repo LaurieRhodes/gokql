@@ -789,6 +789,12 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		// Declared, argument-independent return types (Kusto.Language;
 		// func_signatures.go) take precedence over the hand-written
 		// cases below, which remain for argument-dependent functions.
+		if e.Name == "percentile_tdigest" {
+			if len(e.Args) == 3 {
+				return typeofArg(e.Args[2])
+			}
+			return types.TypeDynamic
+		}
 		if t, ok := scalarReturnTypes[e.Name]; ok {
 			return t
 		}

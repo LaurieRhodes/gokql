@@ -66,6 +66,9 @@ func findArgBestRow(maxExpr parser.Expr, rows []types.Row, schema *types.Schema,
 }
 
 func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, error) {
+	if v, ok, err := computeSketchAgg(agg, rows, schema); ok {
+		return v, err
+	}
 	switch agg.Function {
 	case "count":
 		return int64(len(rows)), nil
@@ -1177,6 +1180,8 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 		return types.TypeReal
 	case "percentile", "percentiles", "percentilew", "percentilesw":
 		return percentileResultType(args, schema)
+	case "hll", "hll_if", "hll_merge", "tdigest", "tdigest_merge", "merge_tdigest":
+		return types.TypeDynamic
 	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "covariance", "covariancep", "covarianceif", "covariancepif":
 		return types.TypeReal
 	case "min", "max", "minif", "maxif":

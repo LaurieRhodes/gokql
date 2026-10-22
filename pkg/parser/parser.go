@@ -2990,6 +2990,15 @@ func parseAggregation(s string) (*Aggregation, error) {
 	if agg.Name == "" {
 		agg.AutoNamed = true
 	}
+	if agg.Name == "" && (agg.Function == "tdigest_merge" || agg.Function == "merge_tdigest") {
+		agg.Name = "merge_tdigests_"
+		if len(agg.Args) > 0 {
+			if ref, ok := agg.Args[0].(*ColumnRef); ok {
+				agg.Name += ref.Name
+			}
+		}
+		return agg, nil
+	}
 	if agg.Name == "" && IsPercentileAgg(agg.Function) {
 		agg.Name = PercentileAutoName(agg, 0)
 		return agg, nil

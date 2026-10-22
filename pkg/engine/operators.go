@@ -123,6 +123,19 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 	// place of any ToScalarExpr) so inferExprType sees the toscalar()
 	// result's OWN real, now-known type, not an inaccurate fallback
 	// from an expression type it has no case for at all.
+	// A later assignment may use a column an earlier one in the same
+	// extend defines (extend a = x + 1, b = a * 2): ADX applies the
+	// assignments in order. Split at the first such reference and apply
+	// the parts in sequence; replace-in-place and column order come out
+	// the same as a single pass.
+	if split := extendSplitPoint(op.Assignments); split > 0 {
+		mid, err := e.applyExtend(input, &parser.ExtendOp{Assignments: op.Assignments[:split]})
+		if err != nil {
+			return nil, err
+		}
+		return e.applyExtend(mid, &parser.ExtendOp{Assignments: op.Assignments[split:]})
+	}
+
 	assignments := make([]parser.Assignment, len(op.Assignments))
 	for i, assign := range op.Assignments {
 		rewritten, err := substituteToScalars(e, assign.Expr)
@@ -187,6 +200,25 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 		result.AddRow(newRow)
 	}
 	return result, nil
+}
+
+// extendSplitPoint is the index of the first assignment that refers to
+// a column defined by an earlier assignment of the same extend, or 0.
+func extendSplitPoint(as []parser.Assignment) int {
+	defined := map[string]bool{}
+	for i, a := range as {
+		if i > 0 && len(defined) > 0 {
+			refs := map[string]bool{}
+			collectColumnRefs(a.Expr, refs)
+			for r := range refs {
+				if defined[strings.ToLower(r)] {
+					return i
+				}
+			}
+		}
+		defined[strings.ToLower(a.Name)] = true
+	}
+	return 0
 }
 
 func (e *Engine) applyTake(input *types.Table, op *parser.TakeOp) (*types.Table, error) {
