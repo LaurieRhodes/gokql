@@ -83,7 +83,7 @@ func RequiredColumns(schema *types.Schema, operators []parser.Operator) []string
 
 func isSchemaBarrier(op parser.Operator) bool {
 	switch op.(type) {
-	case *parser.SummarizeOp, *parser.CountOp, *parser.DistinctOp, *parser.SampleDistinctOp, *parser.JoinOp, *parser.UnionOp, *parser.GetSchemaOp:
+	case *parser.SummarizeOp, *parser.CountOp, *parser.DistinctOp, *parser.SampleDistinctOp, *parser.JoinOp, *parser.UnionOp, *parser.GetSchemaOp, *parser.TopNestedOp:
 		return true
 	default:
 		return false
@@ -232,6 +232,14 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 		// print produces its own output, no source columns needed
 	case *parser.RenderOp:
 		// render is a visualization hint; needs no columns
+	case *parser.TopNestedOp:
+		c.hasNarrowing = true
+		for _, l := range o.Levels {
+			c.collectExpr(l.Expr)
+			for _, a := range l.Agg.Args {
+				c.collectExpr(a)
+			}
+		}
 	case *parser.MvApplyOp:
 		// mv-apply copies all original columns onto expanded rows
 		c.needsAll = true

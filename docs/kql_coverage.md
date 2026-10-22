@@ -67,7 +67,7 @@ None — the full, cross-checked enumeration of real ADX query operators (2026-0
 
 ### Out of Scope
 
-facet, fork, top-nested, top-hitters,
+facet, fork, top-hitters,
 macro-expand, assert-schema, consume, execute-and-cache, reduce, externaldata / external_table / inline_external_table
 
 `externaldata`/`external_table`/`inline_external_table` were explicitly deprioritized (2026-08-14) — not needed for this project's current use; `inline_external_table` is the same external-table family under a different syntactic form, not a separate capability. `consume`'s own real purpose (distributed query-cost estimation, deliberately not transmitting data between cluster nodes) has no meaning for a single-node engine with no cluster to avoid transmitting across — out of scope for that reason, not overlooked. `partition`'s own `{SubQueryWithSource}` braces form (legacy-strategy-only in real ADX, an explicit tabular source referencing the current partition key via `toscalar(Column)`) is also out of scope — a query using it gets a clear, explicit parse error, not silent mis-parsing; the far more common `(SubQuery)` implicit-source form covers native/shuffle/legacy alike here since this engine has no distributed execution to differentiate.

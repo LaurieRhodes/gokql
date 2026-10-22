@@ -966,6 +966,8 @@ func (e *Engine) applyOperator(input *types.Table, op parser.Operator) (*types.T
 		return input, nil
 	case *parser.UnionOp:
 		return e.applyUnion(input, o)
+	case *parser.TopNestedOp:
+		return e.applyTopNested(input, o)
 	case *parser.MvExpandOp:
 		return e.applyMvExpand(input, o)
 	case *parser.MvApplyOp:

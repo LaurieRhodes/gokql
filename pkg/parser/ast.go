@@ -1646,3 +1646,23 @@ type PipedCommand struct {
 }
 
 func (*PipedCommand) statementNode() {}
+
+// TopNestedOp is top-nested: hierarchical top-N, one clause per level,
+// each "top-nested [N] of [Name =] Expr [with others = Const] by
+// [Name =] Aggregation [asc | desc]".
+type TopNestedOp struct {
+	Levels []TopNestedLevel
+}
+
+func (*TopNestedOp) operatorNode() {}
+
+// TopNestedLevel is one top-nested clause.
+type TopNestedLevel struct {
+	N         int64 // 0: all values
+	Name      string
+	Expr      Expr
+	HasOthers bool
+	Others    Expr
+	Agg       Aggregation // Agg.Name is the aggregate column name
+	Asc       bool
+}

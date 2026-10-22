@@ -32,6 +32,92 @@ func unwrapMaterialize(source string) (string, bool) {
 	return strings.TrimSpace(rest[1:closeIdx]), true
 }
 
+// parseTopNested parses the comma-separated top-nested clauses.
+func parseTopNested(seg string) (*TopNestedOp, error) {
+	op := &TopNestedOp{}
+	for i, clause := range splitRespectingParens(seg, ',') {
+		clause = strings.TrimSpace(clause)
+		lower := strings.ToLower(clause)
+		if !strings.HasPrefix(lower, "top-nested") {
+			return nil, fmt.Errorf("top-nested clause %d: expected 'top-nested', got %q", i+1, clause)
+		}
+		rest := strings.TrimSpace(clause[len("top-nested"):])
+		var lvl TopNestedLevel
+
+		ofIdx := findKeyword(" "+rest, " of ")
+		if ofIdx < 0 {
+			return nil, fmt.Errorf("top-nested clause %d: expected 'of'", i+1)
+		}
+		if nText := strings.TrimSpace((" " + rest)[:ofIdx]); nText != "" {
+			n, err := strconv.ParseInt(nText, 10, 64)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("top-nested clause %d: N must be a non-negative integer, got %q", i+1, nText)
+			}
+			lvl.N = n
+		}
+		rest = strings.TrimSpace((" " + rest)[ofIdx+len(" of "):])
+
+		byIdx := findKeyword(rest, " by ")
+		if byIdx < 0 {
+			return nil, fmt.Errorf("top-nested clause %d: expected 'by'", i+1)
+		}
+		exprPart := strings.TrimSpace(rest[:byIdx])
+		aggPart := strings.TrimSpace(rest[byIdx+len(" by "):])
+
+		if w := findKeyword(exprPart, " with others"); w >= 0 {
+			tail := strings.TrimSpace(exprPart[w+len(" with others"):])
+			if !strings.HasPrefix(tail, "=") {
+				return nil, fmt.Errorf("top-nested clause %d: expected 'with others = value'", i+1)
+			}
+			c, err := ParseExpr(strings.TrimSpace(tail[1:]))
+			if err != nil {
+				return nil, fmt.Errorf("top-nested clause %d: others value: %w", i+1, err)
+			}
+			lvl.HasOthers, lvl.Others = true, c
+			exprPart = strings.TrimSpace(exprPart[:w])
+		}
+		if eq := assignmentEqIndex(exprPart); eq > 0 {
+			lvl.Name = strings.TrimSpace(exprPart[:eq])
+			exprPart = strings.TrimSpace(exprPart[eq+1:])
+		}
+		e, err := ParseExpr(exprPart)
+		if err != nil {
+			return nil, fmt.Errorf("top-nested clause %d: %w", i+1, err)
+		}
+		lvl.Expr = e
+		if lvl.Name == "" {
+			if ref, ok := e.(*ColumnRef); ok {
+				lvl.Name = ref.Name
+			} else {
+				lvl.Name = fmt.Sprintf("Column%d", i+1)
+			}
+		}
+
+		al := strings.ToLower(aggPart)
+		switch {
+		case strings.HasSuffix(al, " asc"):
+			lvl.Asc = true
+			aggPart = strings.TrimSpace(aggPart[:len(aggPart)-4])
+		case strings.HasSuffix(al, " desc"):
+			aggPart = strings.TrimSpace(aggPart[:len(aggPart)-5])
+		}
+		named := assignmentEqIndex(aggPart) > 0
+		agg, err := parseAggregation(aggPart)
+		if err != nil {
+			return nil, fmt.Errorf("top-nested clause %d: %w", i+1, err)
+		}
+		if !named {
+			agg.Name = "aggregated_" + lvl.Name
+		}
+		lvl.Agg = *agg
+		op.Levels = append(op.Levels, lvl)
+	}
+	if len(op.Levels) == 0 {
+		return nil, fmt.Errorf("top-nested: no clauses")
+	}
+	return op, nil
+}
+
 // stripLineComments removes // comments (to the end of the line)
 // outside string literals. Quoted text is kept byte for byte: "..."
 // and '...' with backslash escapes, and @-prefixed verbatim strings
@@ -1740,6 +1826,11 @@ func parseOperator(seg string) (Operator, error) {
 	// | sample-distinct NumberOfValues of ColumnName
 	if strings.HasPrefix(lower, "sample-distinct ") {
 		return parseSampleDistinct(seg[len("sample-distinct "):])
+	}
+
+	// | top-nested [N] of Expr [with others = C] by Agg [asc|desc], ...
+	if strings.HasPrefix(lower, "top-nested ") || lower == "top-nested" {
+		return parseTopNested(seg)
 	}
 
 	// | top N by col [asc|desc]
