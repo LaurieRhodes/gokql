@@ -90,13 +90,24 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("sum requires 1 argument")
 		}
+		integral := sumIsIntegral(agg.Args[0], schema)
 		sum := float64(0)
+		var isum int64
 		for _, row := range rows {
 			val, err := evalExpr(agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
+			if integral {
+				if n, ok := toInt64(val); ok {
+					isum += n
+				}
+				continue
+			}
 			sum += types.ToFloat64(val)
+		}
+		if integral {
+			return isum, nil
 		}
 		return sum, nil
 
@@ -935,7 +946,9 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("sumif requires 2 arguments")
 		}
+		integral := sumIsIntegral(agg.Args[0], schema)
 		sum := float64(0)
+		var isum int64
 		for _, row := range rows {
 			predVal, err := evalExpr(agg.Args[1], schema, row)
 			if err != nil {
@@ -948,7 +961,16 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
+			if integral {
+				if n, ok := toInt64(val); ok {
+					isum += n
+				}
+				continue
+			}
 			sum += types.ToFloat64(val)
+		}
+		if integral {
+			return isum, nil
 		}
 		return sum, nil
 
@@ -1105,11 +1127,33 @@ func inferValType(v types.Value) types.KQLType {
 	}
 }
 
+// sumIsIntegral reports whether sum/sumif over expr accumulates exactly
+// in int64: int, long and timespan (100 ns ticks) arguments.
+func sumIsIntegral(expr parser.Expr, schema *types.Schema) bool {
+	switch inferExprType(expr, schema) {
+	case types.TypeInt, types.TypeLong, types.TypeTimespan:
+		return true
+	}
+	return false
+}
+
 func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) types.KQLType {
 	switch funcName {
 	case "count", "countif", "dcount", "dcountif", "count_distinct", "count_distinctif":
 		return types.TypeLong
-	case "sum", "avg", "sumif", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "percentile", "percentiles", "covariance", "covariancep", "covarianceif", "covariancepif":
+	case "sum", "sumif":
+		// ADX: sum of int or long is long, of timespan is timespan,
+		// otherwise real.
+		if len(args) > 0 {
+			switch t := inferExprType(args[0], schema); t {
+			case types.TypeInt, types.TypeLong:
+				return types.TypeLong
+			case types.TypeTimespan:
+				return types.TypeTimespan
+			}
+		}
+		return types.TypeReal
+	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "percentile", "percentiles", "covariance", "covariancep", "covarianceif", "covariancepif":
 		return types.TypeReal
 	case "min", "max", "minif", "maxif":
 		if len(args) > 0 {

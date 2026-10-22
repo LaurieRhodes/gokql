@@ -317,6 +317,10 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 		if ticks, err := parseKQLTimespan(s); err == nil {
 			return ticks, nil
 		}
+		// KQL literal form: 2d, 1.5h, 30m, 10s, 100ms, 10microsecond, 1tick
+		if ticks, ok := parseTimespanSuffixLiteral(s); ok {
+			return ticks, nil
+		}
 		// Try Go duration format: 1h30m, 5m, etc.
 		if d, err := time.ParseDuration(s); err == nil {
 			return d.Nanoseconds() / 100, nil // Convert to 100ns ticks
@@ -672,4 +676,42 @@ func ToFloat64(v Value) float64 {
 // ToInt64 is the exported version for use by other packages.
 func ToInt64(v Value) int64 {
 	return toInt64(v)
+}
+
+// parseTimespanSuffixLiteral parses a KQL timespan literal written as
+// a number and a unit suffix (2d, 1.5h, 30m, 10s, 100ms, 10us,
+// 10microsecond, 1tick), as accepted in queries, so that the same text
+// is accepted in datatable rows and ingested values.
+func parseTimespanSuffixLiteral(s string) (int64, bool) {
+	i := 0
+	for i < len(s) && (s[i] == '.' || s[i] == '-' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	if i == 0 || i == len(s) {
+		return 0, false
+	}
+	val, err := strconv.ParseFloat(s[:i], 64)
+	if err != nil {
+		return 0, false
+	}
+	var nanos float64
+	switch strings.ToLower(s[i:]) {
+	case "d", "day", "days":
+		nanos = 24 * 60 * 60 * 1e9
+	case "h", "hr", "hrs", "hour", "hours":
+		nanos = 60 * 60 * 1e9
+	case "m", "min", "minute", "minutes":
+		nanos = 60 * 1e9
+	case "s", "sec", "second", "seconds":
+		nanos = 1e9
+	case "ms", "milli", "millis", "millisecond", "milliseconds":
+		nanos = 1e6
+	case "us", "microsecond", "microseconds":
+		nanos = 1e3
+	case "tick", "ticks":
+		return int64(val), true
+	default:
+		return 0, false
+	}
+	return int64(val * nanos / 100), true
 }

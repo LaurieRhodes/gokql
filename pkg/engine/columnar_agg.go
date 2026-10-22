@@ -351,12 +351,13 @@ func evalExactPred(p exactPred, c *colVec, sel []bool) {
 // sum for sum/avg, the typed min/max fields (guarded by set) for
 // min/max.
 type aggAccum struct {
-	cnt int64
-	sum float64
-	i64 int64
-	i32 int32
-	f64 float64
-	set bool
+	cnt  int64
+	sum  float64
+	isum int64 // exact sum of integer cells (int, long, timespan)
+	i64  int64
+	i32  int32
+	f64  float64
+	set  bool
 }
 
 // accumulate folds one cell into an accumulator with the row engine's
@@ -370,7 +371,14 @@ func accumulate(a *aggAccum, fn string, isMax bool, c *colVec, row int) {
 	}
 	switch fn {
 	case "sum":
-		a.sum += cellFloat(c, row)
+		switch {
+		case c.i64 != nil:
+			a.isum += c.i64[row]
+		case c.i32 != nil:
+			a.isum += int64(c.i32[row])
+		default:
+			a.sum += cellFloat(c, row)
+		}
 	case "avg":
 		a.sum += cellFloat(c, row)
 		a.cnt++
@@ -448,7 +456,7 @@ func finalizeAccum(a *aggAccum, fn string, k vecKind) types.Value {
 	case "count":
 		return a.cnt
 	case "sum":
-		return a.sum
+		return a.sum // integral sums are taken from isum by the caller
 	case "avg":
 		if a.cnt == 0 {
 			return nil
@@ -487,6 +495,7 @@ func mergeAccum(dst, src *aggAccum, fn string, isMax bool) {
 		dst.sum += src.sum
 	case "sum":
 		dst.sum += src.sum
+		dst.isum += src.isum
 	case "min", "max":
 		if !src.set {
 			return
@@ -881,6 +890,14 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 		row := make(types.Row, len(outSchema.Columns))
 		for ai := 0; ai < nAggs; ai++ {
 			row[ai] = finalizeAccum(&accums[gi][ai], aggFns[ai], aggRepKind[ai])
+			if aggFns[ai] == "sum" {
+				// Same static rule as the row path (inferAggType):
+				// int/long/timespan sums are exact int64.
+				switch outSchema.Columns[ai].Type {
+				case types.TypeLong, types.TypeTimespan:
+					row[ai] = accums[gi][ai].isum + int64(accums[gi][ai].sum)
+				}
+			}
 		}
 		copy(row[nAggs:], byVals[gi])
 		result.AddRow(row)

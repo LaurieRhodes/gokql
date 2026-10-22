@@ -18,9 +18,9 @@ func TestPartitionMultiOperatorSubquery(t *testing.T) {
 	tbl := queryResult(t, `datatable(g:string, v:long) ["a",10,"a",30,"b",5,"b",100,"b",7] | partition by g (summarize total=sum(v) by g) | sort by g asc`)
 	expectRows(t, tbl, 2)
 	totalIdx := tbl.Schema.ColumnIndex("total")
-	// sum() over long correctly promotes to real (float64), matching
-	// real ADX's own sum() semantics — not int64.
-	if tbl.Rows[0][totalIdx] != float64(40) || tbl.Rows[1][totalIdx] != float64(112) {
+	// sum() over long is long: Kusto.Language declares sum as
+	// ReturnTypeKind.Parameter0Promoted, which only widens int to long.
+	if tbl.Rows[0][totalIdx] != int64(40) || tbl.Rows[1][totalIdx] != int64(112) {
 		t.Errorf("expected totals 40 (a) and 112 (b), got %v and %v", tbl.Rows[0][totalIdx], tbl.Rows[1][totalIdx])
 	}
 }

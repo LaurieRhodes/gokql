@@ -12,6 +12,11 @@ operator options, window functions, literal syntax and plugins, which
 those lists never covered; `kql_coverage.md`'s "0 known gaps" for
 tabular operators held for operator names, not for their options.
 
+Signatures (argument and return types, optional parameters) are
+checked against Microsoft's own KQL front end, `Kusto.Language`
+(npm `@kusto/language-service-next`, `Kusto.Language.Bridge.js`),
+where the reference pages are silent.
+
 Priority is by frequency in Sentinel analytics rules, hunting queries
 and ASIM parsers, which is this engine's main query population.
 
@@ -30,8 +35,6 @@ and ASIM parsers, which is this engine's main query population.
 | Default parameter values, `(x:long = 2)` | "unknown KQL type" |
 | `materialize()` | parse error |
 | `bag_pack(...)` typed as string by `inferExprType`, so a following `evaluate bag_unpack` rejects it | type inference bug |
-| `sum`/`sumif` of a `long` column returns `real`; ADX returns `long` (row and columnar aggregation paths) | type parity bug |
-| `datatable` rejects timespan literals (`2d`, `1h`) in a `timespan` column | "cannot parse as timespan" |
 | Literals: hex `0x1F`, `guid(...)`, `real(+inf)`/`real(-inf)`/`real(nan)`, obfuscated `h"..."`, adjacent string-literal concatenation `'a' 'b'` | parse errors |
 
 ## Closed
@@ -42,6 +45,8 @@ and ASIM parsers, which is this engine's main query population.
 | `mv-expand` `kind=`/`bagexpansion=`, `with_itemindex=`, per-column `to typeof(T)`, `limit N`, legacy `mvexpand` default limit 128 | `mv_expand.go`; all seven mv-expand reference examples exact. Two existing bugs fixed: property bags were not expanded at all, and a bag zipped with an array came out null. Typed expansion is cast-only (non-conforming elements are null); `mv-apply ... to typeof(T)` now casts too, where it previously only relabelled the column |
 | `lookup` with a subquery right side; `hint.*` on `summarize`, `join` and `lookup` | right side bracket-matched so an inner `on` is not taken for the lookup's; hints stripped by one shared helper |
 | `summarize` output order: group-by columns, then aggregates | `byColumnsFirst`, applied to the row and columnar paths; seven tests that asserted the old positional order updated |
+| `sum`/`sumif` typed as the argument promoted (int/long to long, timespan kept, real kept), exact int64 accumulation on row and columnar paths | signature from Kusto.Language (`ReturnTypeKind.Parameter0Promoted`); `partition` test that asserted real corrected |
+| `datatable`/ingest timespan literals (`2d`, `1.5h`, `100ms`, `1tick`) | `types.ParseValue` |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
