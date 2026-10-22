@@ -455,17 +455,9 @@ func TestScopeIsRefCountedNotRestored(t *testing.T) {
 	}
 }
 
-// TestWidthGuardSurvivesExplicitModelColumn pins item 7's fix: an
-// explicit Model column waives the model-NAME check (the caller owns
-// that claim) but must not waive the WIDTH check, which is never a
-// judgement call.
-//
-// NOTE a design ambiguity this test surfaced: the Model column is both
-// an INPUT (".embed-into: use this model for this row") and an OUTPUT
-// ("this model produced this vector"). A backend that cannot switch
-// models per call rejects the input reading outright, so the two
-// meanings are not separable today. Worth resolving; see
-// docs/embeddings.md.
+// TestWidthGuardSurvivesExplicitModelColumn: a source Model column
+// requests a model for the run (embed_model_test.go); the width check
+// still applies to whatever that model returns.
 func TestWidthGuardSurvivesExplicitModelColumn(t *testing.T) {
 	var width int64 = 16
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

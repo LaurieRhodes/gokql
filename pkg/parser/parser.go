@@ -809,13 +809,42 @@ func parseCommand(input string) (Statement, error) {
 		if idx < 0 {
 			return nil, fmt.Errorf(".embed-into requires <| delimiter")
 		}
-		tableName := strings.TrimSpace(rest[:idx])
+		target := strings.TrimSpace(rest[:idx])
 		queryStr := strings.TrimSpace(rest[idx+2:])
 		query, err := parseQuery(queryStr)
 		if err != nil {
 			return nil, fmt.Errorf(".embed-into query: %w", err)
 		}
-		return &EmbedIntoCmd{TableName: tableName, Query: query.(*Query)}, nil
+		cmd := &EmbedIntoCmd{TableName: target, Query: query.(*Query)}
+		// .embed-into T with (model="name") <| query
+		if sp := strings.IndexAny(target, " \t("); sp > 0 {
+			cmd.TableName = target[:sp]
+			props := strings.TrimSpace(target[sp:])
+			lp := strings.ToLower(props)
+			if !strings.HasPrefix(lp, "with (") && !strings.HasPrefix(lp, "with(") {
+				return nil, fmt.Errorf(".embed-into %s: expected with (...) before <|, got %q", cmd.TableName, props)
+			}
+			open := strings.Index(props, "(")
+			closeIdx := findMatchingParen(props, open)
+			if closeIdx < 0 || strings.TrimSpace(props[closeIdx+1:]) != "" {
+				return nil, fmt.Errorf(".embed-into %s: malformed with (...) clause", cmd.TableName)
+			}
+			for _, kv := range splitAndTrim(props[open+1:closeIdx], ',') {
+				eq := strings.Index(kv, "=")
+				if eq < 0 {
+					return nil, fmt.Errorf(".embed-into %s: malformed property %q, expected name=value", cmd.TableName, kv)
+				}
+				key := strings.ToLower(strings.TrimSpace(kv[:eq]))
+				val := strings.Trim(strings.TrimSpace(kv[eq+1:]), `"'`)
+				switch key {
+				case "model":
+					cmd.Model = val
+				default:
+					return nil, fmt.Errorf(".embed-into %s: unknown property %q (supported: model)", cmd.TableName, key)
+				}
+			}
+		}
+		return cmd, nil
 	}
 
 	if strings.HasPrefix(lower, ".set ") {

@@ -27,7 +27,7 @@ var helpEntries = []helpEntry{
 	{".compact table T", "discovery mode: merge T's extents into one, superseding (renaming, not deleting) the old ones"},
 	{".gc table T", "discovery mode: physically remove files .compact superseded — safe to run any time"},
 	{chunkFileHelpCmd, "split a markdown file into paragraph-level chunks and write into T"},
-	{".embed-into T <| query", "bulk-embed a Text column via Ollama's batch API (fewer round trips than per-row embed_text)"},
+	{".embed-into T [with (model=\"name\")] <| query", "bulk-embed the query's Text column into T, resumably; one model per table"},
 	{".show tables", "list tables with row/extent counts"},
 	{".show table T extents", "list T's individual extents"},
 	{".show database", "database-level summary"},

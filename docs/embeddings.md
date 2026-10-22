@@ -115,10 +115,9 @@ that long inputs are not silently truncated.
 vectors that compare without error and rank nonsense.
 `cosineSimilarity` only catches a width mismatch. `.embed-into`
 therefore records the model that produced each vector and refuses to
-append vectors from one model to a table holding another's. That guard
-is bypassed if the query projects an explicit `Model` column, on the
-basis that a caller who states the model per row has made the claim
-deliberately.
+append vectors from one model to a table holding another's. The guard
+has no bypass: the recorded model comes from the backend, not the
+query (see "One table, one model" below).
 
 **Constant arguments in a per-row context.** KQL evaluates scalar
 functions once per row. `embed_text("my query")` inside an `extend`
@@ -155,11 +154,24 @@ query:
 Whether `.chunk-file` should emit globally unique Ids itself is an
 open question; it would be a behaviour change to that command.
 
-**The `Model` column means two things.** In `.embed-into` it is read
-as an INPUT ("use this model for this row") and written as an OUTPUT
-("this model produced this vector"). A backend that cannot switch
-models per call rejects the input reading, so the two meanings are not
-separable today. Unresolved design question.
+**One table, one model.** The stored `Model` column is provenance: the
+name of the backend that produced the vector, recorded by the engine
+and never taken from the query. Vectors from two models compare
+without error and rank nonsense, so a table holds one model's vectors
+and `.embed-into` refuses to append another model's.
+
+The model for a run is chosen with a property:
+
+```
+.embed-into E with (model="nomic-embed-text") <| Chunks | project Id, Text, Provenance
+```
+
+Without it, the configured backend's model is used. A source column
+named `Model` is accepted as the same request when it holds a single
+value; a source whose rows name different models is refused before
+anything is embedded. Embed each model into its own table. A backend
+that cannot switch models (a fixed local runtime) refuses a request
+for another model.
 
 **`.embed-into` commits in chunks of `EmbedCommitRows` (500).** Each
 chunk is embedded and written as one durable extent; a failure aborts

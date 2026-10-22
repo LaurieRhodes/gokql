@@ -1485,6 +1485,9 @@ func (*FindOp) operatorNode() {}
 type EmbedIntoCmd struct {
 	TableName string
 	Query     *Query
+	// Model, from `with (model="...")`, requests the embedding model
+	// for the whole run ("" = the configured backend's model).
+	Model string
 }
 
 func (*EmbedIntoCmd) statementNode() {}

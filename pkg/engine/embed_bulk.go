@@ -92,7 +92,15 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 			dup, n, len(src.Rows), distinctIdCount(src, idIdx))
 	}
 
-	em := e.resolveEmbedder()
+	// One run, one model: the stored Model column is provenance, so a
+	// table must not mix vector spaces (they rank against each other
+	// without error). The model is requested once, by with (model=)
+	// or a constant source Model column, and recorded from the
+	// backend that does the work.
+	em, err := resolveRunModel(e.resolveEmbedder(), cmd.Model, src, modelIdx)
+	if err != nil {
+		return nil, fmt.Errorf(".embed-into: %w", err)
+	}
 
 	// Resolve the target BEFORE embedding anything. The old order
 	// embedded first and resolved the table afterwards, which meant a
@@ -120,7 +128,7 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 	// silently left the OLD vectors in place. A no-op that looks like
 	// a success is worse than an error, so the table's existing model
 	// is compared before anything else happens.
-	if err := e.checkModelIdentity(cmd.TableName, tableDef, em, modelIdx); err != nil {
+	if err := e.checkModelIdentity(cmd.TableName, tableDef, em); err != nil {
 		return nil, fmt.Errorf(".embed-into: %w", err)
 	}
 
@@ -172,7 +180,7 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 			texts[i] = fmt.Sprintf("%v", src.Rows[ri][textIdx])
 		}
 
-		vecs, err := embedAllRows(ctx, em, texts, src, chunk, modelIdx)
+		vecs, err := embedAllRows(ctx, em, texts)
 		if err != nil && ctx.Err() != nil {
 			// Cancelled mid-chunk: the chunk in flight is discarded,
 			// so report it the same way as between chunks.
@@ -205,7 +213,7 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 			tableDef = e.Catalog.GetTable(cmd.TableName)
 		}
 
-		rows, err := buildEmbedRows(src, chunk, vecs, tableDef, em, idIdx, modelIdx, provIdx)
+		rows, err := buildEmbedRows(src, chunk, vecs, tableDef, em, idIdx, provIdx)
 		if err != nil {
 			return nil, fmt.Errorf(".embed-into: %w", err)
 		}
@@ -299,7 +307,7 @@ func (e *Engine) existingEmbedIds(name string, tableDef *catalog.Table) (map[str
 // if the table was pre-created), matching .set-or-append's
 // column-order independence.
 func buildEmbedRows(src *types.Table, chunk []int, vecs [][]float64,
-	tableDef *catalog.Table, em embed.Embedder, idIdx, modelIdx, provIdx int) ([]types.Row, error) {
+	tableDef *catalog.Table, em embed.Embedder, idIdx, provIdx int) ([]types.Row, error) {
 
 	rows := make([]types.Row, len(chunk))
 	for i, ri := range chunk {
@@ -310,11 +318,9 @@ func buildEmbedRows(src *types.Table, chunk []int, vecs [][]float64,
 		// Two vectors of the same width from different models compare
 		// without error and rank nonsense, so this value is the only
 		// thing standing between a backend swap and silently wrong
-		// recall. It comes from the backend that did the work.
+		// recall. It comes from the backend that did the work, never
+		// from the caller's query.
 		model := em.Name()
-		if modelIdx >= 0 && row[modelIdx] != nil {
-			model = fmt.Sprintf("%v", row[modelIdx])
-		}
 		prov := ""
 		if provIdx >= 0 && row[provIdx] != nil {
 			prov = fmt.Sprintf("%v", row[provIdx])
@@ -354,58 +360,60 @@ func columnNames(s *types.Schema) []string {
 	return names
 }
 
-// embedAllRows produces one vector per text, honouring a per-row Model
-// column where present and where the backend supports switching.
-// Contiguous runs of the same model go through in a single EmbedBatch
-// call, so the common case (no Model column at all, or one constant
-// value) is exactly one batched pass.
-func embedAllRows(ctx context.Context, em embed.Embedder, texts []string,
-	src *types.Table, chunk []int, modelIdx int) ([][]float64, error) {
-
-	rowModel := func(i int) string {
-		if modelIdx >= 0 && src.Rows[chunk[i]][modelIdx] != nil {
-			return fmt.Sprintf("%v", src.Rows[chunk[i]][modelIdx])
-		}
-		return ""
-	}
-
-	out := make([][]float64, len(texts))
-	for start := 0; start < len(texts); {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		want := rowModel(start)
-		end := start + 1
-		for end < len(texts) && rowModel(end) == want {
-			end++
-		}
-
-		target := em
-		if want != "" && want != em.Name() {
-			sw, ok := em.(embed.ModelSwitcher)
-			if !ok {
-				return nil, fmt.Errorf("row %d requests model %q but backend %q cannot switch models per call",
-					start, want, em.Name())
+// resolveRunModel returns the embedder for one .embed-into run. The
+// model is requested by with (model=...) or by a source Model column,
+// which must then hold a single value: a table holds one model's
+// vectors, so per-row models are refused rather than mixed.
+func resolveRunModel(base embed.Embedder, requested string, src *types.Table, modelIdx int) (embed.Embedder, error) {
+	if modelIdx >= 0 {
+		var col string
+		for i, row := range src.Rows {
+			if row[modelIdx] == nil {
+				continue
 			}
-			t, err := sw.WithModel(want)
-			if err != nil {
-				return nil, err
+			v := fmtV(row[modelIdx])
+			if v == "" {
+				continue
 			}
-			target = t
+			if col == "" {
+				col = v
+			} else if v != col {
+				return nil, fmt.Errorf("source Model column holds more than one model (%q, and %q at row %d); "+
+					"one embeddings table holds one model's vectors -- embed each model into its own table, "+
+					"choosing the model with .embed-into T with (model=\"name\")", col, v, i)
+			}
 		}
-
-		batch, err := target.EmbedBatch(ctx, texts[start:end])
-		if err != nil {
-			return nil, fmt.Errorf("rows %d-%d: %w", start, end, err)
+		if col != "" {
+			if requested != "" && requested != col {
+				return nil, fmt.Errorf("with (model=%q) conflicts with the source Model column %q", requested, col)
+			}
+			requested = col
 		}
-		if len(batch) != end-start {
-			return nil, fmt.Errorf("rows %d-%d: backend returned %d embeddings for %d inputs",
-				start, end, len(batch), end-start)
-		}
-		copy(out[start:end], batch)
-		start = end
 	}
-	return out, nil
+	if requested == "" || requested == base.Name() {
+		return base, nil
+	}
+	sw, ok := base.(embed.ModelSwitcher)
+	if !ok {
+		return nil, fmt.Errorf("model %q requested, but backend %q cannot switch models; "+
+			"configure the backend for that model instead (GOKQL_EMBED)", requested, base.Name())
+	}
+	return sw.WithModel(requested)
+}
+
+// embedAllRows produces one vector per text from one embedder.
+func embedAllRows(ctx context.Context, em embed.Embedder, texts []string) ([][]float64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	batch, err := em.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, fmt.Errorf("rows 0-%d: %w", len(texts), err)
+	}
+	if len(batch) != len(texts) {
+		return nil, fmt.Errorf("backend returned %d embeddings for %d inputs", len(batch), len(texts))
+	}
+	return batch, nil
 }
 
 // checkUniformWidth rejects a run whose own vectors disagree, which
@@ -432,15 +440,9 @@ func checkUniformWidth(vecs [][]float64) error {
 // table already holding another's. Runs with NO vectors in hand, so it
 // can fire even when every row would be skipped as already-embedded.
 //
-// Waived when the query projects its own Model column: a caller who
-// states the model per row has made that claim deliberately and owns
-// it.
-func (e *Engine) checkModelIdentity(name string, tableDef *catalog.Table,
-	em embed.Embedder, modelIdx int) error {
-
-	if modelIdx >= 0 {
-		return nil
-	}
+// Never waived: the stored Model is recorded from the backend, so a
+// caller cannot claim a different one.
+func (e *Engine) checkModelIdentity(name string, tableDef *catalog.Table, em embed.Embedder) error {
 	row := e.sampleEmbedRow(name, tableDef)
 	if row == nil || row.model == "" {
 		return nil
