@@ -323,9 +323,13 @@ func buildJoinRow(leftRow, rightRow types.Row, rightOutputIdxs []int) types.Row 
 // the table name wrapped as a bare-source subquery. Name resolution against
 // let bindings and the catalog happens inside executeQuery.
 func (e *Engine) applyLookup(left *types.Table, op *parser.LookupOp) (*types.Table, error) {
+	right := op.Right
+	if right == nil {
+		right = &parser.Query{Source: op.TableName}
+	}
 	joinOp := &parser.JoinOp{
 		Kind:      op.Kind,
-		Right:     &parser.Query{Source: op.TableName},
+		Right:     right,
 		OnClauses: op.OnClauses,
 	}
 	result, err := e.applyJoin(left, joinOp)

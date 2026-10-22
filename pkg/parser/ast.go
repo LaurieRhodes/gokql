@@ -661,7 +661,8 @@ func (*RenderOp) operatorNode() {}
 // Default kind is leftouter (unlike join which defaults to inner).
 type LookupOp struct {
 	Kind      JoinKind
-	TableName string          // Right-side table name
+	TableName string          // Right-side table name (when Right is nil)
+	Right     *Query          // Right-side subquery, for lookup (T | ...) on ...
 	OnClauses []JoinCondition // Join key pairs
 }
 

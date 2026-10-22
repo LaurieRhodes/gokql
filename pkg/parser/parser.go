@@ -1959,6 +1959,32 @@ func parseMvApply(s string) (*MvApplyOp, error) {
 	return op, nil
 }
 
+// stripHints removes leading "hint.name=value" tokens (spaces around
+// "=" allowed). Hints steer distributed execution (shuffle, broadcast,
+// partition counts, remote placement) and change no results, so a
+// single-node engine accepts and ignores them.
+func stripHints(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		fields := strings.Fields(s)
+		if len(fields) == 0 || !strings.HasPrefix(strings.ToLower(fields[0]), "hint.") {
+			return s
+		}
+		tok := fields[0]
+		if i := strings.Index(tok, "="); i >= 0 {
+			tok = tok[:i]
+		}
+		s = strings.TrimSpace(s[len(tok):])
+		if strings.HasPrefix(s, "=") {
+			s = strings.TrimSpace(s[1:])
+			valFields := strings.Fields(s)
+			if len(valFields) > 0 {
+				s = strings.TrimSpace(s[len(valFields[0]):])
+			}
+		}
+	}
+}
+
 // parsePartition parses "[hint.strategy=X] [hint.other=Y] by Column
 // (SubQuery)" — verified against real ADX's own partition operator
 // docs before adopting this shape. See PartitionOp's own doc comment
@@ -2541,7 +2567,7 @@ func parseOrderBy(s string) (*OrderByOp, error) {
 }
 
 func parseSummarize(s string) (*SummarizeOp, error) {
-	s = strings.TrimSpace(s)
+	s = stripHints(s)
 
 	// Split on " by " to separate aggregations from group-by columns
 	var aggStr, byStr string
@@ -2904,6 +2930,7 @@ func parseJoin(s string) (*JoinOp, error) {
 	// explicitly, so this is a zero-risk correction, not a breaking
 	// change to anything that currently exists.
 	kind := JoinInnerUnique
+	s = stripHints(s)
 	if strings.HasPrefix(strings.ToLower(s), "kind=") {
 		eqIdx := strings.Index(s, "=")
 		// Find the end of the kind value (next space)
@@ -2917,7 +2944,7 @@ func parseJoin(s string) (*JoinOp, error) {
 		if err != nil {
 			return nil, err
 		}
-		s = strings.TrimSpace(s[eqIdx+1+spaceIdx:])
+		s = stripHints(s[eqIdx+1+spaceIdx:])
 	}
 
 	// Parse (subquery) — find matching parentheses
@@ -3295,7 +3322,7 @@ func parseGraphPattern(s string) ([]string, []GraphMatchEdge, error) {
 
 // parseLookup parses: lookup [kind=X] TableName on col1[, col2]
 func parseLookup(s string) (*LookupOp, error) {
-	s = strings.TrimSpace(s)
+	s = stripHints(s)
 	op := &LookupOp{Kind: JoinLeftOuter} // default kind for lookup
 
 	// Optional kind=X
@@ -3313,29 +3340,46 @@ func parseLookup(s string) (*LookupOp, error) {
 			return nil, fmt.Errorf("lookup: kind must be leftouter or inner, got %s", kindStr)
 		}
 		op.Kind = k
-		s = strings.TrimSpace(s[eqEnd:])
+		s = stripHints(s[eqEnd:])
 	}
 
-	// TableName on ...
-	onIdx := strings.Index(strings.ToLower(s), " on ")
-	if onIdx < 0 {
-		return nil, fmt.Errorf("lookup: expected 'on' clause")
+	// Right side: a table name, or a parenthesised table name or
+	// subquery. The parenthesised form is bracket-matched, so an "on"
+	// inside the subquery (a nested join or lookup) is not mistaken
+	// for this lookup's own.
+	var right, onPart string
+	if strings.HasPrefix(s, "(") {
+		closeIdx := matchingClose(s, 0, '(', ')')
+		if closeIdx < 0 {
+			return nil, fmt.Errorf("lookup: unmatched parenthesis in right side")
+		}
+		right = strings.TrimSpace(s[1:closeIdx])
+		rest := strings.TrimSpace(s[closeIdx+1:])
+		if !strings.HasPrefix(strings.ToLower(rest), "on ") {
+			return nil, fmt.Errorf("lookup: expected 'on' clause after right side")
+		}
+		onPart = strings.TrimSpace(rest[3:])
+	} else {
+		onIdx := findKeyword(s, " on ")
+		if onIdx < 0 {
+			return nil, fmt.Errorf("lookup: expected 'on' clause")
+		}
+		right = strings.TrimSpace(s[:onIdx])
+		onPart = strings.TrimSpace(s[onIdx+4:])
 	}
-	tableName := strings.TrimSpace(s[:onIdx])
-	// Accept a parenthesized table reference — lookup (Entities) on ...
-	// — same as a bare one, not just the bare form. Found live: this
-	// previously took the raw substring verbatim with no paren-
-	// stripping at all, so lookup (Entities) on ... failed with
-	// table "(Entities)" not found (parens literally included in the
-	// looked-up name), even though the bare form (lookup Entities on
-	// ...) already worked correctly. join already accepts a
-	// parenthesized right side (in fact requires it — see join's own
-	// parsing) and users reasonably expect the same flexibility here.
-	if len(tableName) >= 2 && tableName[0] == '(' && tableName[len(tableName)-1] == ')' {
-		tableName = strings.TrimSpace(tableName[1 : len(tableName)-1])
+	if isIdentifier(right) {
+		op.TableName = right
+	} else {
+		stmt, err := parseQuery(right)
+		if err != nil {
+			return nil, fmt.Errorf("lookup right side: %w", err)
+		}
+		q, ok := stmt.(*Query)
+		if !ok {
+			return nil, fmt.Errorf("lookup: right side must be a tabular expression")
+		}
+		op.Right = q
 	}
-	op.TableName = tableName
-	onPart := strings.TrimSpace(s[onIdx+4:])
 
 	clauses, err := parseJoinOnClauses(onPart)
 	if err != nil {
