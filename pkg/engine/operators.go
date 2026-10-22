@@ -991,6 +991,25 @@ func buildUnionSchema(tables []*types.Table, kind string) (types.Schema, [][]int
 			}
 		}
 		order = kept
+	} else {
+		// A name's typed variants (b_long, b_string) sit together at
+		// the name's first-seen position, types in first-seen order:
+		// Kusto.Language's union schema for T1(a, b:long, n) and
+		// T2(a, c, b:string) is a, b_long, b_string, n, c.
+		var grouped []key
+		placed := map[string]bool{}
+		for _, k := range order {
+			if placed[k.name] {
+				continue
+			}
+			placed[k.name] = true
+			for _, k2 := range order {
+				if k2.name == k.name {
+					grouped = append(grouped, k2)
+				}
+			}
+		}
+		order = grouped
 	}
 
 	genuine := map[string]bool{}

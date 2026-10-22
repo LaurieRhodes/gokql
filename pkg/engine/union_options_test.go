@@ -146,3 +146,11 @@ func queryErr(query string) (*types.Table, error) {
 	}
 	return New(catalog.NewMemory()).Execute(stmt)
 }
+
+// A name's typed variants sit together at the name's first-seen
+// position; both orders checked against Kusto.Language's result schema.
+func TestUnionGroupsTypedVariants(t *testing.T) {
+	const lets = `let T1 = datatable(a:string, b:long, n:int)["x",1,2]; let T2 = datatable(a:string, c:datetime, b:string)["y",datetime(2020-01-01),"z"]; `
+	expectColNames(t, queryResult(t, lets+`union T1, T2`), "a", "b_long", "b_string", "n", "c")
+	expectColNames(t, queryResult(t, lets+`union T2, T1`), "a", "c", "b_string", "b_long", "n")
+}
