@@ -816,6 +816,9 @@ func (*ColumnRef) exprNode() {}
 // every ToScalarExpr is already gone from the tree.
 type ToScalarExpr struct {
 	QueryText string
+	// ColumnNames marks column_names_of(QueryText): the value is the
+	// tabular expression's column names, not its first cell.
+	ColumnNames bool
 }
 
 func (*ToScalarExpr) exprNode() {}
@@ -1122,7 +1125,15 @@ func (*PrecomputedTable) statementNode() {}
 // semantics: UDFs see only their arguments and other let bindings).
 type FunctionDef struct {
 	Params []FunctionParam
-	Body   Expr
+	Body   Expr // scalar body; nil when Tabular
+
+	// Tabular is set for a function whose body is a tabular
+	// expression (let f = (p:int) { T | where x > p }). Like a stored
+	// function it keeps the raw parameter and body text, re-parsed and
+	// executed with the arguments bound as lets at each call.
+	Tabular    bool
+	ParamsText string
+	BodyText   string
 }
 
 func (*FunctionDef) statementNode() {}

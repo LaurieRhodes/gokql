@@ -132,9 +132,18 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 	if !ok {
 		return nil, false, nil
 	}
-	if len(fc.Args) != len(fn.Params) {
-		return nil, true, fmt.Errorf("function %s: expected %d arguments, got %d",
-			fc.Name, len(fn.Params), len(fc.Args))
+	if fn.Tabular {
+		return nil, true, fmt.Errorf("function %s returns a table and cannot be used in a scalar expression", fc.Name)
+	}
+	required := 0
+	for _, p := range fn.Params {
+		if !p.HasDefault {
+			required++
+		}
+	}
+	if len(fc.Args) < required || len(fc.Args) > len(fn.Params) {
+		return nil, true, fmt.Errorf("function %s: expected %d to %d arguments, got %d",
+			fc.Name, required, len(fn.Params), len(fc.Args))
 	}
 	if udfDepth >= maxUDFDepth {
 		return nil, true, fmt.Errorf("function %s: %w", fc.Name, errUDFDepth)
@@ -144,7 +153,15 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 	paramSchema := types.Schema{Columns: make([]types.Column, len(fn.Params))}
 	paramRow := make(types.Row, len(fn.Params))
 	for i, param := range fn.Params {
-		val, err := evalExpr(fc.Args[i], schema, row)
+		var val types.Value
+		var err error
+		if i < len(fc.Args) {
+			val, err = evalExpr(fc.Args[i], schema, row)
+		} else {
+			// Omitted trailing argument: the declared default,
+			// evaluated without the caller's row.
+			val, err = evalExpr(param.Default, &types.Schema{}, types.Row{})
+		}
 		if err != nil {
 			return nil, true, fmt.Errorf("function %s argument %s: %w", fc.Name, param.Name, err)
 		}

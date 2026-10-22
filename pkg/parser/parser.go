@@ -371,29 +371,72 @@ func tryParseFunctionDef(s string) (*FunctionDef, bool, error) {
 	}
 
 	// Parse parameters: name: type, name: type, ...
+	// Parameters: name:type, name:type = default, and tabular
+	// T:(col:type, ...) or T:(*) -- the parser stored functions use.
 	paramStr := strings.TrimSpace(s[1:closeIdx])
-	var params []FunctionParam
-	if paramStr != "" {
-		for _, part := range splitAndTrim(paramStr, ',') {
-			colonIdx := strings.Index(part, ":")
-			if colonIdx < 0 {
-				return nil, true, fmt.Errorf("parameter %q: expected 'name: type'", part)
-			}
-			pname := strings.TrimSpace(part[:colonIdx])
-			tname := strings.TrimSpace(part[colonIdx+1:])
-			ptype, err := types.ParseType(tname)
-			if err != nil {
-				return nil, true, fmt.Errorf("parameter %q: %w", pname, err)
-			}
-			params = append(params, FunctionParam{Name: pname, Type: ptype})
-		}
+	params, err := ParseFunctionParams(paramStr)
+	if err != nil {
+		return nil, true, err
 	}
 
+	if isTabularFunctionBody(body, params) {
+		stmt, err := Parse(body)
+		if err != nil {
+			return nil, true, fmt.Errorf("function body: %w", err)
+		}
+		if !statementIsTabular(stmt) {
+			return nil, true, fmt.Errorf("function body: not a tabular or scalar expression")
+		}
+		return &FunctionDef{Params: params, Tabular: true, ParamsText: paramStr, BodyText: body}, true, nil
+	}
 	bodyExpr, err := ParseExpr(body)
 	if err != nil {
 		return nil, true, fmt.Errorf("function body: %w", err)
 	}
 	return &FunctionDef{Params: params, Body: bodyExpr}, true, nil
+}
+
+// isTabularFunctionBody decides whether a function body is tabular:
+// it has let statements or a top-level pipe, starts with a tabular
+// source (datatable, print, range, union, ...), or is a bare name that
+// is not one of the function's own scalar parameters (a table).
+func isTabularFunctionBody(body string, params []FunctionParam) bool {
+	if isTabularSource(body) || isTabularExpression(body) {
+		return true
+	}
+	if len(splitStatements(body)) > 1 {
+		return true
+	}
+	lower := strings.ToLower(body)
+	for _, kw := range []string{"print ", "range ", "union ", "search ", "find "} {
+		if strings.HasPrefix(lower, kw) {
+			return true
+		}
+	}
+	if isIdentifier(body) {
+		for _, p := range params {
+			if p.Name == body && !p.IsTabular {
+				return false
+			}
+		}
+		return true
+	}
+	if _, err := ParseExpr(body); err != nil {
+		// Not a scalar expression; a tabular call such as Other(1).
+		return true
+	}
+	return false
+}
+
+func statementIsTabular(stmt Statement) bool {
+	switch s := stmt.(type) {
+	case *Query:
+		return true
+	case *CompoundStatement:
+		_, ok := s.Final.(*Query)
+		return ok
+	}
+	return false
 }
 
 // splitStatements splits input on semicolons, respecting strings,

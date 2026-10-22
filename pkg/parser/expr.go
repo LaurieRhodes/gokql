@@ -926,17 +926,17 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 		// datatable(...) [...] literal). Uses openParenIdx, captured
 		// above BEFORE skipWhitespace ran — p.pos-1 here instead would
 		// be wrong whenever whitespace follows the opening paren.
-		if lower == "toscalar" {
+		if lower == "toscalar" || lower == "column_names_of" {
 			closeIdx := findMatchingParen(p.input, openParenIdx)
 			if closeIdx < 0 {
-				return nil, fmt.Errorf("toscalar(...): unterminated argument")
+				return nil, fmt.Errorf("%s(...): unterminated argument", lower)
 			}
 			queryText := strings.TrimSpace(p.input[p.pos:closeIdx])
 			if queryText == "" {
-				return nil, fmt.Errorf("toscalar(): requires an argument")
+				return nil, fmt.Errorf("%s(): requires an argument", lower)
 			}
 			p.pos = closeIdx + 1
-			return p.parsePostfixAccess(&ToScalarExpr{QueryText: queryText})
+			return p.parsePostfixAccess(&ToScalarExpr{QueryText: queryText, ColumnNames: lower == "column_names_of"})
 		}
 
 		// dynamic([1,2,3]) / dynamic({"a":1}): real Kusto grammar — the

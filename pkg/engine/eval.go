@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -210,7 +211,30 @@ func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 // ("if the result is a tabular, then the first column and first row is
 // taken"). Returns (nil, types.TypeDynamic, nil) for an empty result —
 // a legitimate outcome (e.g. a filter matching nothing), not an error.
+// columnNamesOf implements column_names_of(expr): the column names of
+// a tabular expression as a dynamic array of strings. The expression
+// runs with take 0, so only its schema is produced.
+func columnNamesOf(e *Engine, queryText string) (types.Value, types.KQLType, error) {
+	stmt, err := parser.Parse(queryText + " | take 0")
+	if err != nil {
+		return nil, types.TypeDynamic, fmt.Errorf("column_names_of(%s): %w", queryText, err)
+	}
+	result, err := e.Execute(stmt)
+	if err != nil {
+		return nil, types.TypeDynamic, fmt.Errorf("column_names_of(%s): %w", queryText, err)
+	}
+	names := make([]string, len(result.Schema.Columns))
+	for i, c := range result.Schema.Columns {
+		names[i] = c.Name
+	}
+	b, _ := json.Marshal(names)
+	return string(b), types.TypeDynamic, nil
+}
+
 func evalToScalarOnce(e *Engine, ex *parser.ToScalarExpr) (types.Value, types.KQLType, error) {
+	if ex.ColumnNames {
+		return columnNamesOf(e, ex.QueryText)
+	}
 	stmt, err := parser.Parse(ex.QueryText)
 	if err != nil {
 		return nil, types.TypeDynamic, fmt.Errorf("toscalar(%s): %w", ex.QueryText, err)

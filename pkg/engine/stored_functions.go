@@ -367,17 +367,28 @@ func (e *Engine) resolveStoredFunction(call *parser.StoredFunctionCall) (*types.
 		return nil, fmt.Errorf("function %q: recursive call detected (not supported, matching real ADX)", name)
 	}
 
-	fn, everDefined, err := e.lookupStoredFunction(name)
-	if err != nil {
-		return nil, err
-	}
-	if !everDefined || fn.Deleted {
-		return nil, fmt.Errorf("%s(): no such stored function", name)
-	}
-
-	declared, err := parser.ParseFunctionParams(fn.Parameters)
-	if err != nil {
-		return nil, fmt.Errorf("function %q: stored parameter list no longer parses: %w", name, err)
+	// A let-defined tabular function in scope shadows a stored one,
+	// as a let binding shadows a table.
+	var declared []parser.FunctionParam
+	var bodyText string
+	if letFn, ok := e.letContext.LookupFunction(name); ok {
+		if !letFn.Tabular {
+			return nil, fmt.Errorf("%s() is a scalar function and cannot be used as a tabular source", name)
+		}
+		declared, bodyText = letFn.Params, letFn.BodyText
+	} else {
+		fn, everDefined, err := e.lookupStoredFunction(name)
+		if err != nil {
+			return nil, err
+		}
+		if !everDefined || fn.Deleted {
+			return nil, fmt.Errorf("%s(): no such stored function", name)
+		}
+		declared, err = parser.ParseFunctionParams(fn.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("function %q: stored parameter list no longer parses: %w", name, err)
+		}
+		bodyText = fn.Body
 	}
 
 	letBindings, err := e.bindStoredFunctionArgs(name, declared, call.ArgTexts)
@@ -385,7 +396,7 @@ func (e *Engine) resolveStoredFunction(call *parser.StoredFunctionCall) (*types.
 		return nil, err
 	}
 
-	stmt, err := parser.Parse(fn.Body)
+	stmt, err := parser.Parse(bodyText)
 	if err != nil {
 		return nil, fmt.Errorf("function %q: stored body no longer parses: %w", name, err)
 	}
