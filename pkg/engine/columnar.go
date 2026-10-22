@@ -23,6 +23,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	vortex "github.com/LaurieRhodes/vortex-go"
 	"github.com/LaurieRhodes/vortex-go/encoding"
@@ -39,7 +40,7 @@ type colVec struct {
 	i32 []int32   // int
 	f64 []float64 // real
 	b   []bool    // bool
-	str []string  // string, guid, dynamic, fallback (flat encoding)
+	str []string  // string, guid, dynamic, fallback (flat encoding); arena-backed, see value()
 
 	// Dictionary-encoded strings stay encoded: per-row codes indexing
 	// a small distinct-values table. Operators compute over codes
@@ -79,7 +80,9 @@ func decodeColumnVec(e *Engine, tableName, colName string, arr *vortex.Array, kt
 		var ok bool
 		c.dictCodes, c.dictVals, ok, err = encoding.DictStringParts(arr)
 		if err == nil && !ok {
-			c.str, err = encoding.StringValues(arr)
+			// One allocation per chunk instead of per row; value()
+			// copies the few strings that leave the chunk.
+			c.str, err = encoding.StringValuesArena(arr)
 		}
 	}
 	if err != nil {
@@ -114,7 +117,10 @@ func (c *colVec) value(i int) types.Value {
 		}
 	case c.str != nil:
 		if i < len(c.str) {
-			return c.str[i]
+			// Flat strings share one arena per chunk
+			// (StringValuesArena); a boxed value outlives the chunk,
+			// so it gets its own copy rather than pinning the arena.
+			return strings.Clone(c.str[i])
 		}
 	}
 	return nil

@@ -374,7 +374,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		}
 
 		found := false
-		colStr := fmt.Sprintf("%v", colVal)
+		colStr := fmtV(colVal)
 
 		if e.TableRef != "" {
 			// Check against a let-bound table's first column — walks
@@ -383,7 +383,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 			if tbl, ok := activeLetContext.LookupTable(e.TableRef); ok {
 				for _, row := range tbl.Rows {
 					if len(row) > 0 {
-						rowStr := fmt.Sprintf("%v", row[0])
+						rowStr := fmtV(row[0])
 						if e.CaseInsensitive {
 							found = strings.EqualFold(colStr, rowStr)
 						} else {
@@ -402,7 +402,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 				if err != nil {
 					return nil, err
 				}
-				valStr := fmt.Sprintf("%v", val)
+				valStr := fmtV(val)
 				if e.CaseInsensitive {
 					found = strings.EqualFold(colStr, valStr)
 				} else {
@@ -427,7 +427,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		if colVal == nil {
 			return false, nil
 		}
-		colStr := fmt.Sprintf("%v", colVal)
+		colStr := fmtV(colVal)
 
 		if e.All {
 			// has_all: every term must be found (whole-term, case-insensitive)
@@ -436,7 +436,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 				if err != nil {
 					return nil, err
 				}
-				term := fmt.Sprintf("%v", val)
+				term := fmtV(val)
 				if !hasTerm(colStr, term, false) {
 					return false, nil
 				}
@@ -449,7 +449,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 			if err != nil {
 				return nil, err
 			}
-			term := fmt.Sprintf("%v", val)
+			term := fmtV(val)
 			if hasTerm(colStr, term, false) {
 				return true, nil
 			}
@@ -530,88 +530,15 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 		return false, nil
 	}
 
-	// String operators (case-insensitive by default, _cs variants are case-sensitive)
-	if op == parser.OpContains || op == parser.OpNotContains ||
-		op == parser.OpContainsCS || op == parser.OpNotContainsCS ||
-		op == parser.OpHas || op == parser.OpNotHas ||
-		op == parser.OpHasCS || op == parser.OpNotHasCS ||
-		op == parser.OpStartsWith || op == parser.OpNotStartsWith ||
-		op == parser.OpStartsWithCS || op == parser.OpNotStartsWithCS ||
-		op == parser.OpEndsWith || op == parser.OpNotEndsWith ||
-		op == parser.OpEndsWithCS || op == parser.OpNotEndsWithCS ||
-		op == parser.OpMatchesRegex ||
-		op == parser.OpCIEQ || op == parser.OpCINEQ ||
-		op == parser.OpLike || op == parser.OpNotLike ||
-		op == parser.OpHasPrefix || op == parser.OpNotHasPrefix ||
-		op == parser.OpHasPrefixCS || op == parser.OpNotHasPrefixCS ||
-		op == parser.OpHasSuffix || op == parser.OpNotHasSuffix ||
-		op == parser.OpHasSuffixCS || op == parser.OpNotHasSuffixCS {
-		ls := fmt.Sprintf("%v", left)
-		rs := fmt.Sprintf("%v", right)
-		switch op {
-		case parser.OpContains:
-			return strings.Contains(strings.ToLower(ls), strings.ToLower(rs)), nil
-		case parser.OpNotContains:
-			return !strings.Contains(strings.ToLower(ls), strings.ToLower(rs)), nil
-		case parser.OpContainsCS:
-			return strings.Contains(ls, rs), nil
-		case parser.OpNotContainsCS:
-			return !strings.Contains(ls, rs), nil
-		case parser.OpHas:
-			return hasTerm(ls, rs, false), nil
-		case parser.OpNotHas:
-			return !hasTerm(ls, rs, false), nil
-		case parser.OpHasCS:
-			return hasTerm(ls, rs, true), nil
-		case parser.OpNotHasCS:
-			return !hasTerm(ls, rs, true), nil
-		case parser.OpStartsWith:
-			return strings.HasPrefix(strings.ToLower(ls), strings.ToLower(rs)), nil
-		case parser.OpNotStartsWith:
-			return !strings.HasPrefix(strings.ToLower(ls), strings.ToLower(rs)), nil
-		case parser.OpStartsWithCS:
-			return strings.HasPrefix(ls, rs), nil
-		case parser.OpNotStartsWithCS:
-			return !strings.HasPrefix(ls, rs), nil
-		case parser.OpEndsWith:
-			return strings.HasSuffix(strings.ToLower(ls), strings.ToLower(rs)), nil
-		case parser.OpNotEndsWith:
-			return !strings.HasSuffix(strings.ToLower(ls), strings.ToLower(rs)), nil
-		case parser.OpEndsWithCS:
-			return strings.HasSuffix(ls, rs), nil
-		case parser.OpNotEndsWithCS:
-			return !strings.HasSuffix(ls, rs), nil
-		case parser.OpMatchesRegex:
-			re, err := regexp.Compile(rs)
-			if err != nil {
-				return nil, fmt.Errorf("matches regex: invalid pattern %q: %w", rs, err)
-			}
-			return re.MatchString(ls), nil
-		case parser.OpCIEQ:
-			return strings.EqualFold(ls, rs), nil
-		case parser.OpCINEQ:
-			return !strings.EqualFold(ls, rs), nil
-		case parser.OpLike:
-			return matchLike(ls, rs, false), nil
-		case parser.OpNotLike:
-			return !matchLike(ls, rs, false), nil
-		case parser.OpHasPrefix:
-			return hasTermPrefix(ls, rs, false), nil
-		case parser.OpNotHasPrefix:
-			return !hasTermPrefix(ls, rs, false), nil
-		case parser.OpHasPrefixCS:
-			return hasTermPrefix(ls, rs, true), nil
-		case parser.OpNotHasPrefixCS:
-			return !hasTermPrefix(ls, rs, true), nil
-		case parser.OpHasSuffix:
-			return hasTermSuffix(ls, rs, false), nil
-		case parser.OpNotHasSuffix:
-			return !hasTermSuffix(ls, rs, false), nil
-		case parser.OpHasSuffixCS:
-			return hasTermSuffix(ls, rs, true), nil
-		case parser.OpNotHasSuffixCS:
-			return !hasTermSuffix(ls, rs, true), nil
+	// String operators (case-insensitive by default, _cs variants are
+	// case-sensitive). One implementation, shared with the columnar
+	// path (string_ops.go), so the two cannot drift apart.
+	if isStringOpFamily(op) {
+		ok, err := stringOpMatch(op, fmtV(left), fmtV(right))
+		if err != nil {
+			return nil, err
 		}
+		return ok, nil
 	}
 
 	if v, ok, err := evalMixedNumeric(left, op, right, schema, expr); ok {
@@ -621,7 +548,7 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 	// Determine comparison type from left operand
 	switch left.(type) {
 	case string:
-		ls, rs := left.(string), fmt.Sprintf("%v", right)
+		ls, rs := left.(string), fmtV(right)
 		switch op {
 		case parser.OpEQ:
 			return ls == rs, nil

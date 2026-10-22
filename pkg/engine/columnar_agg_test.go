@@ -112,16 +112,16 @@ func TestColumnarAggregateValues(t *testing.T) {
 	expectCell(t, tbl, 0, 0, "149.5")
 }
 
-// TestColumnarAggregatePlanGate verifies unsupported shapes fall back
-// to the row engine and still answer correctly.
+// TestColumnarAggregatePlanGate pins absolute answers for shapes at the
+// edge of the columnar plan (some planned, some falling back).
 func TestColumnarAggregatePlanGate(t *testing.T) {
 	eng := aggEngine(t)
 
-	// contains: not an exact predicate → row path.
+	// contains: columnar since string-operator predicates (string_ops.go).
 	tbl := diskQuery(t, eng, `A | where Host contains "st1" | summarize C = count()`)
 	expectCell(t, tbl, 0, 0, "60")
 
-	// dcount: unsupported aggregate → row path.
+	// dcount: columnar exact distinct count.
 	tbl = diskQuery(t, eng, `A | summarize D = dcount(Host)`)
 	expectCell(t, tbl, 0, 0, "5")
 

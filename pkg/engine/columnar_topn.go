@@ -167,6 +167,7 @@ func (e *Engine) topNExtent(tableName string, ext catalog.ExtentEntry, plan *col
 	for _, p := range plan.preds {
 		predColIdx[colPos[p.col]] = true
 	}
+	memos := make([]strMemo, len(plan.preds))
 
 	iter, f, _, err := e.openExtentChunks(ext.FilePath, scanCols, zoneFilter)
 	if err != nil {
@@ -203,8 +204,8 @@ func (e *Engine) topNExtent(tableName string, ext catalog.ExtentEntry, plan *col
 		for i := range sel {
 			sel[i] = true
 		}
-		for _, p := range plan.preds {
-			evalExactPred(p, vecs[colPos[p.col]], sel)
+		for pi, p := range plan.preds {
+			evalExactPred(p, vecs[colPos[p.col]], sel, &memos[pi])
 		}
 
 		if len(plan.preds) > 0 {

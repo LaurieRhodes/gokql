@@ -248,7 +248,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			seen[fmt.Sprintf("%v", val)] = true
+			seen[fmtV(val)] = true
 		}
 		return int64(len(seen)), nil
 
@@ -291,7 +291,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			key := fmt.Sprintf("%v", val)
+			key := fmtV(val)
 			if !seen[key] {
 				seen[key] = true
 				if len(values) >= maxSize {
@@ -403,7 +403,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			key := fmt.Sprintf("%v", val)
+			key := fmtV(val)
 			if !seen[key] {
 				seen[key] = true
 				if len(values) >= maxSize {
@@ -1045,7 +1045,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if err != nil || val == nil {
 				continue
 			}
-			seen[fmt.Sprintf("%v", val)] = true
+			seen[fmtV(val)] = true
 		}
 		return int64(len(seen)), nil
 

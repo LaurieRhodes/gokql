@@ -21,12 +21,17 @@ package engine
 //
 // Supported: where conjuncts of (column op literal) with ==, !=, <,
 // <=, >, >= on long/int/real/datetime/timespan (exact-value literals
-// only) and ==/!= on string; aggregates count(), sum(c), avg(c),
-// min(c), max(c) over numeric/datetime/timespan columns; by over plain
+// only), ==/!= on string, and the string-operator family (has,
+// contains, startswith, endswith, hasprefix, hassuffix, like, matches
+// regex, =~, !~, negations and _cs forms) on string columns, evaluated
+// once per dictionary value; aggregates count(), sum(c), avg(c),
+// min(c), max(c) over numeric/datetime/timespan columns and dcount(c)/
+// count_distinct(c) over string/numeric/bool columns; by over plain
 // columns of any storable type.
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -49,6 +54,30 @@ type exactPred struct {
 	i64Val *int64
 	f64Val *float64
 	strVal *string
+
+	// match is set for the string-operator family (has, contains,
+	// startswith, like, matches regex, =~, ...): the operator bound to
+	// its literal by compileStringMatcher, exactly as evalBinaryOp
+	// evaluates it. nullAsEmpty records whether a missing cell is
+	// evaluated as "" (isStringOperator) or fails (=~, !~).
+	match       func(string) bool
+	nullAsEmpty bool
+}
+
+// strMemo caches a string predicate's result per dictionary code for
+// one dictionary. It belongs to one scan worker: plans are shared
+// across extent goroutines, memos are not.
+type strMemo struct {
+	vals []string // the dictionary the results belong to
+	res  []int8   // 0 unknown, 1 match, 2 no match
+}
+
+func (m *strMemo) forDict(vals []string) []int8 {
+	if len(m.vals) != len(vals) || (len(vals) > 0 && &m.vals[0] != &vals[0]) {
+		m.vals = vals
+		m.res = make([]int8, len(vals))
+	}
+	return m.res
 }
 
 // colAggPlan describes a pipeline prefix the columnar path can execute.
@@ -123,6 +152,30 @@ func planColumnarAggregate(ops []parser.Operator, schema *types.Schema) *colAggP
 				return nil
 			}
 			plan.aggCols = append(plan.aggCols, ref.Name)
+		case "dcount", "count_distinct":
+			// Exact distinct count, as the row engine computes it
+			// (aggregation.go keys on fmt.Sprintf("%v")). Types are
+			// limited to those whose stored representation maps
+			// one-to-one onto that formatted key; dynamic and guid
+			// stay on the row path.
+			if len(agg.Args) != 1 {
+				return nil
+			}
+			ref, ok := agg.Args[0].(*parser.ColumnRef)
+			if !ok {
+				return nil
+			}
+			idx := schema.ColumnIndex(ref.Name)
+			if idx < 0 {
+				return nil
+			}
+			switch schema.Columns[idx].Type {
+			case types.TypeString, types.TypeLong, types.TypeInt, types.TypeReal,
+				types.TypeDatetime, types.TypeTimespan, types.TypeBool:
+			default:
+				return nil
+			}
+			plan.aggCols = append(plan.aggCols, ref.Name)
 		default:
 			return nil
 		}
@@ -163,6 +216,21 @@ func collectExactPreds(expr parser.Expr, schema *types.Schema, out *[]exactPred)
 	idx := schema.ColumnIndex(col.Name)
 	if idx < 0 {
 		return false
+	}
+
+	if isStringOpFamily(be.Op) {
+		// String operators are not symmetric: only column-on-the-left
+		// is planned, over string columns. The literal is formatted as
+		// evalBinaryOp formats its right operand.
+		if !colLeft || schema.Columns[idx].Type != types.TypeString {
+			return false
+		}
+		m, err := compileStringMatcher(be.Op, fmtV(val))
+		if err != nil {
+			return false // invalid regex: the row engine reports it
+		}
+		*out = append(*out, exactPred{col: col.Name, op: be.Op, match: m, nullAsEmpty: isStringOperator(be.Op)})
+		return true
 	}
 
 	// Normalize operator direction so the column is conceptually on
@@ -239,7 +307,11 @@ func kqlCmpMatches(op parser.BinaryOp, cmp int) bool {
 // semantics. A nil (missing) column vector fails every comparison: the
 // row engine would see nil cells, and nil fails all binary comparisons
 // here (the pred value is never nil, so the nil==nil case cannot arise).
-func evalExactPred(p exactPred, c *colVec, sel []bool) {
+func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
+	if p.match != nil {
+		evalStringPred(p, c, sel, memo)
+		return
+	}
 	if c == nil {
 		for i := range sel {
 			sel[i] = false
@@ -346,18 +418,124 @@ func evalExactPred(p exactPred, c *colVec, sel []bool) {
 	}
 }
 
+// evalStringPred narrows sel by a string-family predicate. A row with
+// no cell (column absent from the chunk, or a ragged chunk) is the row
+// engine's nil operand: "" for isStringOperator operators, a failed
+// comparison for =~ and !~.
+func evalStringPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
+	nilOK := p.nullAsEmpty && p.match("")
+	n := 0
+	switch {
+	case c == nil:
+	case c.dictCodes != nil:
+		var res []int8
+		if memo != nil {
+			res = memo.forDict(c.dictVals)
+		} else {
+			res = make([]int8, len(c.dictVals))
+		}
+		n = len(c.dictCodes)
+		if n > len(sel) {
+			n = len(sel)
+		}
+		for i := 0; i < n; i++ {
+			if !sel[i] {
+				continue
+			}
+			code := c.dictCodes[i]
+			r := res[code]
+			if r == 0 {
+				r = 2
+				if p.match(c.dictVals[code]) {
+					r = 1
+				}
+				res[code] = r
+			}
+			if r != 1 {
+				sel[i] = false
+			}
+		}
+	case c.str != nil:
+		n = len(c.str)
+		if n > len(sel) {
+			n = len(sel)
+		}
+		for i := 0; i < n; i++ {
+			if sel[i] && !p.match(c.str[i]) {
+				sel[i] = false
+			}
+		}
+	default:
+		// Non-string representation: impossible by plan construction.
+		for i := range sel {
+			sel[i] = false
+		}
+		return
+	}
+	if !nilOK {
+		for i := n; i < len(sel); i++ {
+			sel[i] = false
+		}
+	}
+}
+
 // aggAccum is one aggregate's state for one group. Which fields are
 // meaningful depends on the aggregate function: cnt for count/avg,
 // sum for sum/avg, the typed min/max fields (guarded by set) for
 // min/max.
+//
+// One is allocated per group per aggregate per extent, so its size is
+// on the hot path of high-cardinality group-bys: fields are ordered to
+// pack into 56 bytes, and dcount's state sits behind one pointer.
 type aggAccum struct {
 	cnt  int64
 	sum  float64
 	isum int64 // exact sum of integer cells (int, long, timespan)
 	i64  int64
-	i32  int32
 	f64  float64
+	d    *distinctSet // dcount / count_distinct only
+	i32  int32
 	set  bool
+}
+
+// distinctSet holds dcount's distinct values: by string for string
+// columns, by the 64-bit pattern otherwise (see distinctNumKey).
+type distinctSet struct {
+	str map[string]struct{}
+	num map[uint64]struct{}
+}
+
+// distinctNumKey maps a numeric/bool cell to a key that is equal
+// exactly when the row engine's fmt.Sprintf("%v") keys are equal:
+// integers by value, reals by bit pattern (so 0 and -0 stay distinct,
+// as "0" and "-0" are) with every NaN folded to one key ("NaN").
+func distinctNumKey(c *colVec, row int) (uint64, bool) {
+	switch {
+	case c.i64 != nil:
+		if row < len(c.i64) {
+			return uint64(c.i64[row]), true
+		}
+	case c.i32 != nil:
+		if row < len(c.i32) {
+			return uint64(int64(c.i32[row])), true
+		}
+	case c.f64 != nil:
+		if row < len(c.f64) {
+			x := c.f64[row]
+			if math.IsNaN(x) {
+				return 0x7ff8000000000001, true
+			}
+			return math.Float64bits(x), true
+		}
+	case c.b != nil:
+		if row < len(c.b) {
+			if c.b[row] {
+				return 1, true
+			}
+			return 0, true
+		}
+	}
+	return 0, false
 }
 
 // accumulate folds one cell into an accumulator with the row engine's
@@ -370,6 +548,36 @@ func accumulate(a *aggAccum, fn string, isMax bool, c *colVec, row int) {
 		return
 	}
 	switch fn {
+	case "dcount", "count_distinct":
+		if a.d == nil {
+			a.d = &distinctSet{}
+		}
+		switch {
+		case c.dictCodes != nil:
+			if row < len(c.dictCodes) {
+				if a.d.str == nil {
+					a.d.str = make(map[string]struct{})
+				}
+				a.d.str[c.dictVals[c.dictCodes[row]]] = struct{}{}
+			}
+		case c.str != nil:
+			if row < len(c.str) {
+				if a.d.str == nil {
+					a.d.str = make(map[string]struct{})
+				}
+				if _, ok := a.d.str[c.str[row]]; !ok {
+					// Arena-backed (StringValuesArena): copy on insert.
+					a.d.str[strings.Clone(c.str[row])] = struct{}{}
+				}
+			}
+		default:
+			if k, ok := distinctNumKey(c, row); ok {
+				if a.d.num == nil {
+					a.d.num = make(map[uint64]struct{})
+				}
+				a.d.num[k] = struct{}{}
+			}
+		}
 	case "sum":
 		switch {
 		case c.i64 != nil:
@@ -455,6 +663,11 @@ func finalizeAccum(a *aggAccum, fn string, k vecKind) types.Value {
 	switch fn {
 	case "count":
 		return a.cnt
+	case "dcount", "count_distinct":
+		if a.d == nil {
+			return int64(0)
+		}
+		return int64(len(a.d.str) + len(a.d.num))
 	case "sum":
 		return a.sum // integral sums are taken from isum by the caller
 	case "avg":
@@ -490,6 +703,27 @@ type extentAggState struct {
 // mergeAccum folds src into dst for one aggregate function.
 func mergeAccum(dst, src *aggAccum, fn string, isMax bool) {
 	switch fn {
+	case "dcount", "count_distinct":
+		switch {
+		case src.d == nil:
+		case dst.d == nil:
+			dst.d = src.d
+		default:
+			if dst.d.str == nil {
+				dst.d.str = src.d.str
+			} else {
+				for k := range src.d.str {
+					dst.d.str[k] = struct{}{}
+				}
+			}
+			if dst.d.num == nil {
+				dst.d.num = src.d.num
+			} else {
+				for k := range src.d.num {
+					dst.d.num[k] = struct{}{}
+				}
+			}
+		}
 	case "count", "avg":
 		dst.cnt += src.cnt
 		dst.sum += src.sum
@@ -538,7 +772,7 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 		groupIdx: make(map[string]int),
 		repKinds: make([]vecKind, nAggs),
 	}
-	var keyBuf strings.Builder
+	var keyBuf []byte     // reused: map lookups on string(keyBuf) do not allocate
 	var codeToGroup []int // dict code -> group index; -1 = unseen
 
 	iter, f, _, err := e.openExtentChunks(ext.FilePath, scanCols, zoneFilter)
@@ -554,6 +788,7 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 	for _, p := range plan.preds {
 		predColIdx[colPos[p.col]] = true
 	}
+	memos := make([]strMemo, len(plan.preds))
 
 	for iter.Next() {
 		chunk := iter.Result()
@@ -596,8 +831,8 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 		for i := range sel {
 			sel[i] = true
 		}
-		for _, p := range plan.preds {
-			evalExactPred(p, vecs[colPos[p.col]], sel)
+		for pi, p := range plan.preds {
+			evalExactPred(p, vecs[colPos[p.col]], sel, &memos[pi])
 		}
 
 		if len(plan.preds) > 0 {
@@ -691,17 +926,17 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 				continue
 			}
 
-			keyBuf.Reset()
+			keyBuf = keyBuf[:0]
 			for bi, vi := range byVecIdx {
 				if bi > 0 {
-					keyBuf.WriteByte(0)
+					keyBuf = append(keyBuf, 0)
 				}
-				appendKeyPart(&keyBuf, vecs[vi], row)
+				keyBuf = appendKeyPart(keyBuf, vecs[vi], row)
 			}
-			key := keyBuf.String()
 
-			gi, exists := st.groupIdx[key]
+			gi, exists := st.groupIdx[string(keyBuf)]
 			if !exists {
+				key := string(keyBuf)
 				gi = len(st.byVals)
 				st.groupIdx[key] = gi
 				st.keys = append(st.keys, key)
@@ -928,31 +1163,29 @@ func kqlToVortexOp(op parser.BinaryOp) vortex.CompareOp {
 
 // appendKeyPart writes one by-column value in the exact form
 // fmt.Sprintf("%v", boxedValue) would produce for that value's type.
-func appendKeyPart(b *strings.Builder, c *colVec, row int) {
+func appendKeyPart(b []byte, c *colVec, row int) []byte {
 	if c == nil {
-		b.WriteString("<nil>")
-		return
+		return append(b, "<nil>"...)
 	}
 	switch {
 	case c.dictCodes != nil:
 		if row < len(c.dictCodes) {
-			b.WriteString(c.dictVals[c.dictCodes[row]])
-		} else {
-			b.WriteString("<nil>")
+			return append(b, c.dictVals[c.dictCodes[row]]...)
 		}
+		return append(b, "<nil>"...)
 	case c.str != nil:
 		if row < len(c.str) {
-			b.WriteString(c.str[row])
-		} else {
-			b.WriteString("<nil>")
+			return append(b, c.str[row]...)
 		}
+		return append(b, "<nil>"...)
 	case c.i64 != nil:
-		b.WriteString(strconv.FormatInt(c.i64[row], 10))
+		return strconv.AppendInt(b, c.i64[row], 10)
 	case c.i32 != nil:
-		b.WriteString(strconv.FormatInt(int64(c.i32[row]), 10))
+		return strconv.AppendInt(b, int64(c.i32[row]), 10)
 	case c.f64 != nil:
-		b.WriteString(strconv.FormatFloat(c.f64[row], 'g', -1, 64))
+		return strconv.AppendFloat(b, c.f64[row], 'g', -1, 64)
 	case c.b != nil:
-		b.WriteString(strconv.FormatBool(c.b[row]))
+		return strconv.AppendBool(b, c.b[row])
 	}
+	return b
 }
