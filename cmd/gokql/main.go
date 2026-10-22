@@ -238,11 +238,15 @@ func main() {
 		mode:   *modeFlag,
 		output: os.Stdout,
 	}
+	// A memory session's extent files live in a temporary directory;
+	// remove it on every exit path (.quit and errors call it too).
+	defer st.closeCatalog()
 
 	// --- One-shot mode ---
 	if query != "" {
 		if err := st.runCommand(query); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			st.closeCatalog()
 			os.Exit(1)
 		}
 		return
@@ -371,6 +375,7 @@ func (st *replState) dispatch(input string) error {
 		// WaitForAllMaterializedViewMaintenance("") is simply a no-op
 		// against an empty prefix anyway).
 		engine.WaitForAllMaterializedViewMaintenance(st.eng.Catalog.DatabasePath())
+		st.closeCatalog()
 		os.Exit(0)
 	case lower == ".help" || lower == "help":
 		st.printHelp()
@@ -629,11 +634,20 @@ func (st *replState) handleRead(input string) {
 	}
 }
 
+// closeCatalog releases the session's catalog (a memory catalog's
+// temporary directory).
+func (st *replState) closeCatalog() {
+	if st.eng != nil && st.eng.Catalog != nil {
+		st.eng.Catalog.Close()
+	}
+}
+
 func (st *replState) handleOpen(input string) {
 	parts := strings.Fields(input)
 	if len(parts) < 2 {
 		// Re-open as in-memory
 		cat := catalog.NewMemory()
+		st.closeCatalog()
 		st.eng = engine.New(cat)
 		fmt.Fprintln(st.output, "Connected to a transient in-memory database.")
 		return
@@ -645,6 +659,7 @@ func (st *replState) handleOpen(input string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
+	st.closeCatalog()
 	st.eng = engine.New(cat)
 	tables := cat.ListTables()
 	fmt.Fprintf(st.output, "Database: %s (%d tables)\n", path, len(tables))

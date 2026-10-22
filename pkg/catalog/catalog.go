@@ -12,6 +12,7 @@
 package catalog
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,6 +34,11 @@ type Catalog struct {
 	// lastAllocatedID is the highest extent id handed out by
 	// AllocateExtentID in this process (see there).
 	lastAllocatedID uint64
+
+	// memory marks a NewMemory catalog; its dbPath is created lazily
+	// (DatabasePath).
+	memory  bool
+	memOnce sync.Once
 
 	// Change detection for Refresh (freshness.go): the directory
 	// stamps last discovered, when they were observed, and the
@@ -311,7 +317,7 @@ func (c *Catalog) RemoveExtentFrom(tableName, extentID string) error {
 	for i, ext := range table.Extents {
 		if ext.ID == extentID {
 			table.Extents = append(table.Extents[:i], table.Extents[i+1:]...)
-			_ = os.Remove(filepath.Join(c.dbPath, ext.FilePath))
+			_ = os.Remove(filepath.Join(c.DatabasePath(), ext.FilePath))
 			return c.save()
 		}
 	}
@@ -332,7 +338,7 @@ func (c *Catalog) RemoveExtent(extentID string) (string, error) {
 				table.Extents = append(table.Extents[:i], table.Extents[i+1:]...)
 
 				// Delete file
-				fullPath := filepath.Join(c.dbPath, ext.FilePath)
+				fullPath := filepath.Join(c.DatabasePath(), ext.FilePath)
 				_ = os.Remove(fullPath)
 
 				if err := c.save(); err != nil {
@@ -367,7 +373,7 @@ func (c *Catalog) ReplaceExtents(tableName string, oldIDs []string, newEntries [
 	var toDelete []string
 	for _, ext := range table.Extents {
 		if removeSet[ext.ID] {
-			toDelete = append(toDelete, filepath.Join(c.dbPath, ext.FilePath))
+			toDelete = append(toDelete, filepath.Join(c.DatabasePath(), ext.FilePath))
 		} else {
 			kept = append(kept, ext)
 		}
@@ -407,19 +413,34 @@ func (c *Catalog) TableRowCount(tableName string) (int64, error) {
 
 // ExtentsDir returns the path to the extents directory.
 func (c *Catalog) ExtentsDir() string {
-	return filepath.Join(c.dbPath, "extents")
+	return filepath.Join(c.DatabasePath(), "extents")
 }
 
 // DatabasePath returns the root database path.
+//
+// For a NewMemory catalog it is a private path under the system
+// temporary directory, chosen on first use but created only by the
+// first write (extent writes create their directory), so a session
+// that writes nothing leaves nothing behind. Close removes it. Before
+// this, a memory catalog's path was "", so its extents were written
+// relative to the process's working directory.
 func (c *Catalog) DatabasePath() string {
+	if c.memory {
+		c.memOnce.Do(func() {
+			var r [8]byte
+			_, _ = rand.Read(r[:])
+			c.dbPath = filepath.Join(os.TempDir(), fmt.Sprintf("gokql-memory-%d-%x", os.Getpid(), r))
+		})
+	}
 	return c.dbPath
 }
 
-// NewMemory creates a transient in-memory catalog with no disk persistence.
-// Tables and extents exist only for the lifetime of the process.
+// NewMemory creates a transient catalog: tables live for the session,
+// and extent files go to a private temporary directory that Close
+// removes.
 func NewMemory() *Catalog {
 	return &Catalog{
-		dbPath: "",
+		memory: true,
 		Database: &Database{
 			Name:   ":memory:",
 			Tables: make(map[string]*Table),
@@ -427,7 +448,23 @@ func NewMemory() *Catalog {
 	}
 }
 
-// IsMemory returns true if this catalog has no disk backing.
+// IsMemory returns true if this catalog is transient (NewMemory).
 func (c *Catalog) IsMemory() bool {
-	return c.dbPath == ""
+	return c.memory
+}
+
+// Close removes a memory catalog's temporary directory. A no-op for an
+// on-disk database, and safe to call more than once.
+func (c *Catalog) Close() error {
+	if !c.memory {
+		return nil
+	}
+	c.memOnce.Do(func() {}) // a never-used catalog gets no directory
+	if c.dbPath == "" {
+		return nil
+	}
+	err := os.RemoveAll(c.dbPath)
+	c.dbPath = ""
+	c.memOnce = sync.Once{}
+	return err
 }

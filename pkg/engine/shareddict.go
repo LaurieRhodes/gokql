@@ -127,6 +127,11 @@ func dictionariesLockPath(dbPath string) string {
 // against.
 func withDictLock(dbPath string, fn func() error) error {
 	lockPath := dictionariesLockPath(dbPath)
+	// A memory catalog's directory exists only once something is
+	// written (catalog.DatabasePath); this may be the first write.
+	if err := os.MkdirAll(dbPath, 0755); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return fmt.Errorf("open dictionaries lock file: %w", err)
