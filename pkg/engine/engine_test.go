@@ -1385,17 +1385,19 @@ func TestMvExpand(t *testing.T) {
 func TestMvApplySummarizePerRow(t *testing.T) {
 	tbl := queryResult(t, `datatable (Id: long, Arr: string) [1, "[1,2,3]", 2, "[10,20]"] `+
 		`| mv-apply Element = Arr to typeof(long) on ( summarize Total = sum(Element) by Id )`)
+	// Output: the input row's columns (Id, Arr) then the subquery's
+	// new column, as in the mv-apply reference examples.
 	expectRows(t, tbl, 2)
-	expectCell(t, tbl, 0, 1, "6") // Id first, as in ADX
-	expectCell(t, tbl, 1, 1, "30")
+	expectCell(t, tbl, 0, 2, "6")
+	expectCell(t, tbl, 1, 2, "30")
 }
 
 func TestMvApplyFilterPipeline(t *testing.T) {
 	tbl := queryResult(t, `datatable (Id: long, Arr: string) [1, "[1,2,3,4]", 2, "[10,20]"] `+
 		`| mv-apply Element = Arr to typeof(long) on ( where Element > 2 | summarize Cnt = count() by Id )`)
 	expectRows(t, tbl, 2)
-	expectCell(t, tbl, 0, 1, "2")
-	expectCell(t, tbl, 1, 1, "2")
+	expectCell(t, tbl, 0, 2, "2")
+	expectCell(t, tbl, 1, 2, "2")
 }
 
 func TestMvApplyTopPerRow(t *testing.T) {

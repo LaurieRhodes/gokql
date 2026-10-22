@@ -24,7 +24,7 @@ and ASIM parsers, which is this engine's main query population.
 
 | Item | Observed |
 |---|---|
-| `mv-apply ... = <expression>` (only a bare column works) | "column not found" |
+| none open |
 
 ## Closed
 
@@ -47,6 +47,8 @@ and ASIM parsers, which is this engine's main query population.
 | Literals: hex `0x1F`, `real(+inf)`/`real(-inf)`/`real(nan)`, unquoted `guid(...)`, obfuscated `h"..."`/`h@'...'`, adjacent string concatenation `'a' 'b'` | expression parser |
 | `//` comments in any position (previously only where a parser happened to ignore trailing text) | stripped once at `parser.Parse`, outside string literals; `.ingest inline` payloads exempt |
 | `materialize(expr)` as a let value or query source | a tabular let is already evaluated once |
+| `mv-apply`: several zipped columns, any array expression, per-column `to typeof()`, `with_itemindex=`, `limit`; output carries the input row's columns ahead of the subquery's; bags are one element | all seven reference examples exact |
+| String operators (`has`, `contains`, `startswith`, `endswith`, `hasprefix`, `like`, `matches regex`, negations, `_cs` forms) take null as `""`; previously any null operand gave false, so `null !startswith "x"` was false | `isStringOperator` |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 

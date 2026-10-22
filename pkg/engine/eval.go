@@ -441,6 +441,20 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 	}
 }
 
+func isStringOperator(op parser.BinaryOp) bool {
+	switch op {
+	case parser.OpContains, parser.OpNotContains, parser.OpContainsCS, parser.OpNotContainsCS,
+		parser.OpHas, parser.OpNotHas, parser.OpHasCS, parser.OpNotHasCS,
+		parser.OpStartsWith, parser.OpNotStartsWith, parser.OpStartsWithCS, parser.OpNotStartsWithCS,
+		parser.OpEndsWith, parser.OpNotEndsWith, parser.OpEndsWithCS, parser.OpNotEndsWithCS,
+		parser.OpHasPrefix, parser.OpNotHasPrefix, parser.OpHasPrefixCS, parser.OpNotHasPrefixCS,
+		parser.OpHasSuffix, parser.OpNotHasSuffix, parser.OpHasSuffixCS, parser.OpNotHasSuffixCS,
+		parser.OpLike, parser.OpNotLike, parser.OpMatchesRegex:
+		return true
+	}
+	return false
+}
+
 func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, error) {
 	// Logical operators
 	if op == parser.OpAnd {
@@ -452,6 +466,19 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 		lb, _ := left.(bool)
 		rb, _ := right.(bool)
 		return lb || rb, nil
+	}
+
+	// String operators take their operands as strings, and null
+	// converts to the empty string (tostring(null) is ""), so
+	// null !startswith "555" is true. The mv-apply reference example
+	// that strips null-valued properties from a bag depends on this.
+	if isStringOperator(op) {
+		if left == nil {
+			left = ""
+		}
+		if right == nil {
+			right = ""
+		}
 	}
 
 	// Null handling for comparisons

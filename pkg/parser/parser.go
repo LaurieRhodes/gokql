@@ -1936,6 +1936,13 @@ func parseUnionSources(s string) ([]*Query, error) {
 //	[kind=bag|array] [bagexpansion=bag|array] [with_itemindex=Name]
 //	[Name =] Expr [to typeof(T)] [, ...] [limit N]
 func parseMvExpand(s string) (*MvExpandOp, error) {
+	return parseMvExpandColumns(s, false)
+}
+
+// parseMvExpandColumns parses mv-expand's column list. allowUnnamed
+// gives an unnamed expression a generated name (mv-apply) instead of
+// rejecting it (mv-expand).
+func parseMvExpandColumns(s string, allowUnnamed bool) (*MvExpandOp, error) {
 	op := &MvExpandOp{BagMode: "bag"}
 	rest := strings.TrimSpace(s)
 	for {
@@ -2009,10 +2016,14 @@ func parseMvExpand(s string) (*MvExpandOp, error) {
 		col.Source = expr
 		if col.Name == "" {
 			ref, ok := expr.(*ColumnRef)
-			if !ok {
+			switch {
+			case ok:
+				col.Name = ref.Name
+			case allowUnnamed:
+				col.Name = fmt.Sprintf("Column%d", len(op.Columns)+1)
+			default:
 				return nil, fmt.Errorf("mv-expand: expression %q needs a name (Name = expression)", exprStr)
 			}
-			col.Name = ref.Name
 		}
 		op.Columns = append(op.Columns, col)
 	}
@@ -2027,9 +2038,7 @@ func parseMvExpand(s string) (*MvExpandOp, error) {
 // against the per-row expanded table.
 func parseMvApply(s string) (*MvApplyOp, error) {
 	s = strings.TrimSpace(s)
-	op := &MvApplyOp{ElementType: types.TypeDynamic}
 
-	// Locate ' on ' at depth 0 (the subquery follows)
 	onIdx := findKeyword(s, " on ")
 	if onIdx < 0 {
 		return nil, fmt.Errorf("mv-apply: expected 'on ( subquery )'")
@@ -2037,35 +2046,17 @@ func parseMvApply(s string) (*MvApplyOp, error) {
 	head := strings.TrimSpace(s[:onIdx])
 	rest := strings.TrimSpace(s[onIdx+len(" on "):])
 
-	// Optional 'to typeof(T)' at the end of head
-	if toIdx := findKeyword(head, " to "); toIdx >= 0 {
-		typePart := strings.TrimSpace(head[toIdx+len(" to "):])
-		lower := strings.ToLower(typePart)
-		if !strings.HasPrefix(lower, "typeof(") || !strings.HasSuffix(typePart, ")") {
-			return nil, fmt.Errorf("mv-apply: expected 'to typeof(type)', got %q", typePart)
-		}
-		typeName := strings.TrimSpace(typePart[len("typeof(") : len(typePart)-1])
-		t, err := types.ParseType(typeName)
-		if err != nil {
-			return nil, fmt.Errorf("mv-apply: %w", err)
-		}
-		op.ElementType = t
-		head = strings.TrimSpace(head[:toIdx])
+	// The column list has mv-expand's grammar except bag expansion,
+	// which mv-apply does not have.
+	if l := strings.ToLower(head); strings.HasPrefix(l, "kind") || strings.HasPrefix(l, "bagexpansion") {
+		return nil, fmt.Errorf("mv-apply: bag expansion (kind=/bagexpansion=) is not supported; use mv-expand inside the subquery")
 	}
+	exp, err := parseMvExpandColumns(head, true)
+	if err != nil {
+		return nil, fmt.Errorf("mv-apply: %w", err)
+	}
+	op := &MvApplyOp{Columns: exp.Columns, IndexColumn: exp.IndexColumn, Limit: exp.Limit}
 
-	// [Name =] ArrayCol
-	if eqIdx := assignmentEqIndex(head); eqIdx >= 0 {
-		op.Name = strings.TrimSpace(head[:eqIdx])
-		op.SourceCol = strings.TrimSpace(head[eqIdx+1:])
-	} else {
-		op.Name = head
-		op.SourceCol = head
-	}
-	if op.Name == "" || op.SourceCol == "" {
-		return nil, fmt.Errorf("mv-apply: expected array column before 'on'")
-	}
-
-	// ( subquery )
 	if len(rest) == 0 || rest[0] != '(' {
 		return nil, fmt.Errorf("mv-apply: expected '(' after 'on'")
 	}

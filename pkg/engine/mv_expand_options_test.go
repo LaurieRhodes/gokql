@@ -123,12 +123,22 @@ func TestMvExpandExpressionNamed(t *testing.T) {
 func TestMvApplyTypedElementsAreCast(t *testing.T) {
 	r := queryResult(t, `print d = dynamic(["7", 8])
 		| mv-apply x = d to typeof(long) on (project x)`)
-	assertRows(t, r.Rows, [][]interface{}{{nil}, {int64(8)}})
+	// Columns: d (carried from the input row), x.
+	if got := r.Rows[0][1]; got != nil {
+		t.Errorf("x[0] = %v, want null (a string is not a long)", got)
+	}
+	if got := r.Rows[1][1]; got != int64(8) {
+		t.Errorf("x[1] = %v (%T), want int64(8)", got, got)
+	}
 }
 
-// mv-apply expands property bags the same way mv-expand does.
+// mv-apply does not expand property bags (reference: use mv-expand in
+// the subquery); a bag is a single element.
 func TestMvApplyBag(t *testing.T) {
 	r := queryResult(t, `print d = dynamic({"k1": 1, "k2": 2})
 		| mv-apply e = d on (project e)`)
-	assertRows(t, r.Rows, [][]interface{}{{`{"k1":1}`}, {`{"k2":2}`}})
+	expectRows(t, r, 1)
+	if got := r.Rows[0][r.Schema.ColumnIndex("e")]; got != `{"k1":1,"k2":2}` {
+		t.Errorf("e = %v, want the whole bag", got)
+	}
 }

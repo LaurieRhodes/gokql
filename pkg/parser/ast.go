@@ -602,10 +602,12 @@ func (*JoinOp) operatorNode() {}
 // columns copied onto every element row), the operator pipeline runs against
 // it, and the per-row results are unioned into the output.
 type MvApplyOp struct {
-	Name        string        // element column name (== SourceCol when not renamed)
-	SourceCol   string        // array column in the input
-	ElementType types.KQLType // from optional 'to typeof(T)'; TypeDynamic default
-	Operators   []Operator    // subquery pipeline (sourceless)
+	// Columns are the expanded arrays, zipped as in mv-expand:
+	// [Name =] ArrayExpression [to typeof(T)], comma-separated.
+	Columns     []MvExpandColumn
+	IndexColumn string     // with_itemindex=Name: 0-based element index (long)
+	Limit       int64      // limit N: elements taken per input row; 0 = all
+	Operators   []Operator // subquery pipeline (sourceless)
 }
 
 func (*MvApplyOp) operatorNode() {}

@@ -296,3 +296,186 @@ func (e *Engine) applyMvExpand(input *types.Table, op *parser.MvExpandOp) (*type
 	}
 	return output, nil
 }
+
+// expandArrayOnly is mv-apply's expansion: an array yields its
+// elements; any other value, a property bag included, is one element
+// (mv-apply has no bag expansion; the reference applies mv-expand
+// inside the subquery for that). Null gives one null element.
+func expandArrayOnly(v types.Value, dynamic bool) []types.Value {
+	if s, ok := v.(string); ok {
+		if t := strings.TrimSpace(s); len(t) > 0 && t[0] == '{' {
+			if json.Valid([]byte(t)) {
+				return []types.Value{string(compactJSON(json.RawMessage(t)))}
+			}
+		}
+	}
+	return expandCollection(v, false, dynamic)
+}
+
+// applyMvApply implements mv-apply: for each input row, expand the
+// listed arrays in parallel (padding with null, as mv-expand does)
+// into a subtable holding the row's columns, run the subquery on it,
+// and concatenate the results.
+//
+// Each output row is the input row's columns followed by the
+// subquery's new columns; an input column the subquery also returns
+// takes the subquery's value. So "summarize Top2 = make_list(Arr2)"
+// gives index, Arr, Top2 (reference example). An input column that an
+// expanded column replaces in place (mv-apply Arr on ...) is carried
+// only if the subquery returns it, as the reference describes.
+func (e *Engine) applyMvApply(input *types.Table, op *parser.MvApplyOp) (*types.Table, error) {
+	subSchema := types.Schema{Columns: append([]types.Column(nil), input.Schema.Columns...)}
+	targets := make([]int, len(op.Columns))
+	dynamicSrc := make([]bool, len(op.Columns))
+	for i, col := range op.Columns {
+		dynamicSrc[i] = inferExprType(col.Source, &input.Schema) == types.TypeDynamic
+		if idx := subSchema.ColumnIndex(col.Name); idx >= 0 {
+			subSchema.Columns[idx].Type = col.Type
+			targets[i] = idx
+			continue
+		}
+		if ref, ok := col.Source.(*parser.ColumnRef); ok && input.Schema.ColumnIndex(ref.Name) < 0 {
+			return nil, fmt.Errorf("mv-apply: column %q not found", ref.Name)
+		}
+		subSchema.Columns = append(subSchema.Columns, types.Column{Name: col.Name, Type: col.Type})
+		targets[i] = len(subSchema.Columns) - 1
+	}
+	indexCol := -1
+	if op.IndexColumn != "" {
+		if subSchema.ColumnIndex(op.IndexColumn) >= 0 {
+			return nil, fmt.Errorf("mv-apply: with_itemindex column %q already exists", op.IndexColumn)
+		}
+		subSchema.Columns = append(subSchema.Columns, types.Column{Name: op.IndexColumn, Type: types.TypeLong})
+		indexCol = len(subSchema.Columns) - 1
+	}
+
+	runSub := func(sub *types.Table) (*types.Table, error) {
+		result := sub
+		var err error
+		for _, subOp := range op.Operators {
+			if result, err = e.applyOperator(result, subOp); err != nil {
+				return nil, fmt.Errorf("mv-apply: %w", err)
+			}
+		}
+		return result, nil
+	}
+
+	inPlace := map[string]bool{}
+	for _, col := range op.Columns {
+		if input.Schema.ColumnIndex(col.Name) >= 0 {
+			inPlace[col.Name] = true
+		}
+	}
+	// merge builds the output schema from the first result and the
+	// per-row combination of input row and result row.
+	var outCols []types.Column
+	type src struct {
+		fromResult bool
+		idx        int
+	}
+	var plan []src
+	planFor := func(res types.Schema) error {
+		var cols []types.Column
+		var p []src
+		used := map[string]bool{}
+		for i, c := range input.Schema.Columns {
+			if ri := res.ColumnIndex(c.Name); ri >= 0 {
+				cols = append(cols, res.Columns[ri])
+				p = append(p, src{true, ri})
+				used[c.Name] = true
+			} else if !inPlace[c.Name] {
+				cols = append(cols, c)
+				p = append(p, src{false, i})
+			}
+		}
+		for ri, c := range res.Columns {
+			if !used[c.Name] {
+				cols = append(cols, c)
+				p = append(p, src{true, ri})
+			}
+		}
+		if outCols == nil {
+			outCols, plan = cols, p
+			return nil
+		}
+		if len(cols) != len(outCols) {
+			return fmt.Errorf("mv-apply: subquery produced different schemas for different rows")
+		}
+		for i := range cols {
+			if cols[i].Name != outCols[i].Name {
+				return fmt.Errorf("mv-apply: subquery produced different schemas for different rows")
+			}
+		}
+		plan = p
+		return nil
+	}
+
+	var output *types.Table
+	elems := make([][]types.Value, len(op.Columns))
+	for _, row := range input.Rows {
+		n := 0
+		for i, col := range op.Columns {
+			v, err := evalExpr(col.Source, &input.Schema, row)
+			if err != nil {
+				return nil, fmt.Errorf("mv-apply %q: %w", col.Name, err)
+			}
+			elems[i] = expandArrayOnly(v, dynamicSrc[i])
+			if len(elems[i]) > n {
+				n = len(elems[i])
+			}
+		}
+		if op.Limit > 0 && int64(n) > op.Limit {
+			n = int(op.Limit)
+		}
+		sub := types.NewTable(input.Name, subSchema)
+		for k := 0; k < n; k++ {
+			subRow := make(types.Row, len(subSchema.Columns))
+			copy(subRow, row)
+			for i, col := range op.Columns {
+				var v types.Value
+				if k < len(elems[i]) {
+					v = castElement(elems[i][k], col.Type)
+				}
+				subRow[targets[i]] = v
+			}
+			if indexCol >= 0 {
+				subRow[indexCol] = int64(k)
+			}
+			sub.AddRow(subRow)
+		}
+		result, err := runSub(sub)
+		if err != nil {
+			return nil, err
+		}
+		if err := planFor(result.Schema); err != nil {
+			return nil, err
+		}
+		if output == nil {
+			output = types.NewTable(input.Name, types.Schema{Columns: outCols})
+		}
+		for _, rr := range result.Rows {
+			out := make(types.Row, len(plan))
+			for i, p := range plan {
+				if p.fromResult {
+					out[i] = rr[p.idx]
+				} else {
+					out[i] = row[p.idx]
+				}
+			}
+			output.AddRow(out)
+		}
+	}
+	if output == nil {
+		// No input rows: the subquery over an empty subtable gives the
+		// output schema.
+		result, err := runSub(types.NewTable(input.Name, subSchema))
+		if err != nil {
+			return nil, err
+		}
+		if err := planFor(result.Schema); err != nil {
+			return nil, err
+		}
+		output = types.NewTable(input.Name, types.Schema{Columns: outCols})
+	}
+	return output, nil
+}
