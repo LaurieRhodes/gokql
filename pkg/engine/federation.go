@@ -182,14 +182,7 @@ func (e *Engine) resolveFederatedTable(ref *parser.DatabaseTableRef, operators [
 		return nil, nil, fmt.Errorf("database(%q): federated path %q must be absolute (see federation.go's design note)", ref.Alias, remotePath)
 	}
 
-	// OpenAuto, not a hardcoded Discover: a federated target should
-	// open correctly regardless of whether it's a discovery-mode scope
-	// (every real scope this session has built) or a legacy
-	// catalog-mode database — the same mode-detection every CLI
-	// invocation already gets, shared via catalog.OpenAuto specifically
-	// so this doesn't narrow what federation can point at compared to
-	// what the CLI itself can open.
-	remoteCat, err := catalog.OpenAuto(remotePath, false)
+	remoteCat, err := catalog.Open(remotePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("database(%q): opening %s: %w", ref.Alias, remotePath, err)
 	}

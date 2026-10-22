@@ -20,16 +20,16 @@ func discoverEngine(t *testing.T, dir string) *Engine {
 	return New(cat)
 }
 
-// TestDiscoveryOfCatalogDatabase builds a database through the normal
-// catalog path, deletes catalog.json, and requires discovery-mode
-// queries to return byte-identical results to catalog-mode queries.
-func TestDiscoveryOfCatalogDatabase(t *testing.T) {
+// TestLegacyCatalogDatabase opens a database laid out by older
+// versions: extents under extents/ and a catalog.json, here listing a
+// table no extent file defines. Tables come from the files only; the
+// catalog.json is not read.
+func TestLegacyCatalogDatabase(t *testing.T) {
 	dir := t.TempDir()
-	cat, err := catalog.Open(dir)
-	if err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "extents"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	eng := New(cat)
+	eng := discoverEngine(t, dir)
 	diskExec(t, eng, `.create table E (Id: long, Host: string, Score: real)`)
 	for ext := 0; ext < 3; ext++ {
 		rows := make([]string, 0, 40)
@@ -38,6 +38,9 @@ func TestDiscoveryOfCatalogDatabase(t *testing.T) {
 			rows = append(rows, itoa(id)+",host"+itoa(id%4)+","+itoa(id)+".5")
 		}
 		diskExec(t, eng, ".ingest inline into table E <| "+joinLines(rows))
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "extents", "E_*.vtx")); len(m) == 0 {
+		t.Fatal("extents not written under extents/")
 	}
 
 	queries := []string{
@@ -51,17 +54,22 @@ func TestDiscoveryOfCatalogDatabase(t *testing.T) {
 		want[i] = tableCSV(t, diskQuery(t, eng, q))
 	}
 
-	if err := os.Remove(filepath.Join(dir, "catalog.json")); err != nil {
+	legacy := `{"name":"x","tables":{"Ghost":{"name":"Ghost","schema":{"Columns":[{"Name":"A","Type":1}]},"extents":[]}},"version":9}`
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(legacy), 0644); err != nil {
 		t.Fatal(err)
 	}
-	deng := discoverEngine(t, dir)
-	if len(deng.Catalog.ListTables()) != 1 {
-		t.Fatalf("tables discovered: %v", deng.Catalog.ListTables())
+	cat, err := catalog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deng := New(cat)
+	if got := deng.Catalog.ListTables(); len(got) != 1 || got[0] != "E" {
+		t.Fatalf("tables: %v, want [E]", got)
 	}
 	for i, q := range queries {
 		got := tableCSV(t, diskQuery(t, deng, q))
 		if got != want[i] {
-			t.Errorf("discovery mismatch for %q:\ncatalog:\n%s\ndiscovery:\n%s", q, want[i], got)
+			t.Errorf("mismatch for %q:\nbefore:\n%s\nreopened:\n%s", q, want[i], got)
 		}
 	}
 }
@@ -169,20 +177,20 @@ func TestDiscoveryConcurrentIngest(t *testing.T) {
 	expectCell(t, res, 0, 1, itoa(batches*10))
 }
 
-// TestDiscoveryMergeGuard verifies .merge fails cleanly without a
-// catalog to arbitrate the multi-file swap.
-func TestDiscoveryMergeGuard(t *testing.T) {
+// TestMergeExtentsIsCompact: .merge table T extents, ADX's command,
+// merges a table's extents the way .compact does.
+func TestMergeExtentsIsCompact(t *testing.T) {
 	dir := t.TempDir()
 	eng := discoverEngine(t, dir)
 	diskExec(t, eng, `.create table M (A: long)`)
 	diskExec(t, eng, `.ingest inline into table M <| 1`)
-	stmt, err := parser.Parse(`.merge table M extents`)
-	if err != nil {
-		t.Skipf("merge syntax: %v", err)
+	diskExec(t, eng, `.ingest inline into table M <| 2`)
+	diskExec(t, eng, `.merge table M extents`)
+	fresh := discoverEngine(t, dir)
+	if n := len(fresh.Catalog.GetTable("M").Extents); n != 1 {
+		t.Fatalf("%d extents after .merge, want 1", n)
 	}
-	if _, err := eng.Execute(stmt); err == nil {
-		t.Fatal("merge must be rejected in discovery mode")
-	}
+	expectCell(t, diskQuery(t, fresh, `M | summarize S = sum(A)`), 0, 0, "3")
 }
 
 // TestParseExtentName pins the filename convention.

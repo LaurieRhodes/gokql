@@ -65,7 +65,7 @@ func TestLoadServerConfigDatabasesFromFile(t *testing.T) {
 	dir := t.TempDir()
 	writeServerConfigFile(t, dir, `{"dbName":"primary","databases":[{"name":"second","path":"/abs/second"}]}`)
 
-	cfg, err := loadServerConfig(dir, ":8080", "", false, false, map[string]bool{})
+	cfg, err := loadServerConfig(dir, ":8080", "", false, map[string]bool{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestLoadServerConfigDatabaseNameCollisionErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeServerConfigFile(t, dir, `{"dbName":"primary","databases":[{"name":"primary","path":"/abs/somewhere"}]}`)
 
-	if _, err := loadServerConfig(dir, ":8080", "", false, false, map[string]bool{}); err == nil {
+	if _, err := loadServerConfig(dir, ":8080", "", false, map[string]bool{}); err == nil {
 		t.Fatal("expected an error for a databases entry colliding with the primary name, got nil")
 	}
 }
@@ -100,7 +100,7 @@ func TestLoadServerConfigRelativeDatabasePathErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeServerConfigFile(t, dir, `{"databases":[{"name":"second","path":"relative/path"}]}`)
 
-	if _, err := loadServerConfig(dir, ":8080", "", false, false, map[string]bool{}); err == nil {
+	if _, err := loadServerConfig(dir, ":8080", "", false, map[string]bool{}); err == nil {
 		t.Fatal("expected an error for a relative databases path, got nil")
 	}
 }
@@ -112,7 +112,7 @@ func TestLoadServerConfigMissingDatabaseFieldErrors(t *testing.T) {
 	dir := t.TempDir()
 	writeServerConfigFile(t, dir, `{"databases":[{"name":"second"}]}`)
 
-	if _, err := loadServerConfig(dir, ":8080", "", false, false, map[string]bool{}); err == nil {
+	if _, err := loadServerConfig(dir, ":8080", "", false, map[string]bool{}); err == nil {
 		t.Fatal("expected an error for a databases entry missing path, got nil")
 	}
 }

@@ -23,7 +23,7 @@ var helpEntries = []helpEntry{
 	{".ingest csv into table T from \"path\"", "append rows from a CSV file"},
 	{".drop table T", "remove a table and all its extents"},
 	{".drop extent <guid>", "remove one specific extent by id"},
-	{".merge table T extents", "compact all of T's extents into one (catalog mode only — refused in discovery mode)"},
+	{".merge table T extents", "merge all of T's extents into one (on disk, the same as .compact table T)"},
 	{".compact table T", "discovery mode: merge T's extents into one, superseding (renaming, not deleting) the old ones"},
 	{".gc table T", "discovery mode: physically remove files .compact superseded — safe to run any time"},
 	{chunkFileHelpCmd, "split a markdown file into paragraph-level chunks and write into T"},

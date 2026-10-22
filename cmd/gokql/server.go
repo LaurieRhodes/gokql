@@ -109,14 +109,13 @@ type serverDatabase struct {
 // deliberately small and flat, matching this codebase's existing
 // preference for plain, explicit config over layered abstraction.
 type serverConfig struct {
-	dbPath        string            // filesystem path to the PRIMARY scope this server serves
-	dbName        string            // the name clients send in "db" for the primary database
-	databases     map[string]string // additional dbName -> path, all fully read-write (see serverDatabase's doc comment)
-	forceDiscover bool
-	verbose       bool
-	addr          string
-	tlsCert       string // empty means plain HTTP
-	tlsKey        string
+	dbPath    string            // filesystem path to the PRIMARY scope this server serves
+	dbName    string            // the name clients send in "db" for the primary database
+	databases map[string]string // additional dbName -> path, all fully read-write (see serverDatabase's doc comment)
+	verbose   bool
+	addr      string
+	tlsCert   string // empty means plain HTTP
+	tlsKey    string
 }
 
 // resolveDatabase maps a request's "db" field to the filesystem path
@@ -146,13 +145,12 @@ func (cfg serverConfig) resolveDatabase(name string) (string, error) {
 // user actually typed (via flag.Visit), so a flag left at its zero
 // value doesn't silently override a real config-file setting with
 // nothing.
-func loadServerConfig(dbPath, addrFlag, dbNameFlag string, forceDiscover, verbose bool, explicitFlags map[string]bool) (serverConfig, error) {
+func loadServerConfig(dbPath, addrFlag, dbNameFlag string, verbose bool, explicitFlags map[string]bool) (serverConfig, error) {
 	cfg := serverConfig{
-		dbPath:        dbPath,
-		dbName:        filepath.Base(filepath.Clean(dbPath)),
-		addr:          ":8080",
-		forceDiscover: forceDiscover,
-		verbose:       verbose,
+		dbPath:  dbPath,
+		dbName:  filepath.Base(filepath.Clean(dbPath)),
+		addr:    ":8080",
+		verbose: verbose,
 	}
 
 	fileCfgPath := filepath.Join(dbPath, serverConfigFileName)
@@ -302,7 +300,7 @@ func handleKustoRequest(cfg serverConfig, w http.ResponseWriter, r *http.Request
 	// applies identically to every additional database this server
 	// serves via cfg.databases, not just the primary one — same
 	// concurrency reasoning, same tradeoff, no special case needed.
-	cat, err := openCatalog(dbPath, cfg.forceDiscover, cfg.verbose)
+	cat, err := openCatalog(dbPath, cfg.verbose)
 	if err != nil {
 		writeKustoError(w, http.StatusInternalServerError, fmt.Errorf("open database: %w", err))
 		return

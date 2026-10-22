@@ -77,8 +77,7 @@ const supersededSuffix = ".superseded"
 
 func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, error) {
 	if !e.Catalog.IsDiscovery() {
-		return nil, fmt.Errorf(".compact is for catalog-free (discovery mode) scopes only — " +
-			"catalog-mode databases already have atomic multi-extent merge via .merge table T extents")
+		return nil, fmt.Errorf(".compact needs an on-disk database (in-memory tables: use .merge table T extents)")
 	}
 	tableDef := e.Catalog.GetTable(cmd.TableName)
 	if tableDef == nil {
@@ -466,7 +465,7 @@ func (e *Engine) dropTableComplete(tableName string) error {
 // uses, so nothing could possibly still be reading it.
 func (e *Engine) applyGCTable(cmd *parser.GCTableCmd) (*types.Table, error) {
 	if !e.Catalog.IsDiscovery() {
-		return nil, fmt.Errorf(".gc is for catalog-free (discovery mode) scopes only")
+		return nil, fmt.Errorf(".gc needs an on-disk database")
 	}
 	pattern := filepath.Join(e.Catalog.DatabasePath(), cmd.TableName+"_*.vtx"+supersededSuffix)
 	matches, err := filepath.Glob(pattern)
@@ -512,7 +511,7 @@ func (e *Engine) applyGCTable(cmd *parser.GCTableCmd) (*types.Table, error) {
 // needed work.
 func (e *Engine) applyCompactDatabase(_ *parser.CompactDatabaseCmd) (*types.Table, error) {
 	if !e.Catalog.IsDiscovery() {
-		return nil, fmt.Errorf(".compact is for catalog-free (discovery mode) scopes only")
+		return nil, fmt.Errorf(".compact needs an on-disk database")
 	}
 
 	names := e.Catalog.ListAllTables()
@@ -540,7 +539,7 @@ func (e *Engine) applyCompactDatabase(_ *parser.CompactDatabaseCmd) (*types.Tabl
 // same unfiltered listing as applyCompactDatabase.
 func (e *Engine) applyGCDatabase(_ *parser.GCDatabaseCmd) (*types.Table, error) {
 	if !e.Catalog.IsDiscovery() {
-		return nil, fmt.Errorf(".gc is for catalog-free (discovery mode) scopes only")
+		return nil, fmt.Errorf(".gc needs an on-disk database")
 	}
 
 	names := e.Catalog.ListAllTables()

@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -54,9 +56,15 @@ func TestDropExtentAmbiguousIDRefused(t *testing.T) {
 	eng := diskEngineEmpty(t)
 	diskExec(t, eng, `.set-or-append A <| datatable(S:string)["x"]`)
 	diskExec(t, eng, `.set-or-append B <| datatable(S:string)["y"]`)
-	// Recreate the pre-fix state: give B's extent A's id.
+	// Recreate the pre-fix state on disk: B's extent file carries A's
+	// id. (Execute rediscovers the directory, so an in-memory edit
+	// would not survive to the statement.)
 	a := eng.Catalog.Database.Tables["A"].Extents[0].ID
-	eng.Catalog.Database.Tables["B"].Extents[0].ID = a
+	bPath := eng.Catalog.Database.Tables["B"].Extents[0].FilePath
+	dir := eng.Catalog.DatabasePath()
+	if err := os.Rename(filepath.Join(dir, bPath), filepath.Join(dir, filepath.Dir(bPath), "B_"+a+".vtx")); err != nil {
+		t.Fatal(err)
+	}
 	stmt, err := parser.Parse(`.drop extent ` + a)
 	if err != nil {
 		t.Fatal(err)

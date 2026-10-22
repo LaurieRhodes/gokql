@@ -584,7 +584,7 @@ Not documented anywhere in the previous version of this file.
 | Database-wide shared dictionary                  | ✅      | Low-cardinality string columns deduplicated across the whole database via `_Dictionaries`, not just per-extent |
 | CSV ingestion                                      | ✅      | `.ingest csv into table T from "file.csv"`                    |
 | Extent merging                                       | ✅      | Compaction of small extents                                     |
-| Catalog persistence                                    | ✅      | JSON-based table/extent metadata                                   |
+| Catalog persistence                                    | ✅      | None needed: tables are discovered from extent footers             |
 | In-memory mode                                           | ✅      | Transient catalog with no disk persistence                            |
 
 ---

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/LaurieRhodes/gokql/pkg/catalog"
 )
 
 // TestCompactBasicMerge: N extents merge into 1, all rows preserved
@@ -241,14 +243,13 @@ func TestCompactAlreadyCompactIsNoOp(t *testing.T) {
 
 // TestCompactRejectedOnCatalogMode: .compact must refuse cleanly on a
 // legacy catalog-mode database, pointing at .merge instead.
-func TestCompactRejectedOnCatalogMode(t *testing.T) {
-	eng := diskEngineEmpty(t) // catalog mode, not discovery
+func TestCompactRejectedInMemory(t *testing.T) {
+	eng := New(catalog.NewMemory()) // no files to supersede
 	diskExec(t, eng, `.create table T (Id: string)`)
-	diskExec(t, eng, `.set-or-append T <| datatable(Id:string) ["a"]`)
 
 	_, err := runStmt(t, eng, `.compact table T`)
 	if err == nil {
-		t.Fatal("expected .compact to be rejected on a catalog-mode database")
+		t.Fatal("expected .compact to be rejected on an in-memory database")
 	}
 }
 

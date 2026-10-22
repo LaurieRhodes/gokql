@@ -100,7 +100,8 @@ func main() {
 	execCmd := flag.String("e", "", "Execute a single command and exit")
 	verbose := flag.Bool("v", false, "Verbose: show scan diagnostics")
 	readOnly := flag.Bool("readonly", false, "Open database read-only")
-	discoverFlag := flag.Bool("discover", false, "Force catalog-free discovery mode (scan .vtx footers; ignore/skip catalog.json)")
+	// Accepted for existing scripts; every database is discovered.
+	_ = flag.Bool("discover", false, "No effect: every database is read from its extent files")
 	modeFlag := flag.String("mode", "table", "Output mode: table, csv, json, jsonl, tsv")
 	noRC := flag.Bool("no-rc", false, "Don't load ~/.okqlrc")
 	showVersion := flag.Bool("version", false, "Print version and exit")
@@ -175,7 +176,7 @@ func main() {
 		explicit := make(map[string]bool)
 		flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 
-		cfg, err := loadServerConfig(dbPath, *serveAddr, *dbNameFlag, *discoverFlag, *verbose, explicit)
+		cfg, err := loadServerConfig(dbPath, *serveAddr, *dbNameFlag, *verbose, explicit)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -199,7 +200,7 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		cat, err = openCatalog(dbPath, *discoverFlag, *verbose)
+		cat, err = openCatalog(dbPath, *verbose)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 			os.Exit(1)
@@ -639,7 +640,7 @@ func (st *replState) handleOpen(input string) {
 	}
 
 	path := parts[len(parts)-1]
-	cat, err := openCatalog(path, false, false)
+	cat, err := openCatalog(path, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
@@ -821,21 +822,19 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// openCatalog opens a database directory, choosing catalog-free
-// discovery when catalog.json is absent but .vtx extent files exist
-// (directly or under extents/), or when forced. A fresh empty
-// directory opens in catalog mode for compatibility.
-func openCatalog(dbPath string, forceDiscover, verbose bool) (*catalog.Catalog, error) {
-	// Mode auto-detection itself now lives in catalog.OpenAuto,
-	// shared with pkg/engine's federation support — this wrapper
-	// keeps only the CLI-specific verbose logging.
-	cat, err := catalog.OpenAuto(dbPath, forceDiscover)
+// openCatalog opens a database directory from its extent files. A
+// catalog.json left by an older version is not read; tables it alone
+// defined (created but never written) do not appear, so say so.
+func openCatalog(dbPath string, verbose bool) (*catalog.Catalog, error) {
+	cat, err := catalog.Open(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	if verbose && cat.IsDiscovery() {
-		fmt.Fprintf(os.Stderr, "[catalog] discovery mode: %d tables from extent footers (no catalog.json)\n",
-			len(cat.Database.Tables))
+	if _, err := os.Stat(filepath.Join(dbPath, "catalog.json")); err == nil {
+		fmt.Fprintf(os.Stderr, "[catalog] %s: catalog.json is not read; tables are taken from extent files only\n", dbPath)
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[catalog] %d tables from extent footers\n", len(cat.Database.Tables))
 	}
 	return cat, nil
 }

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	vortex "github.com/LaurieRhodes/vortex-go"
 
@@ -151,7 +152,14 @@ var activeLetContext *LetContext
 
 // Engine is the query execution engine.
 type Engine struct {
-	Catalog    *catalog.Catalog
+	Catalog *catalog.Catalog
+
+	// execDepth counts nested Execute calls; the outermost refreshes
+	// the catalog from disk (catalog.Refresh) so a long-lived engine
+	// sees other processes' commits, while one statement runs on one
+	// consistent snapshot. Atomic because materialized-view
+	// maintenance runs statements on background goroutines.
+	execDepth  atomic.Int32
 	letContext *LetContext // Active let bindings (set during compound execution)
 	Verbose    bool
 
@@ -300,6 +308,14 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 	// Always installed and always restored, so no engine's backend
 	// outlives its own statement. See activeEmbedding in embedder.go
 	// for the contamination bug that made this unconditional.
+	if e.execDepth.Add(1) == 1 && e.Catalog != nil {
+		if err := e.Catalog.Refresh(); err != nil {
+			e.execDepth.Add(-1)
+			return nil, fmt.Errorf("refresh catalog: %w", err)
+		}
+	}
+	defer e.execDepth.Add(-1)
+
 	leaveEmbedderScope, err := e.beginEmbedderScope()
 	if err != nil {
 		return nil, err
@@ -381,8 +397,10 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 	case *parser.IngestCSVCmd:
 		return e.ingestCSVFile(s.TableName, s.FilePath)
 	case *parser.MergeExtentsCmd:
+		// ADX's name for merging a table's extents; on disk that is
+		// .compact (supersession, no metadata file to rewrite).
 		if e.Catalog.IsDiscovery() {
-			return nil, fmt.Errorf(".merge is not supported in catalog-free mode: extent replacement needs an atomic multi-file commit, which only a catalog provides. Supersede rows instead of merging extents, or open the database via a catalog")
+			return e.applyCompactTable(&parser.CompactTableCmd{TableName: s.TableName})
 		}
 		return e.mergeExtents(s.TableName)
 	case *parser.DropExtentCmd:

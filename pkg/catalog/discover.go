@@ -46,75 +46,132 @@ var DiscoveredSchemaFn func(dt *vortex.DType) types.KQLType
 // persistence is disabled and the directory contents remain the source
 // of truth.
 func Discover(dir string) (*Catalog, error) {
+	cat := &Catalog{
+		dbPath:    dir,
+		discovery: true,
+	}
+	if err := cat.rediscoverLocked(true); err != nil {
+		return nil, err
+	}
+	return cat, nil
+}
+
+// footerInfo is what discovery reads from one extent file.
+type footerInfo struct {
+	relPath  string
+	table    string
+	id       string
+	schema   types.Schema
+	rowCount int64
+	size     int64
+	err      error
+}
+
+// cachedFooter is a footer read earlier, valid while the file keeps
+// its size and mtime (extent files are immutable once committed).
+type cachedFooter struct {
+	size  int64
+	mtime int64
+	info  footerInfo
+}
+
+// rediscoverLocked rebuilds the catalog from the directory when either
+// directory's stamp moved or has not settled (force skips the check).
+// Footers of files seen before are reused, so a refresh reads only new
+// files. Caller holds c.mu (or owns c exclusively, as Discover does).
+func (c *Catalog) rediscoverLocked(force bool) error {
+	dir := c.dbPath
+	at := time.Now()
+	stamps := [2]fileStamp{statStamp(dir), statStamp(filepath.Join(dir, "extents"))}
+	if !force && stamps == c.dirSeen && stamps[0].settled(c.seenAt) &&
+		(!stamps[1].ok || stamps[1].settled(c.seenAt)) {
+		return nil
+	}
+
 	var files []string
 	for _, pattern := range []string{"*.vtx", filepath.Join("extents", "*.vtx")} {
 		m, err := filepath.Glob(filepath.Join(dir, pattern))
 		if err != nil {
-			return nil, fmt.Errorf("glob %s: %w", pattern, err)
+			return fmt.Errorf("glob %s: %w", pattern, err)
 		}
 		files = append(files, m...)
 	}
 	sort.Strings(files) // deterministic table/extent order
 
-	cat := &Catalog{
-		dbPath:    dir,
-		discovery: true,
-		Database: &Database{
-			Name:   filepath.Base(dir),
-			Tables: make(map[string]*Table),
-		},
-	}
-	if len(files) == 0 {
-		return cat, nil
-	}
-
-	type footerInfo struct {
-		relPath  string
-		table    string
-		id       string
-		schema   types.Schema
-		rowCount int64
-		size     int64
-		err      error
-	}
-
 	infos := make([]footerInfo, len(files))
+	fresh := make(map[string]cachedFooter, len(files))
+	var misses []int
+	var missStat []os.FileInfo
+	for i, path := range files {
+		fi, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				infos[i].table = "" // vanished since the glob: skip
+				continue
+			}
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		if cf, ok := c.footers[path]; ok && cf.size == fi.Size() && cf.mtime == fi.ModTime().UnixNano() {
+			infos[i] = cf.info
+			fresh[path] = cf
+			continue
+		}
+		misses = append(misses, i)
+		missStat = append(missStat, fi)
+	}
+
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 16)
-	for i, path := range files {
+	for _, i := range misses {
 		wg.Add(1)
-		go func(i int, path string) {
+		go func(i int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			infos[i] = readExtentFooter(dir, path)
-		}(i, path)
+			infos[i] = readExtentFooter(dir, files[i])
+		}(i)
 	}
 	wg.Wait()
+	for k, i := range misses {
+		info := infos[i]
+		if info.err != nil && !force && os.IsNotExist(info.err) {
+			infos[i] = footerInfo{} // removed between stat and read
+			continue
+		}
+		if info.err == nil {
+			fresh[files[i]] = cachedFooter{size: missStat[k].Size(), mtime: missStat[k].ModTime().UnixNano(), info: info}
+		}
+	}
 
+	db := &Database{
+		Name:   filepath.Base(dir),
+		Tables: make(map[string]*Table),
+	}
 	for _, info := range infos {
 		if info.err != nil {
-			return nil, fmt.Errorf("extent %s: %w", info.relPath, info.err)
+			return fmt.Errorf("extent %s: %w", info.relPath, info.err)
 		}
 		if info.table == "" {
 			continue // filename outside the convention: skipped, warned by caller via Verbose if desired
 		}
-		tbl, ok := cat.Database.Tables[info.table]
+		tbl, ok := db.Tables[info.table]
 		if !ok {
 			tbl = &Table{
 				Name:    info.table,
 				Schema:  info.schema,
 				Created: time.Now().UTC(),
 			}
-			cat.Database.Tables[info.table] = tbl
+			db.Tables[info.table] = tbl
 		} else {
 			merged, err := mergeSchemas(tbl.Schema, info.schema)
 			if err != nil {
-				return nil, fmt.Errorf("table %q: extent %s: %w", info.table, info.relPath, err)
+				return fmt.Errorf("table %q: extent %s: %w", info.table, info.relPath, err)
 			}
 			tbl.Schema = merged
 		}
-		if info.rowCount > 0 || info.size > 0 {
+		// Zero-row extents only assert a table's existence and schema
+		// (see CreateTable in discovery mode): never scanned.
+		if info.rowCount > 0 {
 			tbl.Extents = append(tbl.Extents, ExtentEntry{
 				ID:        info.id,
 				FilePath:  info.relPath,
@@ -123,34 +180,18 @@ func Discover(dir string) (*Catalog, error) {
 			})
 		}
 	}
-
-	// Drop schema-only tables' zero-row extents from scan lists while
-	// keeping the tables themselves: a zero-row extent exists solely to
-	// assert a schema (see CreateTable in discovery mode).
-	for _, tbl := range cat.Database.Tables {
-		kept := tbl.Extents[:0]
-		for _, e := range tbl.Extents {
-			if e.RowCount > 0 {
-				kept = append(kept, e)
-			}
-		}
-		tbl.Extents = kept
+	if c.Database != nil {
+		db.Version = c.Database.Version + 1
 	}
-
-	return cat, nil
+	c.Database = db
+	c.footers = fresh
+	c.dirSeen, c.seenAt = stamps, at
+	return nil
 }
 
 // readExtentFooter opens one extent file and extracts table name,
 // schema, and row count.
-func readExtentFooter(dir, path string) (info struct {
-	relPath  string
-	table    string
-	id       string
-	schema   types.Schema
-	rowCount int64
-	size     int64
-	err      error
-}) {
+func readExtentFooter(dir, path string) (info footerInfo) {
 	rel, err := filepath.Rel(dir, path)
 	if err != nil {
 		rel = filepath.Base(path)

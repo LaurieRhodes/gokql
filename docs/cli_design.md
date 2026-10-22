@@ -164,14 +164,22 @@ okql security.vortex              # Names the actual on-disk format
 okql ./logs.vortex "Logs | count" # One-shot
 ```
 
-But accept any extension — the database is a directory containing:
+But accept any extension — the database is a directory of
+self-describing Vortex extent files, named `<Table>_<hexid>.vtx`, and
+nothing else. There is no metadata file: tables, schemas and row counts
+come from the extent footers, and engine metadata (shared dictionaries,
+stored functions, materialized views) is kept in KQL system tables in
+the same directory. A table that has been created but not yet written
+is a zero-row extent.
 ```
 security.vortex/
-  catalog.json          # Table definitions, extent metadata
-  extents/
-    Logs_00000001.vtx   # Vortex columnar extent files
-    Logs_00000002.vtx
+  Logs_18e0d4c9d50566a6cc45a1c4.vtx
+  Logs_18e0d4ca0f1b2e7a9d03c611.vtx
+  _Dictionaries_18e0d4c9d5a1c0f2e4b7a913.vtx
 ```
+Databases written by older versions keep their extents under
+`extents/` and may hold a `catalog.json`; the extents are read and the
+`catalog.json` is ignored.
 
 ### In-memory mode
 

@@ -1,13 +1,17 @@
 // Package catalog manages the extent catalog: table schemas, extent metadata,
 // and the mapping from table names to Vortex files.
 //
-// Initial implementation uses JSON persistence. The design supports migration
-// to Vortex-backed catalog (append-only delta files with compaction) once the
-// engine is proven. The interface is the same either way.
+// An on-disk database has no metadata file: the directory of
+// self-describing .vtx extents is the database, and the catalog is built
+// from their footers (discover.go) and kept current with Refresh
+// (freshness.go). Engine metadata (shared dictionaries, stored functions,
+// materialized views) lives in KQL system tables in the same directory.
+// A catalog.json left by older versions is ignored.
+//
+// NewMemory catalogs hold everything in memory and are not discovered.
 package catalog
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,12 +27,19 @@ import (
 type Catalog struct {
 	mu        sync.RWMutex
 	dbPath    string // Root path for the database
-	discovery bool   // catalog-free mode: files are the source of truth
+	discovery bool   // on-disk database: files are the source of truth (false only for NewMemory)
 	Database  *Database
 
 	// lastAllocatedID is the highest extent id handed out by
 	// AllocateExtentID in this process (see there).
 	lastAllocatedID uint64
+
+	// Change detection for Refresh (freshness.go): the directory
+	// stamps last discovered, when they were observed, and the
+	// footers read so far.
+	dirSeen [2]fileStamp
+	seenAt  time.Time
+	footers map[string]cachedFooter // path -> footer
 }
 
 // Database represents a single database with tables and extents.
@@ -63,97 +74,20 @@ type ColumnStats struct {
 	NullCount int64       `json:"null_count,omitempty"`
 }
 
-// OpenAuto opens dbPath, auto-detecting catalog mode vs. discovery
-// mode the same way every caller of this decision needs to — extracted
-// here specifically so cmd/gokql's CLI and pkg/engine's federation
-// support (a different package, which cannot import cmd/gokql) share
-// exactly one implementation rather than maintaining two that could
-// drift, the same principle this codebase has paid for getting wrong
-// more than once already this session. forceDiscover skips the
-// catalog.json probe and always treats dbPath as discovery mode,
-// matching the CLI's own -discover flag semantics exactly.
-func OpenAuto(dbPath string, forceDiscover bool) (*Catalog, error) {
-	discover := forceDiscover
-	if !discover {
-		if _, err := os.Stat(filepath.Join(dbPath, "catalog.json")); os.IsNotExist(err) {
-			for _, pattern := range []string{"*.vtx", filepath.Join("extents", "*.vtx")} {
-				if m, _ := filepath.Glob(filepath.Join(dbPath, pattern)); len(m) > 0 {
-					discover = true
-					break
-				}
-			}
-		}
-	}
-	if !discover {
-		return Open(dbPath)
-	}
-	return Discover(dbPath)
-}
-
-// Open opens or creates a database catalog at the given path.
+// Open opens the database directory at dbPath, creating it if absent,
+// and builds the catalog from its extent files.
 func Open(dbPath string) (*Catalog, error) {
 	if err := os.MkdirAll(dbPath, 0755); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dbPath, "extents"), 0755); err != nil {
-		return nil, fmt.Errorf("create extents directory: %w", err)
-	}
-
-	cat := &Catalog{
-		dbPath: dbPath,
-	}
-
-	// Try to load existing catalog
-	catalogPath := filepath.Join(dbPath, "catalog.json")
-	data, err := os.ReadFile(catalogPath)
-	if err == nil {
-		db := &Database{}
-		if err := json.Unmarshal(data, db); err != nil {
-			return nil, fmt.Errorf("corrupt catalog: %w", err)
-		}
-		cat.Database = db
-	} else if os.IsNotExist(err) {
-		cat.Database = &Database{
-			Name:   filepath.Base(dbPath),
-			Tables: make(map[string]*Table),
-		}
-	} else {
-		return nil, fmt.Errorf("read catalog: %w", err)
-	}
-
-	return cat, nil
+	return Discover(dbPath)
 }
 
-// save writes the catalog to disk atomically.
+// save records a mutation. Nothing is written: on disk, the extent
+// files are the metadata, and each was committed by its own atomic
+// rename before it was registered here.
 func (c *Catalog) save() error {
-	if c.discovery {
-		// Discovery mode: the directory IS the metadata. In-memory
-		// state tracks registrations for this process; nothing
-		// persists besides the extent files themselves.
-		c.Database.Version++
-		return nil
-	}
-	if c.dbPath == "" {
-		// In-memory catalog — nothing to persist
-		c.Database.Version++
-		return nil
-	}
 	c.Database.Version++
-
-	data, err := json.MarshalIndent(c.Database, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal catalog: %w", err)
-	}
-
-	catalogPath := filepath.Join(c.dbPath, "catalog.json")
-	tmpPath := catalogPath + ".tmp"
-
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write catalog: %w", err)
-	}
-	if err := os.Rename(tmpPath, catalogPath); err != nil {
-		return fmt.Errorf("rename catalog: %w", err)
-	}
 	return nil
 }
 
@@ -316,7 +250,7 @@ func (c *Catalog) AddExtent(tableName string, entry ExtentEntry) error {
 	return c.save()
 }
 
-// AllocateExtentID returns a catalog-mode extent id (8 lowercase hex
+// AllocateExtentID returns an in-memory catalog's extent id (8 lowercase hex
 // digits) not used by any extent of any table, including the
 // _Dictionaries system table, and not handed out before in this
 // process.

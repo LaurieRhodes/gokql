@@ -24,8 +24,8 @@ func init() {
 	catalog.DiscoveredSchemaFn = vortexDTypeToKQL
 }
 
-// newExtentID allocates an extent identifier. Catalog mode keeps the
-// short sequential hex id. Discovery mode has no allocation authority
+// newExtentID allocates an extent identifier. In-memory catalogs keep
+// the short sequential hex id. On disk there is no allocation authority
 // to serialize through, so ids must be unique without coordination:
 // nanosecond timestamp plus 32 random bits, all lowercase hex to stay
 // inside the <Table>_<hexid>.vtx discovery convention.
