@@ -706,6 +706,8 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			return types.TypeDatetime
 		case "bin", "floor", "bin_at":
 			return binResultType(e.Args, schema)
+		case "column_ifexists", "columnifexists":
+			return columnIfExistsType(e, schema)
 		case "prev", "next":
 			if len(e.Args) > 0 {
 				return inferExprType(e.Args[0], schema)

@@ -74,7 +74,7 @@ func (e *Engine) applyProject(input *types.Table, op *parser.ProjectOp) (*types.
 			continue
 		}
 		newSchema.Columns = append(newSchema.Columns, types.Column{
-			Name: item.Name,
+			Name: autoColumnName(item.Name, item.Expr, &input.Schema),
 			Type: inferExprType(item.Expr, &input.Schema),
 		})
 		srcIdx[i] = -1
@@ -129,7 +129,7 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 		if err != nil {
 			return nil, fmt.Errorf("extend %q: %w", assign.Name, err)
 		}
-		assignments[i] = parser.Assignment{Name: assign.Name, Expr: rewritten}
+		assignments[i] = parser.Assignment{Name: autoColumnName(assign.Name, rewritten, &input.Schema), Expr: rewritten}
 	}
 
 	// existingIdx maps each assignment to the input-schema column index

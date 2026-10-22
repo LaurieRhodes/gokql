@@ -279,6 +279,13 @@ func (c *columnCollector) collectExpr(expr parser.Expr) {
 	case *parser.UnaryExpr:
 		c.collectExpr(e.Expr)
 	case *parser.FuncCall:
+		// column_ifexists("Name", default) reads column Name, which
+		// appears only as a string constant.
+		if isColumnIfExists(e.Name) {
+			if name, err := columnIfExistsName(e); err == nil {
+				c.addColumn(name)
+			}
+		}
 		for _, arg := range e.Args {
 			c.collectExpr(arg)
 		}

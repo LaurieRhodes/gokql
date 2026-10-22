@@ -25,7 +25,8 @@ and ASIM parsers, which is this engine's main query population.
 | Item | Observed |
 |---|---|
 | `mv-apply ... = <expression>` (only a bare column works) | "column not found" |
-| `column_ifexists`, `column_names_of` | unsupported; schema-aware evaluation needed |
+| `column_names_of(T)` | unsupported; needs tabular arguments (see let functions below) |
+| `let` functions with a tabular body (`let f = (p:int) { T \| where ... }`), and `print` bodies | parse error: body parsed as a scalar expression |
 | Tabular parameter with wildcard schema, `(T:(*))` | "unknown KQL type" |
 | Default parameter values, `(x:long = 2)` | "unknown KQL type" |
 | `materialize()` | parse error |
@@ -46,6 +47,7 @@ and ASIM parsers, which is this engine's main query population.
 | `datatable` string literals: single-quoted, `@'...'` verbatim and escaped forms are unquoted with the expression parser's literal rules (previously only `"..."`; single-quoted values were stored with their quotes, and a comma inside one split the row) | `convertDataTableValue`, `splitDataTableValues`. Existing scope data written through this path still holds quoted values; see the scope audit |
 | `pack_all([ignore_null_empty])`; scalar `bin_at`; `bin`/`floor` rewritten on floor semantics (real sizes, negative values, pre-1970 datetimes, non-positive size gives null, Widest typing); `time(...)` | reference examples exact: pack_all, bin x3, bin_at x5 including summarize |
 | Window functions: `row_number([start [, restart]])`, `prev`/`next` with offset and default, `row_cumsum`, `row_rank_dense`, `row_rank_min`, `row_window_session`; anywhere inside expressions and inside each other's arguments; in `extend`, `project`, `where` and `serialize` | `window.go`; all eight reference examples exact. Zone-map pruning skips a `where` containing a window call |
+| `column_ifexists` / `columnifexists`: constant name, column type when present (default's otherwise), ADX result naming; the named column is read under projection pushdown | `func_column_ifexists.go`; reference example exact |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
