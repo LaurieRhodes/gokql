@@ -1,21 +1,19 @@
 package engine
 
-// embed_bulk.go — .embed-into T <| query: bulk embedding via Ollama's
-// native batch input support (backlog P2 item 12).
+// embed_bulk.go — .embed-into T <| query: bulk embedding through the
+// configured backend's batch call (see pkg/embed).
 //
 // KQL's scalar-function evaluation model calls embed_text() once per
 // row inside `project`, by design — the same as every other function,
 // and not something worth special-casing in the shared evaluator for
-// one function's sake. Ollama's /api/embed endpoint, checked directly,
-// natively accepts an array of inputs and returns one embedding per
-// input in order in a single HTTP round trip. This command is the
-// isolated bridge between the two: it runs the query once, batches
-// the resulting Text values through Ollama's real batch API (default
-// 20 per call — conservative, matches the batch size that ran
-// reliably during the 134-chunk pilot embedding run), and writes the
-// result in one flushBatch. All-or-nothing, like every other ingest
-// path in this codebase: any batch failure aborts before any row is
-// written, not partway through.
+// one function's sake. Every supported backend accepts an array of
+// inputs and returns one embedding per input in order in a single
+// round trip. This command is the isolated bridge between the two: it
+// runs the query once, batches the resulting Text values through the
+// backend (EmbedBatchSize per request), and writes the result in
+// durable chunks of EmbedCommitRows. A failure aborts the chunk in
+// flight; earlier chunks stay written, and re-running the command
+// resumes by skipping Ids already present.
 
 import (
 	"context"
@@ -27,7 +25,7 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-// EmbedBatchSize caps how many texts go in one Ollama request.
+// EmbedBatchSize caps how many texts go in one backend request.
 // Overridable for testing.
 var EmbedBatchSize = 20
 

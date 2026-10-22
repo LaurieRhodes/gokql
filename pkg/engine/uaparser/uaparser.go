@@ -57,7 +57,7 @@ type rawDoc struct {
 // compiledEntry holds one already-compiled regex plus its (still
 // template-form, e.g. "Firefox ($1)") replacement strings.
 type compiledEntry struct {
-	re                                             *regexp.Regexp
+	re                                              *regexp.Regexp
 	family, v1, v2, v3, v4, deviceFam, brand, model string
 }
 

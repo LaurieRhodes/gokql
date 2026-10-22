@@ -25,10 +25,10 @@ import (
 
 // LetContext holds let-bound names during compound statement execution.
 type LetContext struct {
-	Scalars   map[string]types.Value         // Scalar let bindings: name → value
-	ScalarTypes map[string]types.KQLType     // Scalar let bindings: name → KQL type, populated alongside Scalars (see executeCompound's own ScalarExpr case) — added 2026-08-18 to fix inferExprType's own inability to resolve a let-bound scalar's type (see LookupScalarType's own doc comment for the full story).
-	Functions map[string]*parser.FunctionDef // UDF let bindings: name → definition
-	Tables    map[string]*types.Table        // Tabular let bindings: name → result table
+	Scalars     map[string]types.Value         // Scalar let bindings: name → value
+	ScalarTypes map[string]types.KQLType       // Scalar let bindings: name → KQL type, populated alongside Scalars (see executeCompound's own ScalarExpr case) — added 2026-08-18 to fix inferExprType's own inability to resolve a let-bound scalar's type (see LookupScalarType's own doc comment for the full story).
+	Functions   map[string]*parser.FunctionDef // UDF let bindings: name → definition
+	Tables      map[string]*types.Table        // Tabular let bindings: name → result table
 
 	// Parent is the enclosing scope's own LetContext, if any — nil for
 	// a top-level context. Added 2026-08-17 to fix a real, live

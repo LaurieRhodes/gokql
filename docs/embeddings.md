@@ -161,10 +161,13 @@ as an INPUT ("use this model for this row") and written as an OUTPUT
 models per call rejects the input reading, so the two meanings are not
 separable today. Unresolved design question.
 
-**`.embed-into` is all-or-nothing and not resumable.** A failure at row
-99,000 of 100,000 discards everything, and the engine passes
-`context.Background()`, so it cannot be interrupted either. Fine at
-pilot scale, not at corpus scale. Known gap.
+**`.embed-into` commits in chunks of `EmbedCommitRows` (500).** Each
+chunk is embedded and written as one durable extent; a failure aborts
+only the chunk in flight. Re-issuing the same command resumes: rows
+whose Id is already present are skipped, which is why Ids must be
+unique (above). Cancellation is checked between chunks through
+`Engine.Ctx`; the CLI does not set it, so Ctrl-C there terminates the
+process, and the already-written chunks survive for the re-run.
 
 **Storage encoding.** Stored vectors use a compact form:
 float32 little-endian, base64, behind a `kql.vec32:` prefix (the same

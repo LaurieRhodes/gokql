@@ -1626,6 +1626,7 @@ func applyParseCore(input *types.Table, column, kind, flags string, patterns []p
 //     the first ("404"), since greedy backtracking finds the
 //     rightmost position where the rest of the pattern can still
 //     match.
+//
 // Non-greedy-except-the-final-fragment resolves both: every field or
 // wildcard that has ANY fragment after it anywhere in the pattern
 // stays non-greedy (correctly finds the FIRST/nearest boundary,
