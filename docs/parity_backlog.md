@@ -75,6 +75,9 @@ and ASIM parsers, which is this engine's main query population.
 | Bracket-quoted identifiers `['name']` / `["name"]` in expressions (with `.p`/`['k']` access after them), assignment names, `project`, `project-away/-rename/-reorder/-keep`, datatable and column-definition schemas; previously a parse error or a column literally named `['x']` | `unquoteIdent` in the parser |
 | `evaluate pivot` (default `count()`, any aggregate, explicit or default identifier columns, `: OutputSchema`) and `evaluate narrow` | `plugin_pivot.go`; the five pivot reference examples' shapes on a small table. Pivot columns in first-appearance order; an empty cell is 0 for count/dcount/sum, `[]`/`{}` for make_list/make_set/make_bag, otherwise null. An empty pivot value names its column `Column1` (unverified) |
 | `evaluate ipv4_lookup` / `ipv6_lookup`: lookup table as any tabular expression, extra key columns, `return_unmatched` (named or positional); every matching prefix is returned, in lookup-table order. `as hint.materialized=true T` parses | `plugin_ip_lookup.go`; the three ipv4_lookup reference examples exact (`external_data` replaced by an equivalent datatable) |
+| `search` (ADX form): `[T \|] search [kind=case_sensitive] [in (T1, T*)] Predicate`; bare terms (has/hasprefix/hassuffix/contains/regex by wildcard position), `Col:"term"`, `Col == ...`, `matches regex`, `and`/`or`/`not`, `search *`; every column via tostring; output `$table` + union kind=outer schema. Replaces the gokql hit-list form (TableName, Column, RowKey, Value) | `search.go`; the reference syntax table and examples; output schema checked against Kusto.Language (`$table, a, b_long, b_string, n, c` for heterogeneous tables) |
+| `union` kind=outer: a name's typed variants together at the name's first-seen position (`a, b_long, b_string, n, c`) | `buildUnionSchema`; both leg orders against Kusto.Language |
+| `sort by ['quoted name']` | `parseOrderBy` |
 
 ## P2 — real but less frequent
 

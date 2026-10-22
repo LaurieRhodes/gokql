@@ -1610,6 +1610,11 @@ func parseOperator(seg string) (Operator, error) {
 		return &CountOp{}, nil
 	}
 
+	// | search [kind=...] Predicate
+	if strings.HasPrefix(lower, "search ") {
+		return parseSearchOp(seg[len("search "):], true)
+	}
+
 	// | where <predicate>
 	if strings.HasPrefix(lower, "where ") {
 		predStr := seg[len("where "):]
@@ -2870,6 +2875,15 @@ func parseOrderBy(s string) (*OrderByOp, error) {
 	var clauses []OrderClause
 
 	for _, part := range parts {
+		// A quoted identifier, ['$table'] or ["a b"], may hold spaces.
+		var quoted string
+		if strings.HasPrefix(part, "['") || strings.HasPrefix(part, `["`) {
+			q := part[1:2]
+			if end := strings.Index(part[2:], q+"]"); end >= 0 {
+				quoted = part[2 : 2+end]
+				part = "_ " + strings.TrimSpace(part[2+end+2:])
+			}
+		}
 		fields := strings.Fields(part)
 		if len(fields) == 0 {
 			continue
@@ -2877,6 +2891,9 @@ func parseOrderBy(s string) (*OrderByOp, error) {
 		clause := OrderClause{
 			Column: fields[0],
 			Desc:   true, // KQL default is desc
+		}
+		if quoted != "" {
+			clause.Column = quoted
 		}
 		if len(fields) > 1 {
 			switch strings.ToLower(fields[1]) {
@@ -3730,50 +3747,14 @@ func parseLookup(s string) (*LookupOp, error) {
 	return op, nil
 }
 
-// parseSearchStatement parses "search [in (T1, T2, ...)] "term"" and
-// any subsequent pipeline operators, mirroring parsePrintStatement's
-// structure (Source: "", first operator carries the payload).
+// parseSearchStatement parses the source form
+// "search [kind=...] [in (T1, T2, ...)] Predicate" and any subsequent
+// pipeline operators (Source: "", first operator carries the payload).
 func parseSearchStatement(s string, remaining []string) (Statement, error) {
-	s = strings.TrimSpace(s)
-	op := &SearchOp{}
-
-	if strings.HasPrefix(strings.ToLower(s), "in ") || strings.HasPrefix(strings.ToLower(s), "in(") {
-		rest := strings.TrimSpace(s[2:])
-		if !strings.HasPrefix(rest, "(") {
-			return nil, fmt.Errorf("search: expected '(' after 'in'")
-		}
-		closeIdx := strings.IndexByte(rest, ')')
-		if closeIdx < 0 {
-			return nil, fmt.Errorf("search: unmatched '(' in 'in (...)'")
-		}
-		tableList := rest[1:closeIdx]
-		for _, t := range strings.Split(tableList, ",") {
-			t = strings.TrimSpace(t)
-			if t != "" {
-				op.Tables = append(op.Tables, t)
-			}
-		}
-		s = strings.TrimSpace(rest[closeIdx+1:])
-	}
-
-	s = strings.TrimSpace(s)
-	if len(s) < 2 || s[0] != '"' {
-		return nil, fmt.Errorf("search: expected a quoted term, got %q", s)
-	}
-	termExpr, err := ParseExpr(s)
+	op, err := parseSearchOp(s, false)
 	if err != nil {
-		return nil, fmt.Errorf("search: %w", err)
+		return nil, err
 	}
-	lit, ok := termExpr.(*Literal)
-	if !ok {
-		return nil, fmt.Errorf("search: expected a quoted string literal, got %q", s)
-	}
-	term, ok := lit.Value.(string)
-	if !ok {
-		return nil, fmt.Errorf("search: expected a string literal")
-	}
-	op.Term = term
-
 	query := &Query{Source: "", Operators: []Operator{op}}
 	for i, seg := range remaining {
 		seg = strings.TrimSpace(seg)
@@ -3787,6 +3768,171 @@ func parseSearchStatement(s string, remaining []string) (Statement, error) {
 		query.Operators = append(query.Operators, subOp)
 	}
 	return query, nil
+}
+
+// parseSearchOp parses everything after the search keyword.
+func parseSearchOp(s string, piped bool) (*SearchOp, error) {
+	s = strings.TrimSpace(s)
+	op := &SearchOp{Piped: piped}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "kind") {
+		rest := strings.TrimSpace(s[len("kind"):])
+		if !strings.HasPrefix(rest, "=") {
+			return nil, fmt.Errorf("search: expected kind=...")
+		}
+		rest = strings.TrimSpace(rest[1:])
+		end := strings.IndexAny(rest, " \t")
+		if end < 0 {
+			end = len(rest)
+		}
+		switch strings.ToLower(rest[:end]) {
+		case "case_sensitive":
+			op.CaseSens = true
+		case "case_insensitive", "default":
+		default:
+			return nil, fmt.Errorf("search: unknown kind %q (case_sensitive, case_insensitive, default)", rest[:end])
+		}
+		s = strings.TrimSpace(rest[end:])
+		lower = strings.ToLower(s)
+	}
+	if strings.HasPrefix(lower, "in ") || strings.HasPrefix(lower, "in(") {
+		if piped {
+			return nil, fmt.Errorf("search: in (...) cannot be combined with a piped input")
+		}
+		rest := strings.TrimSpace(s[2:])
+		if !strings.HasPrefix(rest, "(") {
+			return nil, fmt.Errorf("search: expected '(' after 'in'")
+		}
+		closeIdx := strings.IndexByte(rest, ')')
+		if closeIdx < 0 {
+			return nil, fmt.Errorf("search: unmatched '(' in 'in (...)'")
+		}
+		for _, t := range strings.Split(rest[1:closeIdx], ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				op.Tables = append(op.Tables, t)
+			}
+		}
+		s = strings.TrimSpace(rest[closeIdx+1:])
+	}
+	if s == "" {
+		return nil, fmt.Errorf("search: missing predicate")
+	}
+	pred, err := parseSearchPredicate(s, op.CaseSens)
+	if err != nil {
+		return nil, fmt.Errorf("search: %w", err)
+	}
+	op.Predicate = pred
+	return op, nil
+}
+
+// parseSearchPredicate parses a search predicate: `*` (every row), or
+// a boolean expression whose bare string terms mean "any column has
+// the term" and whose Col:"term" pairs mean "Col has the term".
+func parseSearchPredicate(s string, caseSens bool) (Expr, error) {
+	if strings.TrimSpace(s) == "*" {
+		return &Literal{Value: true}, nil
+	}
+	expr, err := ParseExpr(rewriteSearchColumnTerms(s, caseSens))
+	if err != nil {
+		return nil, err
+	}
+	return searchTermsToCalls(expr, caseSens), nil
+}
+
+// rewriteSearchColumnTerms turns Col:"term" (not valid KQL expression
+// syntax) into SearchColFunc(Col, "term", cs), leaving string literals
+// untouched.
+func rewriteSearchColumnTerms(s string, caseSens bool) string {
+	cs := "false"
+	if caseSens {
+		cs = "true"
+	}
+	var b strings.Builder
+	isIdent := func(c byte) bool {
+		return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+	}
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c == '"' || c == '\'' {
+			j := skipQuoted(s, i)
+			b.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		if isIdent(c) && (i == 0 || !isIdent(s[i-1])) {
+			j := i
+			for j < len(s) && isIdent(s[j]) {
+				j++
+			}
+			k := j
+			for k < len(s) && (s[k] == ' ' || s[k] == '\t') {
+				k++
+			}
+			if k < len(s) && s[k] == ':' {
+				m := k + 1
+				for m < len(s) && (s[m] == ' ' || s[m] == '\t') {
+					m++
+				}
+				if m < len(s) && (s[m] == '"' || s[m] == '\'') {
+					end := skipQuoted(s, m)
+					b.WriteString(SearchColFunc + "(" + s[i:j] + ", " + s[m:end] + ", " + cs + ")")
+					i = end
+					continue
+				}
+			}
+			b.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// skipQuoted returns the index just past the string literal starting at
+// s[i] (a quote), honouring backslash escapes.
+func skipQuoted(s string, i int) int {
+	q := s[i]
+	j := i + 1
+	for j < len(s) {
+		if s[j] == '\\' {
+			j += 2
+			continue
+		}
+		if s[j] == q {
+			return j + 1
+		}
+		j++
+	}
+	return len(s)
+}
+
+// searchTermsToCalls replaces bare string literals in boolean
+// positions (the whole predicate, operands of and/or, the operand of
+// not) with SearchAnyFunc calls.
+func searchTermsToCalls(expr Expr, caseSens bool) Expr {
+	switch e := expr.(type) {
+	case *Literal:
+		if _, ok := e.Value.(string); ok {
+			return &FuncCall{Name: SearchAnyFunc, RawName: SearchAnyFunc, Args: []Expr{e, &Literal{Value: caseSens}}}
+		}
+	case *BinaryExpr:
+		if e.Op == OpAnd || e.Op == OpOr {
+			return &BinaryExpr{Left: searchTermsToCalls(e.Left, caseSens), Op: e.Op, Right: searchTermsToCalls(e.Right, caseSens)}
+		}
+	case *UnaryExpr:
+		if e.Op == "not" {
+			return &UnaryExpr{Op: e.Op, Expr: searchTermsToCalls(e.Expr, caseSens)}
+		}
+	case *FuncCall:
+		if e.Name == "not" && len(e.Args) == 1 {
+			cp := *e
+			cp.Args = []Expr{searchTermsToCalls(e.Args[0], caseSens)}
+			return &cp
+		}
+	}
+	return expr
 }
 
 // parseFindStatement parses find's two real-ADX documented grammar

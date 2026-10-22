@@ -155,8 +155,12 @@ type Engine struct {
 	// its engine, so concurrent engines share no evaluation state.
 	udfDepth     int
 	stmtEmbedder embed.Embedder
-	letContext   *LetContext // Active let bindings (set during compound execution)
-	Verbose      bool
+
+	// pipelineSource is the source table name of the query whose
+	// pipeline is running ($table for a piped search).
+	pipelineSource string
+	letContext     *LetContext // Active let bindings (set during compound execution)
+	Verbose        bool
 
 	// extraResults collects the result tables after the first that
 	// fork and facet produce; ExecuteAll returns them.
@@ -657,6 +661,12 @@ func queryNeedsLetContextRestore(operators []parser.Operator) bool {
 }
 
 func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
+	// The source name labels $table for a piped search; restored for
+	// nested queries (join and union legs, subqueries).
+	prevSource := e.pipelineSource
+	e.pipelineSource = q.Source
+	defer func() { e.pipelineSource = prevSource }()
+
 	// Step 1: Resolve source table (check let context first, then catalog).
 	// LookupTable walks the parent chain, not just e.letContext's own
 	// local map — see LetContext's own doc comment for why.
@@ -967,6 +977,11 @@ func (e *Engine) applyOperator(input *types.Table, op parser.Operator) (*types.T
 	switch o := op.(type) {
 	case *parser.WhereOp:
 		return e.applyWhere(input, o)
+	case *parser.SearchOp:
+		if !o.Piped {
+			return nil, fmt.Errorf("search: in a pipeline, use T | search Predicate (in (...) needs the source form)")
+		}
+		return e.applySearchPiped(input, o)
 	case *parser.ProjectOp:
 		return e.applyProject(input, o)
 	case *parser.ExtendOp:

@@ -126,11 +126,8 @@ func TestHelpListsCommands(t *testing.T) {
 	}
 }
 
-// TestSearchOperator: search "term" scans string columns across every
-// table without the caller naming which table/column holds the term —
-// backlog P1 item 8, motivated by the retrieval-quality assessment
-// finding every lexical query had to know its target table/column
-// in advance.
+// TestSearchOperator: search "term" finds rows across every table
+// without the caller naming which table/column holds the term.
 func TestSearchOperator(t *testing.T) {
 	eng := diskEngineEmpty(t)
 	diskExec(t, eng, `.create table A (Id: string, Note: string, N: long)`)
@@ -154,20 +151,17 @@ func TestSearchOperator(t *testing.T) {
 	expectRows(t, tbl, 2) // still 2, not 3 — a3's note doesn't word-bound match
 
 	// Real, further-pipeable table.
-	tbl = diskQuery(t, eng, `search "apricot" | summarize c = count() by TableName | sort by TableName asc`)
+	tbl = diskQuery(t, eng, `search "apricot" | summarize c = count() by ['$table'] | sort by ['$table'] asc`)
 	expectRows(t, tbl, 2)
 	expectCell(t, tbl, 0, 0, "A")
 	expectCell(t, tbl, 0, 1, "1")
 
-	// Long, numeric-only, and dynamic columns are excluded from the
-	// scan (only string/guid/dynamic columns are searched); confirms N
-	// (long) never spuriously matches text terms.
+	// Every column is searched through its tostring form, as in ADX
+	// (search "4625" finds an EventID): "1" matches N == 1 only, not
+	// the "a1" Id (has is word-bounded).
 	tbl = diskQuery(t, eng, `search "1"`)
-	for _, row := range tbl.Rows {
-		if row[1] == "N" {
-			t.Errorf("search matched a long column: %+v", row)
-		}
-	}
+	expectRows(t, tbl, 1)
+	expectCell(t, tbl, 0, 1, "a1")
 }
 
 // TestSearchWildcard guards a real, live silent-wrong-answer bug: `*`

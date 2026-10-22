@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -66,6 +67,11 @@ func coerceToDeclared(v types.Value, t types.KQLType) types.Value {
 func evalFuncRaw(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
 	// Try each category in turn. The order doesn't matter for correctness
 	// (function names are unique) but we put the most common categories first.
+	if strings.HasPrefix(fc.Name, "__search_") {
+		if v, ok, err := evalSearchFunc(eng, fc, schema, row); ok {
+			return v, err
+		}
+	}
 	if v, ok, err := evalStringFunc(eng, fc, schema, row); ok {
 		return v, err
 	}

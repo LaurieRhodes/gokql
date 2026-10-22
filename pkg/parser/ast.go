@@ -1407,18 +1407,26 @@ type HelpCmd struct{}
 
 func (*HelpCmd) statementNode() {}
 
-// SearchOp: search "term" or search in (T1, T2) "term" — scans string
-// columns across tables for a term (word-bounded, case-insensitive,
-// same semantics as `has`). Tables empty = every table in the catalog.
-// Deliberately scoped: real Kusto's search unions full heterogeneous
-// row schemas across tables with null-padding for absent columns; this
-// returns a normalized (TableName, Column, RowKey, Value) hit list
-// instead, which answers the practical "where does this term appear
-// anywhere in my scope" need without the harder exact-fidelity problem.
+// SearchOp: [T |] search [kind=case_sensitive] [in (T1, T2*)] Predicate
+// (ADX search operator). The predicate is a KQL boolean expression in
+// which a bare string term means "any column has the term" and
+// Col:"term" means "Col has the term"; the parser rewrites those into
+// calls of SearchAnyFunc and SearchColFunc carrying the case
+// sensitivity. Output: $table, then the union (kind=outer) of the
+// searched tables' columns. Piped is the tabular-operator form, which
+// searches its input instead of named tables.
 type SearchOp struct {
-	Term   string
-	Tables []string // nil/empty = all tables
+	Tables    []string // nil = every table; may hold wildcards
+	Predicate Expr
+	CaseSens  bool
+	Piped     bool
 }
+
+// Internal function names the search predicate rewrite produces.
+const (
+	SearchAnyFunc = "__search_any" // (term, caseSensitive)
+	SearchColFunc = "__search_col" // (column, term, caseSensitive)
+)
 
 func (*SearchOp) operatorNode() {}
 

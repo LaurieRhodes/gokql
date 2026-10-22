@@ -49,7 +49,7 @@ This rewrite corrects a significant amount of drift in the previous version (dat
 | graph-to-table          | ✅      | Materialize graph as edges (default) or nodes                                                                       |
 | range                   | ✅      | Table-generating source: int/long/real/datetime/timespan, let-bound and standalone forms                            |
 | evaluate                | ✅      | General plugin-dispatch mechanism (a registry, not a single hard-coded case); bag_unpack is the first plugin        |
-| search                  | ✅      | Free-text search across all columns or a named column, `in (T1, T2)` or database-wide                              |
+| search                  | ✅      | ADX form: `[T \|] search [kind=] [in (T1, T*)] Predicate`; terms with wildcards, `Col:"term"`, boolean combinations; `$table` + union schema |
 | find                    | ✅      | Cross-table search: explicit table list or database-wide, project-smart and explicit project [, pack_all()]        |
 | partition               | ✅      | Group-by-column, run a sub-pipeline per group, union results (the `(SubQuery)` implicit-source form)                |
 | parse-where             | ✅      | Same pattern grammar as parse, but drops non-matching rows entirely instead of nulling them (2026-08-15)             |

@@ -209,7 +209,7 @@ func rowHasTermAnyColumn(row types.Row, term string) bool {
 			continue
 		}
 		s := fmt.Sprintf("%v", col)
-		if searchTermMatches(s, term) {
+		if searchTermMatches(s, term, false) {
 			return true
 		}
 	}
