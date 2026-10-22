@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -839,7 +840,45 @@ func evalSeriesFillLinear(eng *Engine, fc *parser.FuncCall, schema *types.Schema
 			out[i] = arr[i] // leave as placeholder (fill_edges=false, or truly unreachable here since anyReal is true)
 		}
 	}
+	// An integer series stays integer: interpolated values truncate
+	// (73.5 is 73), as in the reference example's int array.
+	if raw, err := evalExpr(eng, fc.Args[0], schema, row); err == nil && jsonArrayAllIntegers(raw) {
+		for i, v := range out {
+			if f, ok := v.(float64); ok {
+				out[i] = int64(f)
+			}
+		}
+	}
 	return marshalSeriesArray(out)
+}
+
+// jsonArrayAllIntegers reports whether v is a JSON array whose
+// non-null elements are all integer numbers.
+func jsonArrayAllIntegers(v types.Value) bool {
+	str, ok := v.(string)
+	if !ok {
+		return false
+	}
+	dec := json.NewDecoder(strings.NewReader(str))
+	dec.UseNumber()
+	var arr []interface{}
+	if dec.Decode(&arr) != nil {
+		return false
+	}
+	found := false
+	for _, el := range arr {
+		switch x := el.(type) {
+		case nil:
+		case json.Number:
+			if strings.ContainsAny(string(x), ".eE") {
+				return false
+			}
+			found = true
+		default:
+			return false
+		}
+	}
+	return found
 }
 
 // seriesOptionalPlaceholderArg evaluates the missing_value_placeholder

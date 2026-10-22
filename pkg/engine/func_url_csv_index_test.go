@@ -8,17 +8,17 @@ import "testing"
 
 func TestUrlEncodeSpaceBecomesPlus(t *testing.T) {
 	tbl := queryResult(t, `let url = 'https://www.bing.com/hello world/'; print encoded = url_encode(url)`)
-	expectCell(t, tbl, 0, 0, "https://www.bing.com/hello+world/")
+	expectCell(t, tbl, 0, 0, "https%3a%2f%2fwww.bing.com%2fhello+world%2f")
 }
 
 // TestUrlEncodeLiteralPlusEscapedFirst guards the real subtlety this
 // function's own implementation has to handle correctly: a literal
-// '+' in the input must be escaped to %2B BEFORE space is turned into
+// '+' in the input must be escaped to %2b BEFORE space is turned into
 // '+', or an original '+' would become indistinguishable from an
 // encoded space once both share the same output character.
 func TestUrlEncodeLiteralPlusEscapedFirst(t *testing.T) {
 	tbl := queryResult(t, `print x = url_encode('a+b c')`)
-	expectCell(t, tbl, 0, 0, "a%2Bb+c")
+	expectCell(t, tbl, 0, 0, "a%2bb+c")
 }
 
 func TestParseCsvBasic(t *testing.T) {

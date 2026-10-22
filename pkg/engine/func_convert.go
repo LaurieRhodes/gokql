@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -40,6 +42,24 @@ func evalConvertFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		if val == nil {
 			return nil, true, nil
+		}
+		if str, ok := val.(string); ok {
+			// A string converts only when it is a number: tolong("x")
+			// is null, not 0.
+			n, ok := parseNumberString(str)
+			if !ok {
+				return nil, true, nil
+			}
+			if fc.Name == "toint" || fc.Name == "int" {
+				return int64(int32(n)), true, nil
+			}
+			return int64(n), true, nil
+		}
+		if b, ok := val.(bool); ok {
+			if b {
+				return int64(1), true, nil
+			}
+			return int64(0), true, nil
 		}
 		return types.ToInt64(val), true, nil
 
@@ -96,6 +116,19 @@ func evalConvertFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		if val == nil {
 			return nil, true, nil
+		}
+		if str, ok := val.(string); ok {
+			f, err := strconv.ParseFloat(strings.TrimSpace(str), 64)
+			if err != nil && !errors.Is(err, strconv.ErrRange) {
+				return nil, true, nil
+			}
+			return f, true, nil
+		}
+		if b, ok := val.(bool); ok {
+			if b {
+				return float64(1), true, nil
+			}
+			return float64(0), true, nil
 		}
 		return types.ToFloat64(val), true, nil
 
@@ -236,19 +269,8 @@ func evalConvertFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 				best = val
 				continue
 			}
-			switch bv := best.(type) {
-			case int64:
-				if cv, ok := val.(int64); ok && cv > bv {
-					best = val
-				}
-			case float64:
-				if cv := types.ToFloat64(val); cv > bv {
-					best = val
-				}
-			case string:
-				if cv, ok := val.(string); ok && cv > bv {
-					best = val
-				}
+			if c, ok := compareScalars(val, best); ok && c > 0 {
+				best = val
 			}
 		}
 		return best, true, nil
@@ -270,19 +292,8 @@ func evalConvertFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 				best = val
 				continue
 			}
-			switch bv := best.(type) {
-			case int64:
-				if cv, ok := val.(int64); ok && cv < bv {
-					best = val
-				}
-			case float64:
-				if cv := types.ToFloat64(val); cv < bv {
-					best = val
-				}
-			case string:
-				if cv, ok := val.(string); ok && cv < bv {
-					best = val
-				}
+			if c, ok := compareScalars(val, best); ok && c < 0 {
+				best = val
 			}
 		}
 		return best, true, nil
@@ -745,3 +756,63 @@ func trigAsin(x float64) float64     { return math.Asin(x) }
 func trigAcos(x float64) float64     { return math.Acos(x) }
 func trigAtan(x float64) float64     { return math.Atan(x) }
 func trigAtan2(y, x float64) float64 { return math.Atan2(y, x) }
+
+// parseNumberString parses a numeric string for tolong/toint: an
+// integer, or a real truncated toward zero.
+func parseNumberString(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return float64(n), true
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return math.Trunc(f), true
+}
+
+// compareScalars orders two non-null scalars of comparable kinds:
+// numbers of any width (and datetimes/timespans) numerically, strings
+// lexically. ok=false when they don't compare.
+func compareScalars(a, b types.Value) (int, bool) {
+	if as, ok := a.(string); ok {
+		bs, ok := b.(string)
+		if !ok {
+			return 0, false
+		}
+		return strings.Compare(as, bs), true
+	}
+	ai, aInt := asInt64(a)
+	bi, bInt := asInt64(b)
+	if aInt && bInt {
+		switch {
+		case ai < bi:
+			return -1, true
+		case ai > bi:
+			return 1, true
+		}
+		return 0, true
+	}
+	af, aok := numericFloat(a)
+	bf, bok := numericFloat(b)
+	if !aok || !bok {
+		return 0, false
+	}
+	switch {
+	case af < bf:
+		return -1, true
+	case af > bf:
+		return 1, true
+	}
+	return 0, true
+}
+
+func numericFloat(v types.Value) (float64, bool) {
+	switch x := v.(type) {
+	case int64, int32, int, float64:
+		return types.ToFloat64(x), true
+	case types.Decimal:
+		return x.Float64(), true
+	}
+	return 0, false
+}

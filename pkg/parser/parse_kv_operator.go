@@ -147,6 +147,15 @@ func parseKVKeysList(s string) ([]ParseKVKey, error) {
 func stripKVQuotes(s string) string {
 	if len(s) >= 2 {
 		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
+			// A string literal: decode its escapes (escape='\\' is one
+			// backslash).
+			if e, err := ParseExpr(s); err == nil {
+				if lit, ok := e.(*Literal); ok {
+					if v, ok := lit.Value.(string); ok {
+						return v
+					}
+				}
+			}
 			return s[1 : len(s)-1]
 		}
 	}

@@ -374,6 +374,15 @@ func valueForJSONArray(v types.Value, t types.KQLType) interface{} {
 		return types.ToInt64(v)
 	case types.TypeDatetime:
 		return formatDatetimeISO7(types.ToInt64(v))
+	case types.TypeTimespan:
+		// A timespan in a dynamic value is its string form.
+		return kqlToString(v, types.TypeTimespan)
+	case types.TypeDynamic:
+		// A dynamic element is embedded as JSON, not as its text.
+		if str, ok := v.(string); ok && json.Valid([]byte(str)) {
+			return json.RawMessage(str)
+		}
+		return v
 	default:
 		return v
 	}

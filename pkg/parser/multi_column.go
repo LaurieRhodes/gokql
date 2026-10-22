@@ -12,7 +12,10 @@ package parser
 // rest are <function>_<x>_<output>, as Kusto.Language names them
 // (it keeps every column even when only some are named).
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type multiKey struct{ key, conv string }
 
@@ -40,6 +43,9 @@ func expandMultiColumn(name string, expr Expr) []Assignment {
 	fc, ok := expr.(*FuncCall)
 	if !ok {
 		return nil
+	}
+	if fc.Name == "array_sort_asc" || fc.Name == "array_sort_desc" {
+		return expandArraySort(name, fc)
 	}
 	spec, ok := multiColumnFuncs[fc.Name]
 	if !ok {
@@ -72,6 +78,43 @@ func expandMultiColumn(name string, expr Expr) []Assignment {
 				&AccessExpr{Object: dyn, Path: []AccessKey{{Name: k.key, Index: -1}}},
 			}},
 		}
+	}
+	return out
+}
+
+// expandArraySort: array_sort_asc/desc over several arrays returns one
+// column per array, named <arg>_sorted (array<i>_sorted for an
+// unnamed argument) unless a tuple names them. A single name keeps
+// the call as one column holding the array of arrays.
+func expandArraySort(name string, fc *FuncCall) []Assignment {
+	arrays := fc.Args
+	if n := len(arrays); n > 1 {
+		if lit, ok := arrays[n-1].(*Literal); ok {
+			if _, isBool := lit.Value.(bool); isBool {
+				arrays = arrays[:n-1]
+			}
+		}
+	}
+	n := strings.TrimSpace(name)
+	if len(arrays) < 2 || (n != "" && !strings.HasPrefix(n, "(")) {
+		return nil
+	}
+	var written []string
+	if n != "" {
+		for _, w := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(n, "("), ")"), ",") {
+			written = append(written, unquoteIdent(w))
+		}
+	}
+	out := make([]Assignment, len(arrays))
+	for i, a := range arrays {
+		col := fmt.Sprintf("array%d_sorted", i)
+		if an, ok := ExprResultName(a); ok && an != "" {
+			col = an + "_sorted"
+		}
+		if i < len(written) && written[i] != "" {
+			col = written[i]
+		}
+		out[i] = Assignment{Name: col, Expr: &AccessExpr{Object: fc, Path: []AccessKey{{Index: i}}}}
 	}
 	return out
 }

@@ -112,10 +112,8 @@ func planColumnarAggregate(eng *Engine, ops []parser.Operator, schema *types.Sch
 		return nil // expressions over aggregates: the row path
 	}
 	if !ok {
-		// `where ... | count` is `where ... | summarize count()` with
-		// one divergence handled at output: count on empty input emits
-		// a single row of 0 (applyCount), where an ungrouped summarize
-		// emits no rows. Only worthwhile past a filter — the leading
+		// `where ... | count` is `where ... | summarize count()`; both
+		// yield one row over empty input. Only worthwhile past a filter — the leading
 		// bare `T | count` shape is already answered from metadata.
 		if _, isCount := ops[i].(*parser.CountOp); isCount && len(plan.preds) > 0 {
 			plan.summarize = &parser.SummarizeOp{
@@ -1217,10 +1215,14 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 		copy(row[nAggs:], byVals[gi])
 		result.AddRow(row)
 	}
-	if plan.isCount && len(byVals) == 0 {
-		// applyCount semantics: an empty filtered input still yields
-		// one row with Count = 0.
-		result.AddRow(types.Row{int64(0)})
+	if len(byVals) == 0 && len(plan.summarize.ByExprs) == 0 {
+		// An ungrouped summarize (and count) over no rows still yields
+		// one row, of the aggregates' defaults.
+		row := make(types.Row, len(outSchema.Columns))
+		for ai, agg := range plan.summarize.Aggregations {
+			row[ai] = emptyAggregateValue(agg.Function, outSchema.Columns[ai].Type)
+		}
+		result.AddRow(row)
 	}
 	return byColumnsFirst(result, len(plan.summarize.ByExprs)), nil
 }

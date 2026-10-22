@@ -5,6 +5,7 @@ package types
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -315,6 +316,12 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 			"1/2/2006 15:04:05",
 			"1/2/2006 15:04",
 			"1/2/2006",
+			// Unpadded month/day ISO forms: datetime(1970-5-12).
+			"2006-1-2T15:04:05",
+			"2006-1-2 15:04:05",
+			"2006-1-2T15:04",
+			"2006-1-2 15:04",
+			"2006-1-2",
 		} {
 			if t, err := time.Parse(layout, s); err == nil {
 				return t.UnixNano(), nil
@@ -380,7 +387,7 @@ func FormatValue(v Value, typ KQLType) string {
 
 	case TypeReal:
 		if f, ok := v.(float64); ok {
-			return strconv.FormatFloat(f, 'f', -1, 64)
+			return FormatReal(f)
 		}
 		return fmt.Sprintf("%v", v)
 
@@ -751,4 +758,16 @@ func parseTimespanSuffixLiteral(s string) (int64, bool) {
 		return 0, false
 	}
 	return int64(val * nanos / 100), true
+}
+
+// FormatReal formats a real as ADX displays it: shortest round-trip
+// digits, infinities as ∞ and -∞ (.NET's invariant formatting), NaN.
+func FormatReal(f float64) string {
+	switch {
+	case math.IsInf(f, 1):
+		return "∞"
+	case math.IsInf(f, -1):
+		return "-∞"
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }

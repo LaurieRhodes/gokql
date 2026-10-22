@@ -354,7 +354,7 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 			if b, ok := val.(bool); ok {
 				return !b, nil
 			}
-			return false, nil
+			return nil, nil // not(null) is null
 		}
 		if e.Op == "-" {
 			switch x := val.(type) {
@@ -513,15 +513,29 @@ func isStringOperator(op parser.BinaryOp) bool {
 
 func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, error) {
 	// Logical operators
+	// and/or are three-valued: null and false is false, null or true
+	// is true, and otherwise a null operand gives null.
 	if op == parser.OpAnd {
-		lb, _ := left.(bool)
-		rb, _ := right.(bool)
-		return lb && rb, nil
+		lb, lok := left.(bool)
+		rb, rok := right.(bool)
+		if (lok && !lb) || (rok && !rb) {
+			return false, nil
+		}
+		if lok && rok {
+			return true, nil
+		}
+		return nil, nil
 	}
 	if op == parser.OpOr {
-		lb, _ := left.(bool)
-		rb, _ := right.(bool)
-		return lb || rb, nil
+		lb, lok := left.(bool)
+		rb, rok := right.(bool)
+		if (lok && lb) || (rok && rb) {
+			return true, nil
+		}
+		if lok && rok {
+			return false, nil
+		}
+		return nil, nil
 	}
 
 	// String operators take their operands as strings, and null
@@ -537,12 +551,18 @@ func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types
 		}
 	}
 
-	// Null handling for comparisons
+	// Null operands: == and != against a value are false and true;
+	// everything else (two nulls, ordering, arithmetic) is null.
 	if left == nil || right == nil {
-		if op == parser.OpEQ {
-			return left == nil && right == nil, nil
+		if left != nil || right != nil {
+			switch op {
+			case parser.OpEQ:
+				return false, nil
+			case parser.OpNEQ:
+				return true, nil
+			}
 		}
-		return false, nil
+		return nil, nil
 	}
 
 	// String operators (case-insensitive by default, _cs variants are
@@ -687,10 +707,7 @@ func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types
 		case parser.OpMul:
 			return lf * rf, nil
 		case parser.OpDiv:
-			if rf == 0 {
-				return nil, nil
-			}
-			return lf / rf, nil
+			return lf / rf, nil // IEEE: x/0 is ±Inf, 0/0 NaN (real(+inf), per the real type reference)
 		}
 	case bool:
 		lb := left.(bool)
@@ -732,6 +749,9 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 		}
 		return types.TypeString
 	case *parser.FuncCall:
+		if t, ok := userFuncResultType(eng, e, schema); ok {
+			return t
+		}
 		// Declared, argument-independent return types (Kusto.Language;
 		// func_signatures.go) take precedence over the hand-written
 		// cases below, which remain for argument-dependent functions.
@@ -1258,14 +1278,8 @@ func evalMixedNumeric(eng *Engine, left types.Value, op parser.BinaryOp, right t
 		case parser.OpMul:
 			return lf * rf, true, nil
 		case parser.OpDiv:
-			if rf == 0 {
-				return nil, true, nil
-			}
-			return lf / rf, true, nil
+			return lf / rf, true, nil // IEEE: x/0 is ±Inf, 0/0 NaN
 		case parser.OpMod:
-			if rf == 0 {
-				return nil, true, nil
-			}
 			return math.Mod(lf, rf), true, nil
 		}
 		return nil, false, nil
@@ -1275,4 +1289,29 @@ func evalMixedNumeric(eng *Engine, left types.Value, op parser.BinaryOp, right t
 		return v, true, err
 	}
 	return nil, false, nil
+}
+
+// userFuncResultType types a call to a let-bound scalar function: its
+// body typed against the declared parameter types.
+func userFuncResultType(eng *Engine, fc *parser.FuncCall, _ *types.Schema) (types.KQLType, bool) {
+	if eng == nil || eng.letContext == nil {
+		return 0, false
+	}
+	fn, ok := eng.lets().LookupFunction(fc.RawName)
+	if !ok {
+		fn, ok = eng.lets().LookupFunction(fc.Name)
+	}
+	if !ok || fn.Tabular || fn.Body == nil {
+		return 0, false
+	}
+	if eng.udfTypeDepth.Add(1) > 16 {
+		eng.udfTypeDepth.Add(-1)
+		return types.TypeDynamic, true
+	}
+	defer eng.udfTypeDepth.Add(-1)
+	ps := &types.Schema{Columns: make([]types.Column, len(fn.Params))}
+	for i, p := range fn.Params {
+		ps.Columns[i] = types.Column{Name: p.Name, Type: p.Type}
+	}
+	return inferExprType(eng, fn.Body, ps), true
 }

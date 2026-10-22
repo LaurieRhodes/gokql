@@ -175,24 +175,10 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		return int64(-1), true, nil
 
 	case "array_sort_asc":
-		if len(fc.Args) < 1 {
-			return nil, true, fmt.Errorf("array_sort_asc requires at least 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		return sortJSONArray(val, true)
+		return evalArraySort(eng, fc, schema, row, true)
 
 	case "array_sort_desc":
-		if len(fc.Args) < 1 {
-			return nil, true, fmt.Errorf("array_sort_desc requires at least 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		return sortJSONArray(val, false)
+		return evalArraySort(eng, fc, schema, row, false)
 
 	case "array_reverse":
 		if len(fc.Args) != 1 {
@@ -305,6 +291,12 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 			return false, true, nil
 		}
 		key := fmt.Sprintf("%v", keyVal)
+		if strings.HasPrefix(key, "$") {
+			// A JSONPath key searches nested bags.
+			var root interface{} = obj
+			_, found := evalJSONPath(root, key)
+			return found, true, nil
+		}
 		_, exists := obj[key]
 		return exists, true, nil
 
@@ -331,13 +323,15 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 
 	case "pack_array":
 		// pack_array(v1, v2, ...) — create array from values
+		// Elements keep their KQL form: datetimes and timespans as
+		// their strings, dynamic values embedded as JSON.
 		result := make([]interface{}, len(fc.Args))
 		for i, arg := range fc.Args {
 			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
-			result[i] = val
+			result[i] = valueForJSONArray(val, inferExprType(eng, arg, schema))
 		}
 		b, _ := json.Marshal(result)
 		return string(b), true, nil
@@ -1388,7 +1382,63 @@ func parseJSONObject(val types.Value) (map[string]interface{}, bool) {
 	return obj, true
 }
 
-func sortJSONArray(val types.Value, asc bool) (types.Value, bool, error) {
+// evalArraySort implements array_sort_asc/desc(array1[, ..., arrayN]
+// [, nulls_last]). One array returns the sorted array; several return
+// an array of arrays (the parser expands an unnamed call into one
+// column per array), each later array reordered to follow the first
+// and null when its length differs from the first's.
+func evalArraySort(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row, asc bool) (types.Value, bool, error) {
+	if len(fc.Args) < 1 {
+		return nil, true, fmt.Errorf("%s requires at least 1 argument", fc.Name)
+	}
+	vals := make([]types.Value, len(fc.Args))
+	for i, a := range fc.Args {
+		v, err := evalExpr(eng, a, schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		vals[i] = v
+	}
+	nullsLast := true
+	if n := len(vals); n > 1 {
+		if b, ok := vals[n-1].(bool); ok {
+			nullsLast = b
+			vals = vals[:n-1]
+		}
+	}
+	if len(vals) == 1 {
+		return sortJSONArray(vals[0], asc, nullsLast)
+	}
+
+	first, ok := parseJSONArray(vals[0])
+	if vals[0] == nil || !ok {
+		return nil, true, nil
+	}
+	order := make([]int, len(first))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return arraySortLess(first[order[i]], first[order[j]], asc, nullsLast)
+	})
+	out := make([]interface{}, len(vals))
+	for k, v := range vals {
+		arr, ok := parseJSONArray(v)
+		if v == nil || !ok || len(arr) != len(first) {
+			out[k] = nil
+			continue
+		}
+		sorted := make([]interface{}, len(arr))
+		for i, idx := range order {
+			sorted[i] = arr[idx]
+		}
+		out[k] = sorted
+	}
+	b, _ := json.Marshal(out)
+	return string(b), true, nil
+}
+
+func sortJSONArray(val types.Value, asc, nullsLast bool) (types.Value, bool, error) {
 	if val == nil {
 		return nil, true, nil
 	}
@@ -1396,16 +1446,75 @@ func sortJSONArray(val types.Value, asc bool) (types.Value, bool, error) {
 	if !ok {
 		return nil, true, nil
 	}
-	sort.Slice(arr, func(i, j int) bool {
-		si := fmt.Sprintf("%v", arr[i])
-		sj := fmt.Sprintf("%v", arr[j])
-		if asc {
-			return si < sj
-		}
-		return si > sj
+	sort.SliceStable(arr, func(i, j int) bool {
+		return arraySortLess(arr[i], arr[j], asc, nullsLast)
 	})
 	b, _ := json.Marshal(arr)
 	return string(b), true, nil
+}
+
+// arraySortLess orders dynamic elements as array_sort does: nulls at
+// the end (or start), then numbers, then strings, then everything
+// else; within a kind, ascending or descending.
+func arraySortLess(a, b interface{}, asc, nullsLast bool) bool {
+	if a == nil || b == nil {
+		if a == nil && b == nil {
+			return false
+		}
+		return (a == nil) != nullsLast
+	}
+	ra, rb := arraySortRank(a), arraySortRank(b)
+	if ra != rb {
+		return ra < rb
+	}
+	var c int
+	switch ra {
+	case 0:
+		fa, fb := jsonNumberFloat(a), jsonNumberFloat(b)
+		switch {
+		case fa < fb:
+			c = -1
+		case fa > fb:
+			c = 1
+		}
+	case 1:
+		c = strings.Compare(a.(string), b.(string))
+	default:
+		ja, _ := json.Marshal(a)
+		jb, _ := json.Marshal(b)
+		c = strings.Compare(string(ja), string(jb))
+	}
+	if asc {
+		return c < 0
+	}
+	return c > 0
+}
+
+func arraySortRank(v interface{}) int {
+	switch v.(type) {
+	case float64, json.Number, int64, int, int32:
+		return 0
+	case string:
+		return 1
+	}
+	return 2
+}
+
+func jsonNumberFloat(v interface{}) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case json.Number:
+		f, _ := x.Float64()
+		return f
+	case int64:
+		return float64(x)
+	case int:
+		return float64(x)
+	case int32:
+		return float64(x)
+	}
+	return 0
 }
 
 func setOperation(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row, op string) (types.Value, bool, error) {

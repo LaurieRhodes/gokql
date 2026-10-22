@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -63,7 +64,14 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		nanos := ticks * 100
 		return time.Now().UTC().UnixNano() - nanos, true, nil
 
-	case "datetime", "todatetime", "make_datetime":
+	case "make_datetime":
+		return evalMakeDatetime(eng, fc, schema, row)
+
+	case "datetime", "todatetime":
+		if fc.Name == "datetime" && len(fc.Args) >= 3 {
+			// datetime(year, month, day[, hour, minute[, second]]).
+			return evalMakeDatetime(eng, fc, schema, row)
+		}
 		if len(fc.Args) < 1 {
 			return nil, true, fmt.Errorf("%s requires at least 1 argument", fc.Name)
 		}
@@ -131,105 +139,9 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 			return nil, true, fmt.Errorf("unknown datetime_diff part: %q", part)
 		}
 
-	case "startofday":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("startofday requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC).UnixNano(), true, nil
-
-	case "startofweek":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("startofweek requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		weekday := int(t.Weekday())
-		return time.Date(t.Year(), t.Month(), t.Day()-weekday, 0, 0, 0, 0, time.UTC).UnixNano(), true, nil
-
-	case "startofmonth":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("startofmonth requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC).UnixNano(), true, nil
-
-	case "startofyear":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("startofyear requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(), true, nil
-
-	case "endofday":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("endofday requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		return time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, time.UTC).UnixNano() - 1, true, nil
-
-	case "endofweek":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("endofweek requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		daysToNextSunday := 7 - int(t.Weekday())
-		return time.Date(t.Year(), t.Month(), t.Day()+daysToNextSunday, 0, 0, 0, 0, time.UTC).UnixNano() - 1, true, nil
-
-	case "endofmonth":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("endofmonth requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		return time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, time.UTC).UnixNano() - 1, true, nil
+	case "startofday", "startofweek", "startofmonth", "startofyear",
+		"endofday", "endofweek", "endofmonth", "endofyear":
+		return evalPeriodBoundary(eng, fc, schema, row)
 
 	case "format_datetime":
 		if len(fc.Args) != 2 {
@@ -613,38 +525,29 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		if len(fc.Args) < 2 || len(fc.Args) > 4 {
 			return nil, true, fmt.Errorf("make_timespan requires 2-4 arguments")
 		}
-		args := make([]int64, len(fc.Args))
+		// The seconds argument is real: make_timespan(1,12,30,55.123)
+		// is 1.12:30:55.1230000.
+		args := make([]float64, len(fc.Args))
 		for i, arg := range fc.Args {
 			v, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
-			args[i] = types.ToInt64(v)
+			if v == nil {
+				return nil, true, nil
+			}
+			args[i] = types.ToFloat64(v)
 		}
-		var totalTicks int64
+		var secs float64
 		switch len(args) {
 		case 2: // hours, minutes
-			totalTicks = (args[0]*3600 + args[1]*60) * 10000000
+			secs = args[0]*3600 + args[1]*60
 		case 3: // hours, minutes, seconds
-			totalTicks = (args[0]*3600 + args[1]*60 + args[2]) * 10000000
+			secs = args[0]*3600 + args[1]*60 + args[2]
 		case 4: // days, hours, minutes, seconds
-			totalTicks = (args[0]*86400 + args[1]*3600 + args[2]*60 + args[3]) * 10000000
+			secs = args[0]*86400 + args[1]*3600 + args[2]*60 + args[3]
 		}
-		return totalTicks, true, nil
-
-	case "endofyear":
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("endofyear requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		t := time.Unix(0, types.ToInt64(val)).UTC()
-		return time.Date(t.Year()+1, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano() - 1, true, nil
+		return int64(math.Round(secs * 1e7)), true, nil
 
 	case "dayofyear":
 		if len(fc.Args) != 1 {
@@ -872,4 +775,89 @@ func formatTimespanKQL(ticks int64, kqlFmt string) string {
 		result = "-" + result
 	}
 	return result
+}
+
+// evalMakeDatetime is make_datetime(year, month, day [, hour, minute
+// [, second]]): second may be fractional (to 100ns ticks). A part out
+// of range (or a day the month lacks) gives null.
+func evalMakeDatetime(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	if n := len(fc.Args); n != 3 && n != 5 && n != 6 {
+		return nil, true, fmt.Errorf("make_datetime takes (year, month, day [, hour, minute [, second]])")
+	}
+	parts := make([]float64, 6)
+	for i, a := range fc.Args {
+		v, err := evalExpr(eng, a, schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if v == nil {
+			return nil, true, nil
+		}
+		parts[i] = types.ToFloat64(v)
+	}
+	year, month, day, hour, minute := parts[0], parts[1], parts[2], parts[3], parts[4]
+	sec := parts[5]
+	for i, p := range parts[:5] {
+		if p != math.Trunc(p) || (i < len(fc.Args) && math.IsNaN(p)) {
+			return nil, true, nil
+		}
+	}
+	if year < 0 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31 ||
+		hour < 0 || hour > 23 || minute < 0 || minute > 59 || sec < 0 || sec >= 60 || math.IsNaN(sec) {
+		return nil, true, nil
+	}
+	t := time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), 0, 0, time.UTC)
+	if t.Day() != int(day) { // e.g. February 30
+		return nil, true, nil
+	}
+	ticks := int64(math.Round(sec * 1e7))
+	return t.UnixNano() + ticks*100, true, nil
+}
+
+// evalPeriodBoundary implements startof/endof day, week, month and
+// year: f(date [, offset]), offset counting whole periods. Weeks start
+// on Sunday; an end is one tick (100ns) before the next start.
+func evalPeriodBoundary(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	if len(fc.Args) < 1 || len(fc.Args) > 2 {
+		return nil, true, fmt.Errorf("%s requires 1 or 2 arguments", fc.Name)
+	}
+	val, err := evalExpr(eng, fc.Args[0], schema, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if val == nil {
+		return nil, true, nil
+	}
+	offset := 0
+	if len(fc.Args) == 2 {
+		ov, err := evalExpr(eng, fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		if ov == nil {
+			return nil, true, nil
+		}
+		offset = int(types.ToInt64(ov))
+	}
+	end := strings.HasPrefix(fc.Name, "end")
+	if end {
+		offset++
+	}
+	t := time.Unix(0, types.ToInt64(val)).UTC()
+	var start time.Time
+	switch strings.TrimPrefix(strings.TrimPrefix(fc.Name, "start"), "end") {
+	case "ofday":
+		start = time.Date(t.Year(), t.Month(), t.Day()+offset, 0, 0, 0, 0, time.UTC)
+	case "ofweek":
+		start = time.Date(t.Year(), t.Month(), t.Day()-int(t.Weekday())+7*offset, 0, 0, 0, 0, time.UTC)
+	case "ofmonth":
+		start = time.Date(t.Year(), t.Month()+time.Month(offset), 1, 0, 0, 0, 0, time.UTC)
+	case "ofyear":
+		start = time.Date(t.Year()+offset, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	n := start.UnixNano()
+	if end {
+		n -= 100
+	}
+	return n, true, nil
 }

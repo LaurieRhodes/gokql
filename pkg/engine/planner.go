@@ -124,8 +124,8 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 			c.needsAll = true
 		}
 
-	case *parser.CountOp:
-		// count needs no specific columns
+	case *parser.CountOp, *parser.ConsumeOp:
+		// count and consume need no specific columns
 
 	case *parser.DistinctOp:
 		for _, name := range o.Columns {

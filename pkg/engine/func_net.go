@@ -112,15 +112,17 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
-		ip := net.ParseIP(fmt.Sprintf("%v", val))
-		if ip == nil {
+		// An IP-prefix suffix masks the address: 192.168.1.1/24 is
+		// 192.168.1.0.
+		n, prefix, ok := parseIPv4WithPrefix(strings.TrimSpace(fmt.Sprintf("%v", val)))
+		if !ok {
 			return nil, true, nil
 		}
-		ip4 := ip.To4()
-		if ip4 == nil {
-			return nil, true, nil
+		mask := uint32(0)
+		if prefix > 0 {
+			mask = ^uint32(0) << (32 - prefix)
 		}
-		return int64(ip4[0])<<24 | int64(ip4[1])<<16 | int64(ip4[2])<<8 | int64(ip4[3]), true, nil
+		return int64(n & mask), true, nil
 
 	case "ipv4_is_private":
 		// Real bug found and fixed 2026-08-17, while verifying the
@@ -204,7 +206,7 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
-		h := sha256.Sum256([]byte(fmt.Sprintf("%v", val)))
+		h := sha256.Sum256([]byte(hashInputText(eng, fc.Args[0], schema, val)))
 		return hex.EncodeToString(h[:]), true, nil
 
 	case "base64_encode_tostring":
@@ -514,9 +516,13 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		}
 		return string(out), true, nil
 
-	case "url_encode_component":
+	case "url_encode_component", "url_encode":
+		// .NET HttpUtility.UrlEncode, as the references' examples show:
+		// url_encode("https://www.bing.com/hello world") is
+		// "https%3a%2f%2fwww.bing.com%2fhello+world"; url_encode_component
+		// encodes a space as %20 instead of +.
 		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("url_encode_component requires 1 argument")
+			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
 		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
@@ -525,51 +531,7 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
-		return strings.ReplaceAll(
-			strings.ReplaceAll(
-				strings.ReplaceAll(
-					strings.ReplaceAll(
-						strings.ReplaceAll(fmt.Sprintf("%v", val), "%", "%25"),
-						" ", "%20"),
-					"&", "%26"),
-				"=", "%3D"),
-			"+", "%2B"), true, nil
-
-	case "url_encode":
-		// Same character set as url_encode_component immediately
-		// above (matching that sibling function's own deliberately
-		// narrow, hand-rolled 5-character encoder rather than
-		// introducing a different, more "complete" but inconsistent
-		// approach between the two), verified against real ADX's own
-		// docs before implementing: url_encode "differs from
-		// url_encode_component by encoding spaces as '+' and not as
-		// ' '" (application/x-www-form-urlencoded style) — the only
-		// real difference between the two functions.
-		//
-		// Order matters here in a way it doesn't for
-		// url_encode_component: a literal '+' in the INPUT must be
-		// escaped to %2B before space is turned into '+' below, or an
-		// original '+' would become indistinguishable from an encoded
-		// space once both share the same output character.
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("url_encode requires 1 argument")
-		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil {
-			return nil, true, nil
-		}
-		return strings.ReplaceAll(
-			strings.ReplaceAll(
-				strings.ReplaceAll(
-					strings.ReplaceAll(
-						strings.ReplaceAll(fmt.Sprintf("%v", val), "%", "%25"),
-						"+", "%2B"),
-					" ", "+"),
-				"&", "%26"),
-			"=", "%3D"), true, nil
+		return urlEncodeDotNet(fmt.Sprintf("%v", val), fc.Name == "url_encode"), true, nil
 
 	case "parse_url":
 		if len(fc.Args) != 1 {
@@ -582,9 +544,7 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
-		result := parseURLToMap(fmt.Sprintf("%v", val))
-		b, _ := json.Marshal(result)
-		return string(b), true, nil
+		return parseURLBag(fmt.Sprintf("%v", val)), true, nil
 
 	case "parse_urlquery":
 		if len(fc.Args) != 1 {
@@ -597,21 +557,7 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
-		s := fmt.Sprintf("%v", val)
-		if strings.HasPrefix(s, "?") {
-			s = s[1:]
-		}
-		params := make(map[string]string)
-		for _, pair := range strings.Split(s, "&") {
-			kv := strings.SplitN(pair, "=", 2)
-			if len(kv) == 2 {
-				params[kv[0]] = kv[1]
-			} else if len(kv) == 1 && kv[0] != "" {
-				params[kv[0]] = ""
-			}
-		}
-		b, _ := json.Marshal(params)
-		return string(b), true, nil
+		return `{"Query Parameters":` + urlQueryBag(strings.TrimPrefix(fmt.Sprintf("%v", val), "?")) + "}", true, nil
 
 	case "parse_path":
 		if len(fc.Args) != 1 {
@@ -624,32 +570,7 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
-		s := fmt.Sprintf("%v", val)
-		s = strings.ReplaceAll(s, "\\", "/")
-		lastSlash := strings.LastIndex(s, "/")
-		dir := ""
-		filename := s
-		if lastSlash >= 0 {
-			dir = s[:lastSlash]
-			filename = s[lastSlash+1:]
-		}
-		ext := ""
-		dotIdx := strings.LastIndex(filename, ".")
-		if dotIdx >= 0 {
-			ext = filename[dotIdx:]
-		}
-		nameOnly := filename
-		if dotIdx >= 0 {
-			nameOnly = filename[:dotIdx]
-		}
-		result := map[string]string{
-			"DirectoryName":       dir,
-			"FileName":            filename,
-			"Extension":           ext,
-			"FileNameNoExtension": nameOnly,
-		}
-		b, _ := json.Marshal(result)
-		return string(b), true, nil
+		return parsePathBag(fmt.Sprintf("%v", val)), true, nil
 
 	case "parse_command_line":
 		// parse_command_line(command_line, parser_type) — added
@@ -1318,7 +1239,7 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if val == nil {
 			return nil, true, nil
 		}
-		h := md5.Sum([]byte(fmt.Sprintf("%v", val)))
+		h := md5.Sum([]byte(hashInputText(eng, fc.Args[0], schema, val)))
 		return fmt.Sprintf("%x", h), true, nil
 
 	case "hash_sha1":
@@ -1332,7 +1253,7 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if val == nil {
 			return nil, true, nil
 		}
-		h := sha1.Sum([]byte(fmt.Sprintf("%v", val)))
+		h := sha1.Sum([]byte(hashInputText(eng, fc.Args[0], schema, val)))
 		return fmt.Sprintf("%x", h), true, nil
 
 	case "hash", "hash_xxhash64":
@@ -1911,35 +1832,105 @@ func parseIPv4ToUint32(s string) *uint32 {
 	return &n
 }
 
-// parseURLToMap parses a URL string into a map of components.
-func parseURLToMap(s string) map[string]string {
-	result := map[string]string{"Scheme": "", "Host": "", "Port": "", "Path": "", "Query": "", "Fragment": ""}
+// parseURLBag implements parse_url: Scheme, Host, Port, Path,
+// Username, Password, Query Parameters (a bag) and Fragment, in the
+// order Kusto returns them.
+func parseURLBag(s string) string {
+	var scheme, host, port, path, user, pass, query, frag string
 	if idx := strings.Index(s, "#"); idx >= 0 {
-		result["Fragment"] = s[idx+1:]
+		frag = s[idx+1:]
 		s = s[:idx]
 	}
 	if idx := strings.Index(s, "?"); idx >= 0 {
-		result["Query"] = s[idx+1:]
+		query = s[idx+1:]
 		s = s[:idx]
 	}
 	if idx := strings.Index(s, "://"); idx >= 0 {
-		result["Scheme"] = s[:idx]
+		scheme = s[:idx]
 		s = s[idx+3:]
 	}
 	if idx := strings.Index(s, "/"); idx >= 0 {
-		result["Path"] = s[idx:]
+		path = s[idx:]
 		s = s[:idx]
 	}
-	if idx := strings.LastIndex(s, ":"); idx >= 0 {
-		result["Port"] = s[idx+1:]
+	if idx := strings.LastIndex(s, "@"); idx >= 0 {
+		cred := s[:idx]
+		s = s[idx+1:]
+		if c := strings.Index(cred, ":"); c >= 0 {
+			user, pass = cred[:c], cred[c+1:]
+		} else {
+			user = cred
+		}
+	}
+	if idx := strings.LastIndex(s, ":"); idx >= 0 && !strings.HasSuffix(s, "]") {
+		port = s[idx+1:]
 		s = s[:idx]
 	}
-	result["Host"] = s
-	return result
+	host = s
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, kv := range [][2]string{
+		{"Scheme", scheme}, {"Host", host}, {"Port", port}, {"Path", path},
+		{"Username", user}, {"Password", pass},
+	} {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(jsonString(kv[0]) + ":" + jsonString(kv[1]))
+	}
+	b.WriteString(`,"Query Parameters":` + urlQueryBag(query))
+	b.WriteString(`,"Fragment":` + jsonString(frag) + "}")
+	return b.String()
+}
+
+// urlQueryBag turns k1=v1&k2=v2 into a bag, keeping the keys' order.
+func urlQueryBag(q string) string {
+	var b strings.Builder
+	b.WriteByte('{')
+	seen := map[string]bool{}
+	n := 0
+	for _, pair := range strings.Split(q, "&") {
+		if pair == "" {
+			continue
+		}
+		kv := strings.SplitN(pair, "=", 2)
+		v := ""
+		if len(kv) == 2 {
+			v = kv[1]
+		}
+		if seen[kv[0]] {
+			continue
+		}
+		seen[kv[0]] = true
+		if n > 0 {
+			b.WriteByte(',')
+		}
+		n++
+		b.WriteString(jsonString(kv[0]) + ":" + jsonString(v))
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// jsonString encodes s as a JSON string without HTML escaping.
+func jsonString(s string) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // ipInRange checks if an IP address falls within a CIDR range.
 func ipInRange(ipStr, cidrStr string) bool {
+	if !strings.Contains(cidrStr, "/") {
+		// A bare address is the range of itself.
+		if strings.Contains(cidrStr, ":") {
+			cidrStr += "/128"
+		} else {
+			cidrStr += "/32"
+		}
+	}
 	ip := net.ParseIP(ipStr)
 	_, network, err := net.ParseCIDR(cidrStr)
 	if err != nil || ip == nil {
@@ -2444,4 +2435,131 @@ func kqlHash64(val types.Value, t types.KQLType) uint64 {
 		data = []byte(fmt.Sprintf("%v", val))
 	}
 	return xxhash.Sum64(data)
+}
+
+// urlEncodeDotNet is HttpUtility.UrlEncode: unreserved characters
+// (letters, digits, - _ . ! * ( )) pass through, a space becomes + (or
+// %20), every other byte of the UTF-8 form becomes %xx in lowercase hex.
+func urlEncodeDotNet(s string, spaceAsPlus bool) string {
+	const hex = "0123456789abcdef"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '-', c == '_', c == '.', c == '!', c == '*', c == '(', c == ')':
+			b.WriteByte(c)
+		case c == ' ' && spaceAsPlus:
+			b.WriteByte('+')
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		}
+	}
+	return b.String()
+}
+
+// urlDecodeDotNet is HttpUtility.UrlDecode: %xx (either case) decodes,
+// + is a space, and a malformed escape is kept as written.
+func urlDecodeDotNet(s string) string {
+	unhex := func(c byte) (byte, bool) {
+		switch {
+		case c >= '0' && c <= '9':
+			return c - '0', true
+		case c >= 'a' && c <= 'f':
+			return c - 'a' + 10, true
+		case c >= 'A' && c <= 'F':
+			return c - 'A' + 10, true
+		}
+		return 0, false
+	}
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '+' {
+			out = append(out, ' ')
+			continue
+		}
+		if c == '%' && i+2 < len(s) {
+			h, ok1 := unhex(s[i+1])
+			l, ok2 := unhex(s[i+2])
+			if ok1 && ok2 {
+				out = append(out, h<<4|l)
+				i += 2
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+// parsePathBag implements parse_path: the bag of Scheme, RootPath,
+// DirectoryPath, DirectoryName, Filename, Extension and
+// AlternateDataStreamName, in that order. Separators are kept as
+// written ('\\' and '/').
+func parsePathBag(p string) string {
+	scheme := ""
+	if i := strings.Index(p, "://"); i > 0 && !strings.ContainsAny(p[:i], `/\:.`) {
+		scheme = p[:i]
+		p = p[i+3:]
+	}
+	root := ""
+	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) {
+		root = p[:2]
+	}
+	dirPath, file := "", p
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		dirPath, file = p[:i], p[i+1:]
+	} else if root != "" {
+		dirPath, file = root, p[2:]
+	}
+	dirName := dirPath
+	if i := strings.LastIndexAny(dirPath, `/\`); i >= 0 {
+		dirName = dirPath[i+1:]
+	}
+	if dirName == root {
+		dirName = ""
+	}
+	ads := ""
+	if i := strings.IndexByte(file, ':'); i >= 0 {
+		file, ads = file[:i], file[i+1:]
+	}
+	ext := ""
+	if i := strings.LastIndexByte(file, '.'); i >= 0 {
+		ext = file[i+1:]
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, kv := range [][2]string{
+		{"Scheme", scheme}, {"RootPath", root}, {"DirectoryPath", dirPath},
+		{"DirectoryName", dirName}, {"Filename", file}, {"Extension", ext},
+		{"AlternateDataStreamName", ads},
+	} {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		k, _ := json.Marshal(kv[0])
+		v, _ := json.Marshal(kv[1])
+		b.Write(k)
+		b.WriteByte(':')
+		b.Write(v)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// hashInputText is the text hash_md5/sha1/sha256 and reverse work on:
+// the value's string form, with datetimes always carrying seven
+// fractional digits (hash_md5(datetime(2020-01-01)) hashes
+// "2020-01-01T00:00:00.0000000Z"), unlike tostring.
+func hashInputText(eng *Engine, arg parser.Expr, schema *types.Schema, val types.Value) string {
+	t := inferExprType(eng, arg, schema)
+	if t == types.TypeDatetime {
+		if n, ok := asInt64(val); ok {
+			return formatDatetimeISO7(n)
+		}
+	}
+	return kqlToString(val, t)
 }

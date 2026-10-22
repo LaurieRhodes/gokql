@@ -52,7 +52,14 @@ type exprParser struct {
 // replicates real Kusto's UTC-only datetime convention, which led to
 // fetching the authoritative format list directly rather than relying
 // on the smaller, indirect set of formats already known about.
-var bareDateTimeRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z?)?`)
+var bareDateTimeRe = regexp.MustCompile(`^\d{4} *- *\d{1,2} *- *\d{1,2}([ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?Z?)?`)
+
+// dateDashSpaceRe matches the optional spaces around a date literal's
+// dashes: datetime(2017 - 08 - 01).
+var dateDashSpaceRe = regexp.MustCompile(` *- *`)
+
+// bareDateRe is the date part of a bare datetime literal.
+var bareDateRe = regexp.MustCompile(`^\d{4} *- *\d{1,2} *- *\d{1,2}`)
 
 // tryConsumeBareDateTimeLiteral checks whether the input at the current
 // position is a bare date/datetime literal immediately followed
@@ -237,7 +244,13 @@ func (p *exprParser) tryConsumeBareDateTimeLiteral() bool {
 	if after >= len(rest) || rest[after] != ')' {
 		return false
 	}
-	p.consumedBareLiteral = rest[:loc[1]]
+	lit := rest[:loc[1]]
+	if date := bareDateRe.FindString(lit); date != "" {
+		// Spaces around the date's dashes are allowed:
+		// datetime(2017 - 08 - 01).
+		lit = dateDashSpaceRe.ReplaceAllString(date, "-") + lit[len(date):]
+	}
+	p.consumedBareLiteral = lit
 	p.pos += loc[1]
 	return true
 }
@@ -843,16 +856,52 @@ func (p *exprParser) parseString() (Expr, error) {
 		ch := p.input[p.pos]
 		if ch == '\\' && p.pos+1 < len(p.input) {
 			p.pos++
-			switch p.input[p.pos] {
+			// Kusto.Language's escapes (KustoFacts.GetStringLiteralValue).
+			c := p.input[p.pos]
+			switch c {
 			case '"', '\'', '\\':
-				sb.WriteByte(p.input[p.pos])
+				sb.WriteByte(c)
 			case 'n':
 				sb.WriteByte('\n')
 			case 't':
 				sb.WriteByte('\t')
+			case 'r':
+				sb.WriteByte('\r')
+			case 'a':
+				sb.WriteByte('\a')
+			case 'b':
+				sb.WriteByte('\b')
+			case 'f':
+				sb.WriteByte('\f')
+			case 'v':
+				sb.WriteByte('\v')
+			case 'u', 'U', 'x':
+				n := map[byte]int{'u': 4, 'U': 8, 'x': 2}[c]
+				hexStr := ""
+				if p.pos+1+n <= len(p.input) {
+					hexStr = p.input[p.pos+1 : p.pos+1+n]
+				}
+				if v, err := strconv.ParseUint(hexStr, 16, 32); err == nil && len(hexStr) == n {
+					sb.WriteRune(rune(v))
+					p.pos += n
+				} else {
+					sb.WriteByte('\\')
+					sb.WriteByte(c)
+				}
 			default:
-				sb.WriteByte('\\')
-				sb.WriteByte(p.input[p.pos])
+				if c >= '0' && c <= '7' {
+					// Octal: up to three digits.
+					v, k := 0, 0
+					for k < 3 && p.pos+k < len(p.input) && p.input[p.pos+k] >= '0' && p.input[p.pos+k] <= '7' {
+						v = v<<3 + int(p.input[p.pos+k]-'0')
+						k++
+					}
+					sb.WriteRune(rune(v))
+					p.pos += k - 1
+				} else {
+					sb.WriteByte('\\')
+					sb.WriteByte(c)
+				}
 			}
 			p.pos++
 			continue
@@ -1236,8 +1285,8 @@ func (p *exprParser) parsePostfixAccess(expr Expr) (Expr, error) {
 	var path []AccessKey
 
 	for {
-		// Dot access: .property
-		if p.pos < len(p.input) && p.input[p.pos] == '.' {
+		// Dot access: .property (".." is between's range, not access)
+		if p.pos < len(p.input) && p.input[p.pos] == '.' && !strings.HasPrefix(p.input[p.pos:], "..") {
 			p.pos++ // skip '.'
 			if p.pos >= len(p.input) || !isIdentStart(p.input[p.pos]) {
 				return nil, fmt.Errorf("expected property name after '.'")

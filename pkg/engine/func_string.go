@@ -25,7 +25,8 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if val == nil {
 			return int64(0), true, nil
 		}
-		return int64(len(fmt.Sprintf("%v", val))), true, nil
+		// Characters (code points), not bytes.
+		return int64(utf8.RuneCountInString(fmt.Sprintf("%v", val))), true, nil
 
 	case "tolower":
 		if len(fc.Args) != 1 {
@@ -501,20 +502,31 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		// against real ADX's own third worked example
 		// (unicode_codepoints_to_string(unicode_codepoints_from_string(
 		// "Kusto")) == "Kusto").
-		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("unicode_codepoints_to_string requires 1 argument")
+		// Arguments are code points or arrays of them, concatenated:
+		// unicode_codepoints_to_string(dynamic([75, 117]), 115).
+		if len(fc.Args) < 1 {
+			return nil, true, fmt.Errorf("unicode_codepoints_to_string requires at least 1 argument")
 		}
-		val, err := evalExpr(eng, fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		arr, ok := parseJSONArray(val)
-		if !ok {
-			return nil, true, nil
-		}
-		runes := make([]rune, len(arr))
-		for i, el := range arr {
-			runes[i] = rune(int64(types.ToFloat64(el)))
+		var runes []rune
+		for _, a := range fc.Args {
+			val, err := evalExpr(eng, a, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if val == nil {
+				return nil, true, nil
+			}
+			if inferExprType(eng, a, schema) == types.TypeDynamic {
+				arr, ok := parseJSONArray(val)
+				if !ok {
+					return nil, true, nil
+				}
+				for _, el := range arr {
+					runes = append(runes, rune(int64(types.ToFloat64(el))))
+				}
+				continue
+			}
+			runes = append(runes, rune(types.ToInt64(val)))
 		}
 		return string(runes), true, nil
 
@@ -818,7 +830,7 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if val == nil {
 			return nil, true, nil
 		}
-		runes := []rune(fmt.Sprintf("%v", val))
+		runes := []rune(hashInputText(eng, fc.Args[0], schema, val))
 		for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
 			runes[i], runes[j] = runes[j], runes[i]
 		}
@@ -886,7 +898,7 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if n <= 0 {
 			return "", true, nil
 		}
-		s := fmt.Sprintf("%v", val)
+		s := kqlToString(val, inferExprType(eng, fc.Args[0], schema))
 		delim := ""
 		if len(fc.Args) == 3 {
 			dv, err := evalExpr(eng, fc.Args[2], schema, row)
@@ -976,13 +988,7 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if val == nil {
 			return nil, true, nil
 		}
-		s := fmt.Sprintf("%v", val)
-		s = strings.ReplaceAll(s, "%20", " ")
-		s = strings.ReplaceAll(s, "%26", "&")
-		s = strings.ReplaceAll(s, "%3D", "=")
-		s = strings.ReplaceAll(s, "%2B", "+")
-		s = strings.ReplaceAll(s, "%25", "%")
-		return s, true, nil
+		return urlDecodeDotNet(fmt.Sprintf("%v", val)), true, nil
 
 	case "string_size":
 		if len(fc.Args) != 1 {

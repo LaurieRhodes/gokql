@@ -165,7 +165,9 @@ type Engine struct {
 	// stmtEmbedder is the statement-scoped embedding memo
 	// (beginEmbedderScope). Per engine: the evaluator is threaded with
 	// its engine, so concurrent engines share no evaluation state.
-	udfDepth     int
+	udfDepth int
+	// udfTypeDepth bounds inferExprType through user-function bodies.
+	udfTypeDepth atomic.Int32
 	stmtEmbedder embed.Embedder
 
 	// pipelineSource is the source table name of the query whose
@@ -1137,6 +1139,9 @@ func (e *Engine) applyOperator(input *types.Table, op parser.Operator) (*types.T
 		return e.applySample(input, o)
 	case *parser.CountOp:
 		return e.applyCount(input)
+	case *parser.ConsumeOp:
+		// consume reads the input and returns no columns or rows.
+		return types.NewTable(input.Name, types.Schema{}), nil
 	case *parser.DistinctOp:
 		return e.applyDistinct(input, o)
 	case *parser.SampleDistinctOp:

@@ -1656,7 +1656,7 @@ func TestConditionalFunctions(t *testing.T) {
 		{"coalesce", `print R = coalesce("", "", "found")`, "found"},
 		{"max_of", `print R = max_of(3, 1, 4, 1, 5)`, "5"},
 		{"min_of", `print R = min_of(3, 1, 4, 1, 5)`, "1"},
-		{"isnull_null", `print R = isnull(tolong(""))`, "false"}, // tolong("") returns 0, not null
+		{"isnull_null", `print R = isnull(tolong(""))`, "true"}, // a failed conversion is null (tolong reference)
 		{"isnotnull", `print R = isnotnull(42)`, "true"},
 	}
 	for _, tt := range tests {

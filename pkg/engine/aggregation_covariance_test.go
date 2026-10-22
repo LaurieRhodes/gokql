@@ -104,7 +104,10 @@ func TestCovarianceInsufficientDataReturnsNull(t *testing.T) {
 
 	result2 := queryResult(t, `datatable(x:real, y:real) []
 		| summarize covariancep(x, y)`)
-	if len(result2.Rows) != 0 {
-		t.Errorf("covariancep over zero input rows with no by-clause = %d rows, want 0 (matching this engine's existing zero-row summarize behavior)", len(result2.Rows))
+	// An ungrouped summarize over no rows yields one row (the summarize
+	// reference's "Default values of aggregations"); covariance has no
+	// listed default and is null.
+	if len(result2.Rows) != 1 || result2.Rows[0][0] != nil {
+		t.Errorf("covariancep over zero input rows with no by-clause = %v, want one null row", result2.Rows)
 	}
 }

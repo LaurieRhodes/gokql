@@ -510,6 +510,12 @@ type CountOp struct{}
 
 func (*CountOp) operatorNode() {}
 
+// ConsumeOp: | consume [decodeblocks=true|false]. Reads its input and
+// returns nothing.
+type ConsumeOp struct{}
+
+func (*ConsumeOp) operatorNode() {}
+
 // DistinctOp: | distinct col1, col2, ...
 type DistinctOp struct {
 	Columns []string

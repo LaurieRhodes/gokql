@@ -1735,6 +1735,11 @@ func parseOperator(seg string) (Operator, error) {
 		return &CountOp{}, nil
 	}
 
+	// | consume [decodeblocks=...]
+	if lower == "consume" || strings.HasPrefix(lower, "consume ") {
+		return &ConsumeOp{}, nil
+	}
+
 	// | search [kind=...] Predicate
 	if strings.HasPrefix(lower, "search ") {
 		return parseSearchOp(seg[len("search "):], true)
@@ -3058,9 +3063,17 @@ func parseOrderBy(s string) (*OrderByOp, error) {
 func parseSummarize(s string) (*SummarizeOp, error) {
 	s = stripHints(s)
 
-	// Split on " by " to separate aggregations from group-by columns
+	// Split on " by " to separate aggregations from group-by columns.
+	// The leading space lets "by x" with no aggregates match too.
+	s = " " + s
+	spaced := strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return ' '
+		}
+		return r
+	}, s)
 	var aggStr, byStr string
-	byIdx := findKeyword(s, " by ")
+	byIdx := findKeyword(spaced, " by ")
 	if byIdx >= 0 {
 		aggStr = strings.TrimSpace(s[:byIdx])
 		byStr = strings.TrimSpace(s[byIdx+4:])
@@ -3084,7 +3097,7 @@ func parseSummarize(s string) (*SummarizeOp, error) {
 		aggs = append(aggs, *agg)
 	}
 
-	if len(aggs) == 0 {
+	if len(aggs) == 0 && strings.TrimSpace(byStr) == "" {
 		return nil, fmt.Errorf("summarize: no aggregations specified")
 	}
 	// Hidden inner-aggregate columns must be unique across items.
@@ -3446,6 +3459,22 @@ func parseJoin(s string) (*JoinOp, error) {
 			return nil, err
 		}
 		s = stripHints(rest)
+	}
+
+	if len(s) > 0 && s[0] != '(' {
+		// A bare right side: join kind=inner T2 on Key, or a function
+		// or database(...) reference; it runs to the top-level "on".
+		spaced := strings.Map(func(r rune) rune {
+			if r == '\t' || r == '\n' || r == '\r' {
+				return ' '
+			}
+			return r
+		}, s)
+		onIdx := findKeyword(spaced, " on ")
+		if onIdx <= 0 {
+			return nil, fmt.Errorf("join: expected 'on' clause after the right-hand table")
+		}
+		s = "(" + strings.TrimSpace(s[:onIdx]) + ") " + strings.TrimSpace(s[onIdx:])
 	}
 
 	// Parse (subquery) — find matching parentheses

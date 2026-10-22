@@ -12,6 +12,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -40,6 +41,9 @@ func kqlToString(v types.Value, t types.KQLType) string {
 	case string:
 		return x
 	case float64:
+		if math.IsInf(x, 0) || math.IsNaN(x) {
+			return types.FormatReal(x)
+		}
 		if x == float64(int64(x)) {
 			return strconv.FormatInt(int64(x), 10)
 		}

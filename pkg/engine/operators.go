@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -622,6 +623,13 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		}
 	}
 
+	// An ungrouped summarize always yields one row: over no input, the
+	// aggregates' defaults (count 0, avg NaN, make_list [], max null).
+	if len(op.ByExprs) == 0 && len(groupOrder) == 0 {
+		groupOrder = append(groupOrder, "")
+		groups[""] = &groupEntry{}
+	}
+
 	// Compute aggregations per group
 	result := types.NewTable("", outSchema)
 	for _, key := range groupOrder {
@@ -698,6 +706,9 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				val, err := computeAgg(e, slot.agg, g.rows, &input.Schema)
 				if err != nil {
 					return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
+				}
+				if len(g.rows) == 0 {
+					val = emptyAggregateValue(slot.agg.Function, outSchema.Columns[slot.colIndices[0]].Type)
 				}
 				outRow[slot.colIndices[0]] = val
 			}
@@ -831,8 +842,8 @@ type unionLeg struct {
 // where every leg is in op.Sources.
 //
 // Leg names (the withsource value) are the table or let name; a
-// parenthesised subquery reports the name of the table it reads; the
-// piped input reports its own table name.
+// parenthesised subquery reports the name of the table it reads (or
+// its "as" name); the piped input reports its own table name.
 //
 // isfuzzy=true drops a leg whose source cannot be resolved (an unknown
 // table or let name, or a wildcard matching nothing) and fails only if
@@ -882,6 +893,12 @@ func (e *Engine) applyUnion(input *types.Table, op *parser.UnionOp) (*types.Tabl
 		name := src.Source
 		if name == "" {
 			name = t.Name
+		}
+		// A leg ending in "| as Name" reports that name.
+		for _, o := range src.Operators {
+			if as, ok := o.(*parser.AsOp); ok {
+				name = as.Name
+			}
 		}
 		legs = append(legs, unionLeg{name: name, table: t})
 		resolved = true
@@ -1159,22 +1176,56 @@ func (e *Engine) applyProjectReorder(input *types.Table, op *parser.ProjectReord
 	var newCols []types.Column
 	var colMap []int // maps new index → old index
 
-	// First: add requested columns in order
-	for _, name := range op.Columns {
-		// Strip asc/desc/granny_asc/granny_desc suffixes (KQL allows these)
-		cleanName := strings.TrimSpace(name)
-		for _, suffix := range []string{" asc", " desc", " granny_asc", " granny_desc"} {
-			cleanName = strings.TrimSuffix(cleanName, suffix)
-		}
-		cleanName = strings.TrimSpace(cleanName)
-
-		for i, col := range input.Schema.Columns {
-			if strings.EqualFold(col.Name, cleanName) {
-				newCols = append(newCols, col)
-				colMap = append(colMap, i)
-				used[col.Name] = true
-				break
+	// First: add requested columns in order. A wildcard takes every
+	// matching column not yet placed, in input order unless asc/desc
+	// (or granny_asc/granny_desc, natural order) sorts them by name.
+	add := func(i int) {
+		newCols = append(newCols, input.Schema.Columns[i])
+		colMap = append(colMap, i)
+		used[input.Schema.Columns[i].Name] = true
+	}
+	for _, item := range op.Columns {
+		name := strings.TrimSpace(item)
+		order := ""
+		if f := strings.Fields(name); len(f) == 2 {
+			switch strings.ToLower(f[1]) {
+			case "asc", "desc", "granny_asc", "granny_desc":
+				name, order = f[0], strings.ToLower(f[1])
 			}
+		}
+		if !strings.Contains(name, "*") {
+			for i, col := range input.Schema.Columns {
+				if !used[col.Name] && strings.EqualFold(col.Name, name) {
+					add(i)
+					break
+				}
+			}
+			continue
+		}
+		var matched []int
+		for i, col := range input.Schema.Columns {
+			if !used[col.Name] && matchesAnyPattern(col.Name, []string{name}) {
+				matched = append(matched, i)
+			}
+		}
+		if order != "" {
+			cols := input.Schema.Columns
+			sort.SliceStable(matched, func(x, y int) bool {
+				a, b := cols[matched[x]].Name, cols[matched[y]].Name
+				var c int
+				if strings.HasPrefix(order, "granny") {
+					c = naturalCompare(a, b)
+				} else {
+					c = strings.Compare(a, b)
+				}
+				if strings.HasSuffix(order, "desc") {
+					return c > 0
+				}
+				return c < 0
+			})
+		}
+		for _, i := range matched {
+			add(i)
 		}
 	}
 
@@ -1734,7 +1785,7 @@ func applyParseCore(input *types.Table, column, kind, flags string, patterns []p
 		}
 	} else {
 		var err error
-		regex, err = buildSimpleRelaxedRegex(patterns)
+		regex, err = buildSimpleRelaxedRegex(patterns, kind == "relaxed")
 		if err != nil {
 			return nil, fmt.Errorf("parse kind=%s: %w", kind, err)
 		}
@@ -1949,7 +2000,12 @@ func applyParseCore(input *types.Table, column, kind, flags string, patterns []p
 // separate, fully worked kind=regex example that used only generic
 // captures) — it turns out to describe genuine, real behavior after
 // all, just specific to simple/relaxed rather than regex mode.
-func buildSimpleRelaxedRegex(patterns []parser.ParseFragment) (*regexp.Regexp, error) {
+//
+// relaxed: a typed numeric field tries its strict form first and falls
+// back to a generic capture, so a value that does not convert (later
+// null) doesn't fail the whole match — "in relaxed mode, extended
+// columns can be partially matched" (parse reference).
+func buildSimpleRelaxedRegex(patterns []parser.ParseFragment, relaxed bool) (*regexp.Regexp, error) {
 	var sb strings.Builder
 	n := len(patterns)
 	for i, frag := range patterns {
@@ -1966,9 +2022,17 @@ func buildSimpleRelaxedRegex(patterns []parser.ParseFragment) (*regexp.Regexp, e
 		case frag.Field != "":
 			switch strings.ToLower(frag.Type) {
 			case "long", "int", "int64", "int32":
-				sb.WriteString(`([-+]?\d+)`)
+				if relaxed {
+					sb.WriteString(`([-+]?\d+|.*?)`)
+				} else {
+					sb.WriteString(`([-+]?\d+)`)
+				}
 			case "real", "double", "float":
-				sb.WriteString(`([-+]?\d+(?:\.\d+)?)`)
+				if relaxed {
+					sb.WriteString(`([-+]?\d+(?:\.\d+)?|.*?)`)
+				} else {
+					sb.WriteString(`([-+]?\d+(?:\.\d+)?)`)
+				}
 			default:
 				// string (default), datetime/date, timespan, guid,
 				// bool, dynamic: too varied to usefully constrain via
@@ -2027,8 +2091,10 @@ func (e *Engine) applyAs(input *types.Table, op *parser.AsOp) (*types.Table, err
 			Tables:      make(map[string]*types.Table),
 		})
 	}
-	e.letContext.Tables[op.Name] = input
-	return input, nil
+	// The result carries the name, which union withsource reports.
+	named := &types.Table{Name: op.Name, Schema: input.Schema, Rows: input.Rows}
+	e.letContext.Tables[op.Name] = named
+	return named, nil
 }
 
 // applyGetSchema returns a table describing the schema of the input.
@@ -2178,4 +2244,80 @@ func aggregationExpands(a parser.Aggregation) bool {
 		return true
 	}
 	return false
+}
+
+// emptyAggregateValue is an aggregate's value over no rows, per the
+// summarize reference ("Default values of aggregations"): 0 for the
+// count, distinct-count, sum, stdev and variance families, NaN for
+// avg, empty arrays and bags for make_*, null for everything else.
+func emptyAggregateValue(fn string, t types.KQLType) types.Value {
+	switch fn {
+	case "count", "countif", "dcount", "dcountif", "count_distinct", "count_distinctif":
+		return int64(0)
+	case "sum", "sumif", "stdev", "stdevif", "stdevp", "variance", "varianceif", "variancep", "variancepif":
+		switch t {
+		case types.TypeReal:
+			return float64(0)
+		case types.TypeInt:
+			return int32(0)
+		case types.TypeDecimal:
+			return types.Decimal{}
+		case types.TypeTimespan, types.TypeLong:
+			return int64(0)
+		}
+		return int64(0)
+	case "avg", "avgif":
+		return math.NaN()
+	case "make_set", "make_set_if", "make_list", "make_list_if", "make_list_with_nulls":
+		return "[]"
+	case "make_bag", "make_bag_if":
+		return "{}"
+	}
+	return nil
+}
+
+// naturalCompare orders strings with embedded numbers by value:
+// a2 < a10.
+func naturalCompare(a, b string) int {
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		ca, cb := a[i], b[j]
+		if ca >= '0' && ca <= '9' && cb >= '0' && cb <= '9' {
+			si := i
+			for i < len(a) && a[i] >= '0' && a[i] <= '9' {
+				i++
+			}
+			sj := j
+			for j < len(b) && b[j] >= '0' && b[j] <= '9' {
+				j++
+			}
+			na := strings.TrimLeft(a[si:i], "0")
+			nb := strings.TrimLeft(b[sj:j], "0")
+			if len(na) != len(nb) {
+				if len(na) < len(nb) {
+					return -1
+				}
+				return 1
+			}
+			if c := strings.Compare(na, nb); c != 0 {
+				return c
+			}
+			continue
+		}
+		if ca != cb {
+			if ca < cb {
+				return -1
+			}
+			return 1
+		}
+		i++
+		j++
+	}
+	switch {
+	case len(a)-i < len(b)-j:
+		return -1
+	case len(a)-i > len(b)-j:
+		return 1
+	}
+	return 0
 }
