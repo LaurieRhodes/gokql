@@ -1,9 +1,8 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
-	"strings"
+	"sync"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -16,24 +15,52 @@ import (
 // every non-graph operator.
 type Graph struct {
 	EdgeSchema types.Schema
-	NodeSchema types.Schema // zero-value unless a node table was supplied
+	// NodeSchema is the union of the node tables' columns (first
+	// occurrence of a name wins its position and type), plus the
+	// with_node_id property when it names no existing column.
+	// Zero-value unless a node table was supplied.
+	NodeSchema types.Schema
 
 	Edges []GraphEdge
 
 	// Node bookkeeping. Keys are formatted node id values (graphKey).
 	NodeIDs   []types.Value        // deterministic node order (first-seen)
-	NodeRows  map[string]types.Row // node key → node-table row (nil = edge-only node)
+	NodeRows  map[string]types.Row // node key → node row in NodeSchema (nil = edge-only node)
 	Adjacency map[string][]int     // node key → outgoing edge indices into Edges
 
 	SourceIdx, TargetIdx int // column indices in EdgeSchema
-	NodeIdIdx            int // node id column index in NodeSchema (if hasNodeTable)
+	NodeIdIdx            int // first node table's id column index in NodeSchema (if hasNodeTable)
 	hasNodeTable         bool
+
+	// NodeIdName names the id property of nodes derived from edges (no
+	// node table): with_node_id's name, else "NodeId".
+	NodeIdName string
+	// withNodeIdIdx is the with_node_id column in NodeSchema (-1 = none).
+	withNodeIdIdx int
+
+	radjOnce sync.Once
+	radj     map[string][]int // node key → incoming edge indices (lazy)
+
+	elemMu      sync.Mutex
+	elemSchemas map[elemSchemaKey]*types.Schema
 }
 
 // GraphEdge is one directed edge with its full source row for property access.
 type GraphEdge struct {
 	Source, Target types.Value
 	Row            types.Row
+}
+
+// reverseAdjacency returns node key → incoming edge indices, built once.
+func (g *Graph) reverseAdjacency() map[string][]int {
+	g.radjOnce.Do(func() {
+		g.radj = make(map[string][]int, len(g.Adjacency))
+		for ei, edge := range g.Edges {
+			k := graphKey(edge.Target)
+			g.radj[k] = append(g.radj[k], ei)
+		}
+	})
+	return g.radj
 }
 
 // derivedNodeIdType is the declared type of the synthetic NodeId column
@@ -60,6 +87,33 @@ func (g *Graph) derivedNodeIdValue(id types.Value) types.Value {
 		return nil
 	}
 	return fmt.Sprintf("%v", id)
+}
+
+// nodeElemSchema is the property schema of a single node: the node
+// schema with a node table, else the one derived id column.
+func (g *Graph) nodeElemSchema() types.Schema {
+	if g.hasNodeTable {
+		return g.NodeSchema
+	}
+	return types.Schema{Columns: []types.Column{{Name: g.NodeIdName, Type: g.derivedNodeIdType()}}}
+}
+
+// nodeElemRow is a node's property row under nodeElemSchema. A node that
+// appears only as an edge endpoint carries its id (in the id and
+// with_node_id columns) and nulls elsewhere.
+func (g *Graph) nodeElemRow(id types.Value) types.Row {
+	if !g.hasNodeTable {
+		return types.Row{g.derivedNodeIdValue(id)}
+	}
+	if row := g.NodeRows[graphKey(id)]; row != nil {
+		return row
+	}
+	row := make(types.Row, len(g.NodeSchema.Columns))
+	row[g.NodeIdIdx] = id
+	if g.withNodeIdIdx >= 0 {
+		row[g.withNodeIdIdx] = id
+	}
+	return row
 }
 
 // graphKey formats a node id value as a map key. Type-tagged via
@@ -159,10 +213,12 @@ func (e *Engine) applyOperatorState(st pipeState, op parser.Operator) (pipeState
 }
 
 // applyMakeGraph builds a Graph from the edge table. Edges with a null
-// source or target are dropped. When a node table is named, its rows are
-// attached as node properties and isolated nodes (present in the node table
-// but absent from any edge) join the node set; name resolution against let
-// bindings and the catalog happens inside executeQuery, as with lookup.
+// source or target are dropped. Node tables, when named, attach their
+// rows as node properties (merged by node id across tables, first
+// non-null value per property winning) and isolated nodes (present in a
+// node table but absent from any edge) join the node set; name
+// resolution against let bindings and the catalog happens inside
+// executeQuery, as with lookup.
 func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Graph, error) {
 	srcIdx := edges.Schema.ColumnIndex(op.SourceColumn)
 	if srcIdx < 0 {
@@ -174,56 +230,63 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 	}
 
 	g := &Graph{
-		EdgeSchema: edges.Schema,
-		NodeRows:   make(map[string]types.Row),
-		Adjacency:  make(map[string][]int),
-		SourceIdx:  srcIdx,
-		TargetIdx:  tgtIdx,
+		EdgeSchema:    edges.Schema,
+		NodeRows:      make(map[string]types.Row),
+		Adjacency:     make(map[string][]int),
+		SourceIdx:     srcIdx,
+		TargetIdx:     tgtIdx,
+		NodeIdName:    "NodeId",
+		withNodeIdIdx: -1,
+	}
+	if op.WithNodeId != "" {
+		g.NodeIdName = op.WithNodeId
 	}
 
-	// Load the node table FIRST (if any) so its id-column type is known
-	// before any node key is computed. This is what lets keyOf below
-	// coerce consistently across both edge endpoints and node-table
-	// ids, rather than the node table racing edges that already used
-	// uncoerced keys — found live during the backlog pass: a node
-	// table's NodeId typed differently from the edge endpoints (e.g.
-	// NodeId: string vs Edges Src/Dst: long) previously matched nobody
-	// — typedKey's cross-type distinctness (91f9794, correct for join
-	// semantics) meant long 1 and string "1" silently became two
-	// different graph nodes instead of one, with no error.
-	var nodes *types.Table
-	if op.NodesTable != "" {
-		var err error
-		nodes, err = e.executeQuery(&parser.Query{Source: op.NodesTable})
+	// Load the node tables FIRST so their id-column types are known
+	// before any node key is computed. That is what lets identity()
+	// below coerce consistently across edge endpoints and node-table
+	// ids: typedKey keeps long 1 and string "1" distinct (correct for
+	// join), so a node table whose id type differs from the edge
+	// endpoints would otherwise match no edge at all, silently.
+	type nodeSource struct {
+		table  *types.Table
+		idIdx  int
+		colMap []int // table column → NodeSchema column
+	}
+	var sources []nodeSource
+	for _, nt := range op.NodeTables {
+		t, err := e.executeQuery(&parser.Query{Source: nt.Table})
 		if err != nil {
 			return nil, fmt.Errorf("make-graph nodes: %w", err)
 		}
-		idIdx := nodes.Schema.ColumnIndex(op.NodeIdColumn)
+		idIdx := t.Schema.ColumnIndex(nt.IdColumn)
 		if idIdx < 0 {
-			return nil, fmt.Errorf("make-graph: node id column %q not found in %s", op.NodeIdColumn, op.NodesTable)
+			return nil, fmt.Errorf("make-graph: node id column %q not found in %s", nt.IdColumn, nt.Table)
 		}
-		g.NodeSchema = nodes.Schema
-		g.NodeIdIdx = idIdx
+		src := nodeSource{table: t, idIdx: idIdx, colMap: make([]int, len(t.Schema.Columns))}
+		for c, col := range t.Schema.Columns {
+			u := g.NodeSchema.ColumnIndex(col.Name)
+			if u < 0 {
+				u = len(g.NodeSchema.Columns)
+				g.NodeSchema.Columns = append(g.NodeSchema.Columns, col)
+			}
+			src.colMap[c] = u
+		}
+		if len(sources) == 0 {
+			g.NodeIdIdx = src.colMap[idIdx]
+		}
+		sources = append(sources, src)
 		g.hasNodeTable = true
 	}
 
-	// coerceIdentity is true when the node table's id type disagrees
-	// with the edge endpoint type(s), mirroring derivedNodeIdType/
-	// Value's existing widen-to-string behavior for mismatched edge
-	// endpoints alone — the same policy, extended to also cover the
-	// node-table case rather than leaving it silently uncoerced.
-	// Coercing the IDENTITY VALUE itself at extraction (rather than
-	// only the key computation) is deliberate: graph-to-table and
-	// graph-match's traversal code both call graphKey(id) directly in
-	// many places, and propagating a coercion flag through every one
-	// of those call sites would be invasive and easy to miss one of.
-	// Coercing the value once, here, means every existing graphKey(id)
-	// call downstream — completely unchanged — naturally computes a
-	// consistent key, because the values it's given already agree.
+	// coerceIdentity: some node table's id type disagrees with the edge
+	// endpoint type(s). Ids are then formatted as strings at extraction
+	// — the same widen-to-string policy derivedNodeIdType applies to
+	// mismatched endpoints — so every downstream graphKey(id) call
+	// computes consistent keys without carrying a flag around.
 	coerceIdentity := false
-	if g.hasNodeTable {
-		nodeIDType := nodes.Schema.Columns[g.NodeIdIdx].Type
-		if nodeIDType != g.derivedNodeIdType() {
+	for _, src := range sources {
+		if src.table.Schema.Columns[src.idIdx].Type != g.derivedNodeIdType() {
 			coerceIdentity = true
 		}
 	}
@@ -232,6 +295,18 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 			return fmt.Sprintf("%v", id)
 		}
 		return id
+	}
+
+	if g.hasNodeTable && op.WithNodeId != "" {
+		g.withNodeIdIdx = g.NodeSchema.ColumnIndex(op.WithNodeId)
+		if g.withNodeIdIdx < 0 {
+			idType := sources[0].table.Schema.Columns[sources[0].idIdx].Type
+			if coerceIdentity {
+				idType = types.TypeString
+			}
+			g.withNodeIdIdx = len(g.NodeSchema.Columns)
+			g.NodeSchema.Columns = append(g.NodeSchema.Columns, types.Column{Name: op.WithNodeId, Type: idType})
+		}
 	}
 
 	addNode := func(id types.Value) string {
@@ -255,14 +330,27 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 		g.Adjacency[srcKey] = append(g.Adjacency[srcKey], len(g.Edges)-1)
 	}
 
-	if g.hasNodeTable {
-		for _, row := range nodes.Rows {
-			id := identity(row[g.NodeIdIdx])
+	width := len(g.NodeSchema.Columns)
+	for _, src := range sources {
+		for _, row := range src.table.Rows {
+			id := identity(row[src.idIdx])
 			if id == nil {
 				continue
 			}
 			key := addNode(id)
-			g.NodeRows[key] = row
+			merged := g.NodeRows[key]
+			if merged == nil {
+				merged = make(types.Row, width)
+				g.NodeRows[key] = merged
+			}
+			for c, v := range row {
+				if u := src.colMap[c]; merged[u] == nil {
+					merged[u] = v
+				}
+			}
+			if g.withNodeIdIdx >= 0 {
+				merged[g.withNodeIdIdx] = id
+			}
 		}
 	}
 
@@ -285,517 +373,13 @@ func applyGraphToTable(g *Graph, op *parser.GraphToTableOp) (*types.Table, error
 		return result, nil
 
 	case "nodes":
-		if g.hasNodeTable {
-			result := types.NewTable("", g.NodeSchema)
-			for _, id := range g.NodeIDs {
-				row := g.NodeRows[graphKey(id)]
-				if row == nil {
-					row = make(types.Row, len(g.NodeSchema.Columns))
-					row[g.NodeIdIdx] = id
-				}
-				result.AddRow(row)
-			}
-			return result, nil
-		}
-		idType := g.derivedNodeIdType()
-		schema := types.Schema{Columns: []types.Column{{Name: "NodeId", Type: idType}}}
-		result := types.NewTable("", schema)
+		result := types.NewTable("", g.nodeElemSchema())
 		for _, id := range g.NodeIDs {
-			result.AddRow(types.Row{g.derivedNodeIdValue(id)})
+			result.AddRow(g.nodeElemRow(id))
 		}
 		return result, nil
 
 	default:
 		return nil, fmt.Errorf("graph-to-table: unknown output %q", op.Output)
 	}
-}
-
-// --- graph-match ---
-
-// maxGraphMatches caps the number of rows graph-match may emit. Pattern
-// enumeration is combinatorial; a runaway pattern should fail loudly
-// rather than exhaust memory.
-const maxGraphMatches = 1_000_000
-
-// matchPredicate is one AND-conjunct of the where clause, scheduled for
-// evaluation at the earliest pattern position where every pattern
-// variable it references is bound. pos p means "after node p is bound"
-// (node var i binds at pos i; edge var i binds at pos i+1, together with
-// its target node). Conjuncts referencing no pattern variables run at
-// pos 0. Evaluating conjuncts during traversal prunes dead branches
-// before they expand; because `and` is eager (no short-circuit) and a
-// match requires every conjunct strictly true, splitting is semantics-
-// preserving, including error and null behavior.
-type matchPredicate struct {
-	expr parser.Expr
-	pos  int
-}
-
-// splitConjuncts flattens top-level `and` chains into a conjunct list.
-func splitConjuncts(expr parser.Expr, out []parser.Expr) []parser.Expr {
-	if be, ok := expr.(*parser.BinaryExpr); ok && be.Op == parser.OpAnd {
-		out = splitConjuncts(be.Left, out)
-		return splitConjuncts(be.Right, out)
-	}
-	return append(out, expr)
-}
-
-// collectBaseNames gathers the base identifiers an expression references
-// (ColumnRef names and AccessExpr base names). Returns complete=false if
-// an unknown expression type is encountered, in which case the caller
-// must schedule the conjunct at the final position (safe fallback).
-func collectBaseNames(expr parser.Expr, names map[string]bool) (complete bool) {
-	switch e := expr.(type) {
-	case nil:
-		return true
-	case *parser.Literal:
-		return true
-	case *parser.ColumnRef:
-		names[e.Name] = true
-		return true
-	case *parser.AccessExpr:
-		for _, k := range e.Path {
-			if k.Expr != nil && !collectBaseNames(k.Expr, names) {
-				return false
-			}
-		}
-		return collectBaseNames(e.Object, names)
-	case *parser.BinaryExpr:
-		return collectBaseNames(e.Left, names) && collectBaseNames(e.Right, names)
-	case *parser.UnaryExpr:
-		return collectBaseNames(e.Expr, names)
-	case *parser.FuncCall:
-		ok := true
-		for _, arg := range e.Args {
-			ok = collectBaseNames(arg, names) && ok
-		}
-		return ok
-	case *parser.BetweenExpr:
-		return collectBaseNames(e.Expr, names) &&
-			collectBaseNames(e.Low, names) && collectBaseNames(e.High, names)
-	case *parser.InExpr:
-		ok := collectBaseNames(e.Column, names)
-		for _, v := range e.Values {
-			ok = collectBaseNames(v, names) && ok
-		}
-		return ok
-	case *parser.HasAnyAllExpr:
-		ok := collectBaseNames(e.Column, names)
-		for _, v := range e.Values {
-			ok = collectBaseNames(v, names) && ok
-		}
-		return ok
-	default:
-		return false
-	}
-}
-
-// buildMatchPredicates splits the where clause into position-scheduled
-// conjuncts. finalPos is len(op.Edges) — the position of the last node.
-func buildMatchPredicates(op *parser.GraphMatchOp) []matchPredicate {
-	if op.Where == nil {
-		return nil
-	}
-	varPos := make(map[string]int)
-	for i, name := range op.Nodes {
-		if name != "" {
-			varPos[name] = i
-		}
-	}
-	for i, edge := range op.Edges {
-		if edge.Name != "" {
-			varPos[edge.Name] = i + 1
-		}
-	}
-	finalPos := len(op.Edges)
-
-	conjuncts := splitConjuncts(op.Where, nil)
-	preds := make([]matchPredicate, 0, len(conjuncts))
-	for _, c := range conjuncts {
-		names := make(map[string]bool)
-		pos := 0
-		if !collectBaseNames(c, names) {
-			pos = finalPos // unknown expr shape: evaluate at emit time
-		} else {
-			for n := range names {
-				p, ok := varPos[n]
-				if !ok {
-					// A literal dotted reference ("a.Kind") maps to the
-					// variable named by its first segment.
-					if dot := strings.IndexByte(n, '.'); dot > 0 {
-						p, ok = varPos[n[:dot]]
-					}
-				}
-				if ok && p > pos {
-					pos = p
-				}
-			}
-		}
-		preds = append(preds, matchPredicate{expr: c, pos: pos})
-	}
-	return preds
-}
-
-// matchLayout maps pattern variables onto the synthetic match schema.
-// Each named node variable contributes the node columns as "var.Col"
-// (or a single "var.NodeId" when nodes were derived from edges); each
-// named edge variable contributes the edge columns as "var.Col".
-// Anonymous elements contribute no columns.
-type matchLayout struct {
-	schema      types.Schema
-	nodeOffsets []int // per pattern node: first column index, -1 if anonymous
-	edgeOffsets []int // per pattern edge: first column index, -1 if anonymous
-	nodeWidth   int
-	edgeWidth   int
-}
-
-func buildMatchLayout(g *Graph, op *parser.GraphMatchOp) (*matchLayout, error) {
-	lay := &matchLayout{
-		nodeOffsets: make([]int, len(op.Nodes)),
-		edgeOffsets: make([]int, len(op.Edges)),
-		edgeWidth:   len(g.EdgeSchema.Columns),
-	}
-	if g.hasNodeTable {
-		lay.nodeWidth = len(g.NodeSchema.Columns)
-	} else {
-		lay.nodeWidth = 1
-	}
-
-	seen := make(map[string]bool)
-	claim := func(name string) error {
-		if name == "" {
-			return nil
-		}
-		if seen[name] {
-			return fmt.Errorf("graph-match: duplicate pattern variable %q", name)
-		}
-		seen[name] = true
-		return nil
-	}
-
-	addNodeVar := func(i int, name string) {
-		lay.nodeOffsets[i] = len(lay.schema.Columns)
-		if g.hasNodeTable {
-			for _, col := range g.NodeSchema.Columns {
-				lay.schema.Columns = append(lay.schema.Columns,
-					types.Column{Name: name + "." + col.Name, Type: col.Type})
-			}
-		} else {
-			lay.schema.Columns = append(lay.schema.Columns,
-				types.Column{Name: name + ".NodeId", Type: g.derivedNodeIdType()})
-		}
-	}
-	addEdgeVar := func(i int, edge parser.GraphMatchEdge) {
-		lay.edgeOffsets[i] = len(lay.schema.Columns)
-		if edge.MinHops == 1 && edge.MaxHops == 1 {
-			for _, col := range g.EdgeSchema.Columns {
-				lay.schema.Columns = append(lay.schema.Columns,
-					types.Column{Name: edge.Name + "." + col.Name, Type: col.Type})
-			}
-			return
-		}
-		// Variable-length edge: a single dynamic column holding the JSON
-		// array of traversed edges, so array_length(e) and e[0].Col work
-		// through the standard dynamic machinery.
-		lay.schema.Columns = append(lay.schema.Columns,
-			types.Column{Name: edge.Name, Type: types.TypeDynamic})
-	}
-
-	for i, name := range op.Nodes {
-		if err := claim(name); err != nil {
-			return nil, err
-		}
-		if name == "" {
-			lay.nodeOffsets[i] = -1
-			continue
-		}
-		addNodeVar(i, name)
-	}
-	for i, edge := range op.Edges {
-		if err := claim(edge.Name); err != nil {
-			return nil, err
-		}
-		if edge.Name == "" {
-			lay.edgeOffsets[i] = -1
-			continue
-		}
-		addEdgeVar(i, edge)
-	}
-	return lay, nil
-}
-
-// writeNode fills a node variable's columns in the row buffer.
-func (lay *matchLayout) writeNode(g *Graph, row types.Row, patternIdx int, id types.Value) {
-	off := lay.nodeOffsets[patternIdx]
-	if off < 0 {
-		return
-	}
-	if !g.hasNodeTable {
-		row[off] = g.derivedNodeIdValue(id)
-		return
-	}
-	nodeRow := g.NodeRows[graphKey(id)]
-	for c := 0; c < lay.nodeWidth; c++ {
-		if nodeRow != nil {
-			row[off+c] = nodeRow[c]
-		} else if c == g.NodeIdIdx {
-			row[off+c] = id // edge-only node: id with null properties
-		} else {
-			row[off+c] = nil
-		}
-	}
-}
-
-// writeEdge fills an edge variable's columns in the row buffer.
-func (lay *matchLayout) writeEdge(g *Graph, row types.Row, patternIdx int, edgeIdx int) {
-	off := lay.edgeOffsets[patternIdx]
-	if off < 0 {
-		return
-	}
-	edgeRow := g.Edges[edgeIdx].Row
-	for c := 0; c < lay.edgeWidth; c++ {
-		row[off+c] = edgeRow[c]
-	}
-}
-
-// writeEdgeList fills a variable-length edge variable's column with the
-// JSON array of traversed edges (one object per hop, edge columns as keys).
-// Dynamic edge columns are stored as JSON strings on the row; embedding
-// them as raw JSON (rather than re-encoded strings) keeps nested access
-// like e[0].Tags.sev working through the standard dynamic machinery.
-func (lay *matchLayout) writeEdgeList(g *Graph, row types.Row, patternIdx int, edgeIdxs []int) error {
-	off := lay.edgeOffsets[patternIdx]
-	if off < 0 {
-		return nil
-	}
-	list := make([]map[string]interface{}, len(edgeIdxs))
-	for i, ei := range edgeIdxs {
-		m := make(map[string]interface{}, lay.edgeWidth)
-		for c, col := range g.EdgeSchema.Columns {
-			v := g.Edges[ei].Row[c]
-			if col.Type == types.TypeDynamic {
-				if s, ok := v.(string); ok && json.Valid([]byte(s)) {
-					m[col.Name] = json.RawMessage(s)
-					continue
-				}
-			}
-			m[col.Name] = v
-		}
-		list[i] = m
-	}
-	b, err := json.Marshal(list)
-	if err != nil {
-		return fmt.Errorf("graph-match: marshal edge list: %w", err)
-	}
-	row[off] = string(b)
-	return nil
-}
-
-// applyGraphMatch enumerates paths matching the pattern, filters them with
-// the where clause, and projects the result. Traversal is depth-first over
-// pattern positions. The where clause is split into AND-conjuncts, each
-// evaluated at the earliest position where its pattern variables are all
-// bound (buildMatchPredicates), pruning dead branches during traversal
-// instead of after full enumeration. A physical edge is used at most once
-// within a single matched path, which bounds variable-length expansion
-// alongside MaxHops; total output is capped at maxGraphMatches.
-func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Table, error) {
-	lay, err := buildMatchLayout(g, op)
-	if err != nil {
-		return nil, err
-	}
-	preds := buildMatchPredicates(op)
-
-	if op.Edges[0].Distinct {
-		if len(op.Edges) != 1 {
-			return nil, fmt.Errorf("graph-match: 'distinct' is only valid on a single-edge pattern " +
-				"(start)-[e*min..max distinct]-(end) — node-identity dedup does not compose with " +
-				"continuing the rest of a longer pattern")
-		}
-		return e.applyGraphMatchDistinctBFS(g, op, lay, preds)
-	}
-	for _, spec := range op.Edges[1:] {
-		if spec.Distinct {
-			return nil, fmt.Errorf("graph-match: 'distinct' is only valid on a single-edge pattern")
-		}
-	}
-
-	matches := types.NewTable("", lay.schema)
-	row := make(types.Row, len(lay.schema.Columns)) // reused buffer
-	usedEdges := make([]bool, len(g.Edges))
-
-	// Reverse adjacency, built once and only when some edge traverses
-	// backward or undirected.
-	var radj map[string][]int
-	for _, spec := range op.Edges {
-		if spec.Direction != parser.EdgeForward {
-			radj = make(map[string][]int, len(g.Adjacency))
-			for ei, edge := range g.Edges {
-				k := graphKey(edge.Target)
-				radj[k] = append(radj[k], ei)
-			}
-			break
-		}
-	}
-
-	// neighbors yields the candidate (edge index, next node id) pairs
-	// from key under the given traversal direction. Undirected yields
-	// the forward set then the backward set; usedEdges already prevents
-	// one edge matching twice within a single binding.
-	neighbors := func(key string, dir parser.EdgeDirection, fn func(ei int, next types.Value) error) error {
-		if dir != parser.EdgeBackward {
-			for _, ei := range g.Adjacency[key] {
-				if err := fn(ei, g.Edges[ei].Target); err != nil {
-					return err
-				}
-			}
-		}
-		if dir != parser.EdgeForward {
-			for _, ei := range radj[key] {
-				if err := fn(ei, g.Edges[ei].Source); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-
-	// checkPreds evaluates every conjunct scheduled at pos against the
-	// currently bound row prefix. false = prune this branch.
-	checkPreds := func(pos int) (bool, error) {
-		for _, p := range preds {
-			if p.pos != pos {
-				continue
-			}
-			keep, evalErr := evalExpr(e, p.expr, &lay.schema, row)
-			if evalErr != nil {
-				return false, fmt.Errorf("graph-match where: %w", evalErr)
-			}
-			if b, ok := keep.(bool); !ok || !b {
-				return false, nil
-			}
-		}
-		return true, nil
-	}
-
-	emit := func() error {
-		if len(matches.Rows) >= maxGraphMatches {
-			return fmt.Errorf("graph-match: result exceeds %d rows; narrow the pattern or where clause", maxGraphMatches)
-		}
-		out := make(types.Row, len(row))
-		copy(out, row)
-		matches.AddRow(out)
-		return nil
-	}
-
-	// Reverse-reachability pruning (backlog P3 item 16): only attempted
-	// for the single-edge-spec pattern it's scoped to, and only trusted
-	// once the extracted target literal is verified to correspond to a
-	// REAL node in the graph — a false match here (e.g. from a type
-	// mismatch between the literal and the node's actual identity
-	// representation) would prune correct paths, not just miss a
-	// speedup, so this fails closed (no pruning) on any uncertainty.
-	var reachDist map[string]int
-	var reachMaxHops int
-	if len(op.Edges) == 1 {
-		if _, endVal, ok := detectFixedEndpoints(op, preds); ok {
-			targetKey := graphKey(endVal)
-			if _, isRealNode := g.NodeRows[targetKey]; isRealNode {
-				reachMaxHops = op.Edges[0].MaxHops
-				reachDist = reachabilityToTarget(g, targetKey, op.Edges[0].Direction, reachMaxHops)
-			}
-		}
-	}
-
-	var walk func(hop int, curKey string, curId types.Value) error
-	walk = func(hop int, curKey string, curId types.Value) error {
-		if hop == len(op.Edges) {
-			return emit()
-		}
-		spec := op.Edges[hop]
-
-		if spec.MinHops == 1 && spec.MaxHops == 1 {
-			return neighbors(curKey, spec.Direction, func(ei int, next types.Value) error {
-				if usedEdges[ei] {
-					return nil
-				}
-				usedEdges[ei] = true
-				lay.writeEdge(g, row, hop, ei)
-				lay.writeNode(g, row, hop+1, next)
-				keep, walkErr := checkPreds(hop + 1)
-				if walkErr == nil && keep {
-					walkErr = walk(hop+1, graphKey(next), next)
-				}
-				usedEdges[ei] = false
-				return walkErr
-			})
-		}
-
-		// Variable-length: expand depth-first up to MaxHops, handing off
-		// to the rest of the pattern at every depth >= MinHops. A failed
-		// predicate check prunes only the hand-off — deeper expansion
-		// continues, since a longer path may still satisfy it.
-		collected := make([]int, 0, spec.MaxHops)
-		var expand func(depth int, key string, id types.Value) error
-		expand = func(depth int, key string, id types.Value) error {
-			if depth >= spec.MinHops {
-				if listErr := lay.writeEdgeList(g, row, hop, collected); listErr != nil {
-					return listErr
-				}
-				lay.writeNode(g, row, hop+1, id)
-				keep, checkErr := checkPreds(hop + 1)
-				if checkErr != nil {
-					return checkErr
-				}
-				if keep {
-					if walkErr := walk(hop+1, key, id); walkErr != nil {
-						return walkErr
-					}
-				}
-			}
-			if depth == spec.MaxHops {
-				return nil
-			}
-			return neighbors(key, spec.Direction, func(ei int, next types.Value) error {
-				if usedEdges[ei] {
-					return nil
-				}
-				if reachDist != nil {
-					nk := graphKey(next)
-					d, reachable := reachDist[nk]
-					if !reachable || depth+1+d > reachMaxHops {
-						// Provably cannot reach the fixed target within
-						// the remaining hop budget from here — cut this
-						// branch. Every path this discards would have
-						// failed the terminal equality predicate anyway;
-						// nothing in the true answer set is lost.
-						return nil
-					}
-				}
-				usedEdges[ei] = true
-				collected = append(collected, ei)
-				expandErr := expand(depth+1, graphKey(next), next)
-				collected = collected[:len(collected)-1]
-				usedEdges[ei] = false
-				return expandErr
-			})
-		}
-		return expand(0, curKey, curId)
-	}
-
-	for _, id := range g.NodeIDs {
-		lay.writeNode(g, row, 0, id)
-		keep, err := checkPreds(0)
-		if err != nil {
-			return nil, err
-		}
-		if !keep {
-			continue
-		}
-		if err := walk(0, graphKey(id), id); err != nil {
-			return nil, err
-		}
-	}
-
-	return e.applyProject(matches, op.Project)
 }

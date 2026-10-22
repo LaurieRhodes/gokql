@@ -70,6 +70,12 @@ func evalFuncRaw(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 	if v, ok, err := evalDecimalMath(eng, fc, schema, row); ok {
 		return v, err
 	}
+	switch fc.Name {
+	case "map", "all", "any", "inner_nodes":
+		if v, ok, err := evalGraphPathFunc(eng, fc, schema, row); ok {
+			return v, err
+		}
+	}
 	if strings.HasPrefix(fc.Name, "__search_") {
 		if v, ok, err := evalSearchFunc(eng, fc, schema, row); ok {
 			return v, err

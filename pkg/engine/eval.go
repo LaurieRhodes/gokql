@@ -735,6 +735,9 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 		// Declared, argument-independent return types (Kusto.Language;
 		// func_signatures.go) take precedence over the hand-written
 		// cases below, which remain for argument-dependent functions.
+		if t, ok := graphPathFuncType(e, schema); ok {
+			return t
+		}
 		if e.Name == "percentile_tdigest" {
 			if len(e.Args) == 3 {
 				return typeofArg(e.Args[2])

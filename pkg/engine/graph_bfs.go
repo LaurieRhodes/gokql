@@ -28,18 +28,20 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, lay *matchLayout, preds []matchPredicate) (*types.Table, error) {
-	spec := op.Edges[0]
+func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, plan *gmPlan, preds []matchPredicate) (*types.Table, error) {
+	spec := plan.elems[0].spec
+	dir := plan.steps[0].dir
+	endVar := plan.steps[0].to
 
-	matches := types.NewTable("", lay.schema)
-	row := make(types.Row, len(lay.schema.Columns))
+	matches := types.NewTable("", plan.schema)
+	row := make(types.Row, len(plan.schema.Columns))
 
 	checkPreds := func(pos int) (bool, error) {
 		for _, p := range preds {
 			if p.pos != pos {
 				continue
 			}
-			keep, evalErr := evalExpr(e, p.expr, &lay.schema, row)
+			keep, evalErr := evalExpr(e, p.expr, &plan.schema, row)
 			if evalErr != nil {
 				return false, fmt.Errorf("graph-match where: %w", evalErr)
 			}
@@ -63,20 +65,16 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, l
 	// Reverse adjacency, built once, only if this edge ever traverses
 	// backward or undirected.
 	var radj map[string][]int
-	if spec.Direction != parser.EdgeForward {
-		radj = make(map[string][]int, len(g.Adjacency))
-		for ei, edge := range g.Edges {
-			k := graphKey(edge.Target)
-			radj[k] = append(radj[k], ei)
-		}
+	if dir != parser.EdgeForward {
+		radj = g.reverseAdjacency()
 	}
 	neighbors := func(key string, fn func(ei int, next types.Value)) {
-		if spec.Direction != parser.EdgeBackward {
+		if dir != parser.EdgeBackward {
 			for _, ei := range g.Adjacency[key] {
 				fn(ei, g.Edges[ei].Target)
 			}
 		}
-		if spec.Direction != parser.EdgeForward {
+		if dir != parser.EdgeForward {
 			for _, ei := range radj[key] {
 				fn(ei, g.Edges[ei].Source)
 			}
@@ -89,7 +87,7 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, l
 	}
 
 	for _, startID := range g.NodeIDs {
-		lay.writeNode(g, row, 0, startID)
+		plan.writeNode(g, row, 0, startID)
 		keep, err := checkPreds(0)
 		if err != nil {
 			return nil, err
@@ -102,6 +100,22 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, l
 		visited := map[string]bool{startKey: true}
 		pathTo := map[string][]int{startKey: nil}
 		frontier := []frontierNode{{startKey, startID}}
+
+		if spec.MinHops == 0 { // zero-length: the start node itself
+			if err := plan.writePath(g, row, 0, startID, nil); err != nil {
+				return nil, err
+			}
+			plan.writeNode(g, row, endVar, startID)
+			keep, err := checkPreds(1)
+			if err != nil {
+				return nil, err
+			}
+			if keep {
+				if err := emit(); err != nil {
+					return nil, err
+				}
+			}
+		}
 
 		for depth := 1; depth <= spec.MaxHops && len(frontier) > 0; depth++ {
 			var next []frontierNode
@@ -123,10 +137,10 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, l
 
 			if depth >= spec.MinHops {
 				for _, item := range next {
-					if listErr := lay.writeEdgeList(g, row, 0, pathTo[item.key]); listErr != nil {
+					if listErr := plan.writePath(g, row, 0, startID, pathTo[item.key]); listErr != nil {
 						return nil, listErr
 					}
-					lay.writeNode(g, row, 1, item.id)
+					plan.writeNode(g, row, endVar, item.id)
 					keep, checkErr := checkPreds(1)
 					if checkErr != nil {
 						return nil, checkErr

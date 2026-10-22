@@ -1314,15 +1314,25 @@ func (*MergeExtentsCmd) statementNode() {}
 
 // MakeGraphOp constructs a directed graph from an edge table:
 //
-//	Edges | make-graph Source --> Target [with Nodes on NodeId]
+//	Edges | make-graph Source --> Target [with_node_id=Name]
+//	      [with Nodes1 on Id1 [, Nodes2 on Id2 ...]]
 //
 // The result flowing down the pipeline is a graph, not a table; only
 // graph operators (graph-to-table, graph-match) may follow it.
 type MakeGraphOp struct {
-	SourceColumn string // edge-table column holding the source node id
-	TargetColumn string // edge-table column holding the target node id
-	NodesTable   string // optional node table name ("" = nodes derived from edges)
-	NodeIdColumn string // node id column in the node table (set iff NodesTable != "")
+	SourceColumn string           // edge-table column holding the source node id
+	TargetColumn string           // edge-table column holding the target node id
+	NodeTables   []GraphNodeTable // optional node tables (nil = nodes derived from edges)
+	// WithNodeId names a node property that holds each node's id
+	// (with_node_id=Name). "" = none: nodes derived from edges then
+	// expose their id as NodeId.
+	WithNodeId string
+}
+
+// GraphNodeTable is one "with Table on IdColumn" node source.
+type GraphNodeTable struct {
+	Table    string
+	IdColumn string
 }
 
 func (*MakeGraphOp) operatorNode() {}
@@ -1341,26 +1351,43 @@ type GraphToTableOp struct {
 
 func (*GraphToTableOp) operatorNode() {}
 
-// GraphMatchOp matches a path pattern against a graph:
+// GraphMatchOp matches a graph pattern against a graph:
 //
-//	... | graph-match (a)-[e]->(b) where a.Kind == "External" project a.Id, b.Id
+//	... | graph-match [cycles=none|all|unique_edges]
+//	      (a)-[e]->(b)<-[f*1..3]-(c), (b)--(d)
+//	      [where <expr>] project <items>
 //
-// The pattern is a chain of nodes and directed edges; len(Nodes) == len(Edges)+1.
-// Pattern variables surface as dotted columns in the match schema: node
-// variables expose the node table's columns as "var.Col" (or "var.NodeId"
-// when nodes were derived from edges), edge variables expose the edge
-// table's columns as "var.Col". Anonymous elements ("()" / "-[]->") bind
-// no columns. The project clause is required, per KQL.
+// The pattern is one or more comma-separated path sequences; each is a
+// chain of nodes and edges with len(Nodes) == len(Edges)+1. A node
+// variable may appear more than once (in one sequence or across
+// sequences): every occurrence binds the same graph node. Sequences
+// must be connected through shared node variables. Pattern variables
+// surface as dotted columns in the match schema: node variables expose
+// the node properties as "var.Col", fixed edge variables the edge
+// columns as "var.Col", and variable-length edge variables a dynamic
+// array column. Anonymous elements bind no columns. The project clause
+// is required, per KQL.
 type GraphMatchOp struct {
-	Nodes   []string         // node variable names ("" = anonymous)
-	Edges   []GraphMatchEdge // directed edges between consecutive nodes
-	Where   Expr             // optional filter over pattern variables (nil = none)
-	Project *ProjectOp       // required output projection
+	Sequences []GraphMatchSequence
+	// Cycles: "unique_edges" (default: a graph edge is used at most once
+	// per match), "none" (additionally, no graph node is visited twice)
+	// or "all" (no restriction beyond the hop ranges).
+	Cycles  string
+	Where   Expr       // optional filter over pattern variables (nil = none)
+	Project *ProjectOp // required output projection
+}
+
+// GraphMatchSequence is one path sequence of a graph-match pattern.
+// Anonymous node and edge elements carry an empty name.
+type GraphMatchSequence struct {
+	Nodes []string
+	Edges []GraphMatchEdge
 }
 
 // GraphMatchEdge is one edge element of a graph-match pattern.
 // MinHops == MaxHops == 1 for a fixed edge -[e]->; variable-length
-// edges -[e*1..5]-> carry the hop range.
+// edges -[e*1..5]-> carry the hop range. MinHops may be 0: a zero-length
+// match binds both endpoint nodes to the same graph node.
 type GraphMatchEdge struct {
 	Name    string // "" = anonymous
 	MinHops int
@@ -1382,6 +1409,9 @@ type GraphMatchEdge struct {
 	// since node-identity dedup doesn't compose with continuing the
 	// rest of a longer pattern.
 	Distinct bool
+	// VarLength is set when the edge was written with a hop range
+	// (even *1..1): its variable is then an array of edges.
+	VarLength bool
 }
 
 // EdgeDirection is a graph-match edge traversal direction.

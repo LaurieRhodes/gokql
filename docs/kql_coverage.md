@@ -44,9 +44,11 @@ This rewrite corrects a significant amount of drift in the previous version (dat
 | lookup                  | ✅      | Dimension enrichment join by table name; kinds leftouter (default) and inner                                        |
 | render                  | ✅      | Parsed as metadata (visualization + with-properties), pass-through in engine                                       |
 | mv-apply                | ✅      | Per-row array expansion + subquery pipeline; optional rename and to typeof(T)                                       |
-| make-graph              | ✅      | Directed graph from edge table: Src --> Dst [with Nodes on NodeId]; isolated + edge-only nodes handled              |
-| graph-match             | ✅      | Path patterns (a)-[e]->(b), variable-length -[e*1..5]->, where over dotted vars, required project; unique edges     |
-| graph-to-table          | ✅      | Materialize graph as edges (default) or nodes                                                                       |
+| make-graph              | ⚠️      | Src --> Dst [with_node_id=Name] [with N1 on Id1 [, N2 on Id2]] (properties merged by id); isolated + edge-only nodes. Not yet: partitioned-by |
+| graph-match             | ✅      | Comma-separated sequences sharing node variables, repeated variables, named/anonymous elements (`()`, `-->`, `<--`, `--`), `*min..max` incl. `*0..n`, cycles=none/all/unique_edges, map/all/any/inner_nodes, where over dotted vars, required project; all ADX doc examples pass (graph_compliance_test.go) |
+| graph-to-table          | ⚠️      | edges (default) or nodes. Not yet: with_node_id/with_source_id/with_target_id, both outputs in one call      |
+| graph-shortest-paths, graph-mark-components | ❌ | Not yet implemented                                                                  |
+| graph(), graph models, labels() | ❌ | Persistent graph models not yet implemented                                                         |
 | range                   | ✅      | Table-generating source: int/long/real/datetime/timespan, let-bound and standalone forms                            |
 | evaluate                | ✅      | General plugin-dispatch mechanism (a registry, not a single hard-coded case); bag_unpack is the first plugin        |
 | search                  | ✅      | ADX form: `[T \|] search [kind=] [in (T1, T*)] Predicate`; terms with wildcards, `Col:"term"`, boolean combinations; `$table` + union schema |

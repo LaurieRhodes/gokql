@@ -32,16 +32,12 @@ import (
 )
 
 // detectFixedEndpoints inspects preds for equality conjuncts pinning
-// the start (pos 0) and end (pos len(op.Edges)) node identity fields
-// to literal values. Returns ok=false if the pattern isn't a single
-// edge spec, or either endpoint isn't pinned this way — the caller
+// the start (pos 0) and end (pos endPos) node identity fields to
+// literal values. Returns ok=false if either endpoint isn't pinned
+// this way — the caller
 // falls back to unpruned search in that case, which is always correct,
 // just potentially slower.
-func detectFixedEndpoints(op *parser.GraphMatchOp, preds []matchPredicate) (startVal, endVal string, ok bool) {
-	if len(op.Edges) != 1 {
-		return "", "", false
-	}
-	endPos := len(op.Edges)
+func detectFixedEndpoints(preds []matchPredicate, endPos int) (startVal, endVal string, ok bool) {
 	for _, p := range preds {
 		if p.pos != 0 && p.pos != endPos {
 			continue
@@ -99,11 +95,7 @@ func reachabilityToTarget(g *Graph, targetKey string, direction parser.EdgeDirec
 
 	var radj map[string][]int
 	if flipped != parser.EdgeForward {
-		radj = make(map[string][]int, len(g.Adjacency))
-		for ei, edge := range g.Edges {
-			k := graphKey(edge.Target)
-			radj[k] = append(radj[k], ei)
-		}
+		radj = g.reverseAdjacency()
 	}
 	neighbors := func(key string, fn func(next types.Value)) {
 		if flipped != parser.EdgeBackward {

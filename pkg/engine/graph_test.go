@@ -148,7 +148,7 @@ func TestGraphMatchErrors(t *testing.T) {
 	queryError(t, graphEdges+`E | make-graph Src --> Dst | graph-match (x)-[x]->(y) project y.NodeId`)
 	// malformed patterns
 	queryError(t, graphEdges+`E | make-graph Src --> Dst | graph-match (x)-[e]<(y) project x.NodeId`)
-	queryError(t, graphEdges+`E | make-graph Src --> Dst | graph-match (x) project x.NodeId`)
+	queryError(t, graphEdges+`E | make-graph Src --> Dst | graph-match (x)-[e]->(y), (a)-->(b) project x.NodeId`) // disconnected
 	queryError(t, graphEdges+`E | make-graph Src --> Dst | graph-match (x)-[e]-> project x.NodeId`)
 	// unknown projected column
 	queryError(t, graphEdges+`E | make-graph Src --> Dst | graph-match (x)-[e]->(y) project x.Missing`)
@@ -343,7 +343,8 @@ func TestGraphMatchHopRangeCap(t *testing.T) {
 }
 
 func TestGraphMatchInvalidHopRanges(t *testing.T) {
-	queryError(t, graphChain+`E | make-graph Src --> Dst | graph-match (x)-[e*0..3]->(y) project x.NodeId`)
+	queryError(t, graphChain+`E | make-graph Src --> Dst | graph-match (x)-[e*0..0]->(y) project x.NodeId`)
+	queryError(t, graphChain+`E | make-graph Src --> Dst | graph-match (x)-[e*-1..3]->(y) project x.NodeId`)
 	queryError(t, graphChain+`E | make-graph Src --> Dst | graph-match (x)-[e*3..1]->(y) project x.NodeId`)
 	queryError(t, graphChain+`E | make-graph Src --> Dst | graph-match (x)-[e*..3]->(y) project x.NodeId`)
 	queryError(t, graphChain+`E | make-graph Src --> Dst | graph-match (x)-[e*2]->(y) project x.NodeId`)

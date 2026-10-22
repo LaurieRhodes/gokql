@@ -81,6 +81,7 @@ and ASIM parsers, which is this engine's main query population.
 | `decimal`: `TypeDecimal` (exact base-10, 38 digits; + − × exact, ÷ to 28 places), `decimal(...)` literals from source text, `todecimal`, `parse_version`, comparison and arithmetic with numbers (decimal dominates), `sum`/`avg`/`min`/`max`/`-if` exact, `abs`/`round`/`floor`/`bin`/`ceiling`, storage as `kql.decimal` text, REST cells as strings | `pkg/types/decimal.go`, `pkg/engine/decimal.go`; todecimal and both parse_version references exact; result types per Kusto.Language |
 | Unary minus on any operand (`-(x)`, `-abs(x)`); previously only before a numeric literal | `parsePrimary` |
 | Result types of `iff`/`iif`/`case`/`coalesce`/`max_of`/`min_of` (common type of the results; were always string, splitting union columns and sorting numbers as text) and of `abs`/`round`/`ceiling`, `real()`/`double()`/`long()`/`int()` | `unifyResultTypes`; Kusto.Language result types. Two odm-pendants stored functions (LogicFrontier, LogicBrief) that failed on the string-typed `coalesce` now run |
+| Graph core: `graph-match` comma-separated sequences sharing node variables, repeated variables, anonymous `()`/`-->`/`<--`/`--`/`-[*a..b]->`, `*0..n`, `cycles=none/all/unique_edges`, `map`/`all`/`any`/`inner_nodes`; `make-graph with_node_id=` and two node tables | `graph_match.go` (traversal planned from the bound end of each element), `graph_parse.go`; every graph-match / make-graph / map / all / any / inner_nodes reference example exact (`graph_compliance_test.go`). Found on the way: `set_union`/`set_intersect`/`set_difference` sorted their result; ADX keeps first-seen order |
 
 ## P2 — real but less frequent
 
@@ -96,6 +97,13 @@ and ASIM parsers, which is this engine's main query population.
   Pattern-mining plugins (`autocluster`,
   `basket`, `diffpatterns`) have the same specification problem as
   `reduce` and need their algorithm pinned before work starts.
+
+- Graph, remaining. Tier 2: `graph-shortest-paths`,
+  `graph-mark-components`, `graph-to-table` `with_node_id=` /
+  `with_source_id=` / `with_target_id=` (ids are `hash(NodeId)`) and
+  nodes plus edges in one call, `make-graph ... partitioned-by Col (op)`.
+  Tier 3: persistent graph models (`.create-or-alter graph_model`,
+  `graph()` function, snapshots, `labels()`), which needs a design pass.
 
 ### Remaining plugin output schemas (Kusto.Language 12.4.1)
 

@@ -1422,9 +1422,23 @@ func setOperation(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row ty
 		arr1 = []interface{}{}
 	}
 
+	// Ordered sets: ADX keeps first-seen order (the first array's
+	// order, then each later array's new elements for union).
+	key := func(item interface{}) string {
+		k, err := json.Marshal(item)
+		if err != nil {
+			return fmt.Sprintf("%v", item)
+		}
+		return string(k)
+	}
+	var order []string
 	set1 := make(map[string]interface{})
 	for _, item := range arr1 {
-		set1[fmt.Sprintf("%v", item)] = item
+		k := key(item)
+		if _, dup := set1[k]; !dup {
+			set1[k] = item
+			order = append(order, k)
+		}
 	}
 
 	for _, arg := range fc.Args[1:] {
@@ -1433,27 +1447,25 @@ func setOperation(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row ty
 			return nil, true, err
 		}
 		arr, _ := parseJSONArray(v)
-		if arr == nil {
-			arr = []interface{}{}
-		}
-		set2 := make(map[string]interface{})
+		set2 := make(map[string]bool, len(arr))
 		for _, item := range arr {
-			set2[fmt.Sprintf("%v", item)] = item
-		}
-
-		switch op {
-		case "union":
-			for k, v := range set2 {
-				set1[k] = v
+			k := key(item)
+			if op == "union" {
+				if _, seen := set1[k]; !seen {
+					set1[k] = item
+					order = append(order, k)
+				}
+				continue
 			}
+			set2[k] = true
+		}
+		switch op {
 		case "intersect":
-			newSet := make(map[string]interface{})
-			for k, v := range set1 {
-				if _, exists := set2[k]; exists {
-					newSet[k] = v
+			for k := range set1 {
+				if !set2[k] {
+					delete(set1, k)
 				}
 			}
-			set1 = newSet
 		case "difference":
 			for k := range set2 {
 				delete(set1, k)
@@ -1462,13 +1474,11 @@ func setOperation(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row ty
 	}
 
 	result := make([]interface{}, 0, len(set1))
-	for _, v := range set1 {
-		result = append(result, v)
+	for _, k := range order {
+		if v, ok := set1[k]; ok {
+			result = append(result, v)
+		}
 	}
-	// Sort for deterministic output
-	sort.Slice(result, func(i, j int) bool {
-		return fmt.Sprintf("%v", result[i]) < fmt.Sprintf("%v", result[j])
-	})
 	b, _ := json.Marshal(result)
 	return string(b), true, nil
 }
