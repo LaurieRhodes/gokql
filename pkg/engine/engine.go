@@ -138,18 +138,6 @@ func (ctx *LetContext) LookupFunction(name string) (*parser.FunctionDef, bool) {
 	return ctx.Parent.LookupFunction(name)
 }
 
-// activeLetContext is the package-level reference to the current let context.
-// It exists because expression evaluation (evalExpr and the func_*.go
-// handlers) is package-level and cannot see the Engine; e.letContext and
-// this variable are kept in lockstep exclusively via Engine.setLetContext.
-// SINGLE-THREADED INVARIANT: one query executes at a time. This is safe
-// for Sprint 6 parallel extent scanning — the scan path (storage.go,
-// vortex_bridge.go, filter.go) touches no eval machinery and no package
-// state; only operator evaluation (serial, post-scan) reads this.
-// Threading a context through all ~224 evalExpr call sites is deferred
-// until concurrent query execution is actually needed.
-var activeLetContext *LetContext
-
 // Engine is the query execution engine.
 type Engine struct {
 	Catalog *catalog.Catalog
@@ -159,9 +147,16 @@ type Engine struct {
 	// sees other processes' commits, while one statement runs on one
 	// consistent snapshot. Atomic because materialized-view
 	// maintenance runs statements on background goroutines.
-	execDepth  atomic.Int32
-	letContext *LetContext // Active let bindings (set during compound execution)
-	Verbose    bool
+	execDepth atomic.Int32
+
+	// udfDepth guards user-function recursion (evalUserFunc);
+	// stmtEmbedder is the statement-scoped embedding memo
+	// (beginEmbedderScope). Per engine: the evaluator is threaded with
+	// its engine, so concurrent engines share no evaluation state.
+	udfDepth     int
+	stmtEmbedder embed.Embedder
+	letContext   *LetContext // Active let bindings (set during compound execution)
+	Verbose      bool
 
 	// extraResults collects the result tables after the first that
 	// fork and facet produce; ExecuteAll returns them.
@@ -193,10 +188,7 @@ type Engine struct {
 	// A per-instance field for the same reason ExternalResolver is one
 	// -- see its comment above. The embedding backend is host
 	// configuration, and a host running two engines against two
-	// different models must not have one clobber the other. The
-	// package-level activeEmbedder in embedder.go is a bridge for the
-	// scalar-function path only, and carries activeLetContext's
-	// existing caveat, not a new one.
+	// different models must not have one clobber the other.
 	Embedder embed.Embedder
 
 	// Ctx, when set by a host, makes long-running BULK operations
@@ -260,6 +252,31 @@ func New(cat *catalog.Catalog) *Engine {
 	}
 }
 
+// forNested returns an engine over another catalog that evaluates as
+// part of this engine's current statement (federation): same let
+// bindings, embedding memo and host configuration. It runs on this
+// statement's goroutine, so sharing is safe.
+func (e *Engine) forNested(cat *catalog.Catalog) *Engine {
+	n := e.forBackground()
+	n.Catalog = cat
+	n.letContext = e.letContext
+	n.stmtEmbedder = e.stmtEmbedder
+	n.udfDepth = e.udfDepth
+	return n
+}
+
+// forBackground returns an engine sharing this one's catalog and host
+// configuration but none of its per-statement evaluation state, for
+// work that runs concurrently with this engine's next statement.
+func (e *Engine) forBackground() *Engine {
+	bg := New(e.Catalog)
+	bg.Verbose = e.Verbose
+	bg.ExternalResolver = e.ExternalResolver
+	bg.Embedder = e.Embedder
+	bg.Ctx = e.Ctx
+	return bg
+}
+
 // getSharedDict returns the (lazily loaded, cached) shared dictionary
 // for a table+column, used to resolve kql.dictref-encoded columns at
 // read time. Cached once per Engine instance on first access — see
@@ -316,11 +333,7 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 	}
 	defer e.execDepth.Add(-1)
 
-	leaveEmbedderScope, err := e.beginEmbedderScope()
-	if err != nil {
-		return nil, err
-	}
-	defer leaveEmbedderScope()
+	defer e.beginEmbedderScope()()
 
 	switch s := stmt.(type) {
 	case *parser.CompoundStatement:
@@ -434,14 +447,21 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 
 // --- Query Execution ---
 
-// setLetContext installs (or clears, with nil) the active let context on
-// both the engine and the package-level activeLetContext in lockstep.
-// All context transitions MUST go through this so the two references
-// never diverge; executeCompound pairs it with defer so error paths
+// setLetContext installs (or clears, with nil) the engine's active let
+// context, which the evaluator reads through the engine it is threaded
+// with. executeCompound pairs it with defer so error paths
 // cannot leak bindings into subsequent statements.
 func (e *Engine) setLetContext(ctx *LetContext) {
 	e.letContext = ctx
-	activeLetContext = ctx
+}
+
+// lets returns the active let context; nil-safe, so code holding no
+// engine (eng == nil) sees no bindings.
+func (e *Engine) lets() *LetContext {
+	if e == nil {
+		return nil
+	}
+	return e.letContext
 }
 
 // executeCompound evaluates let bindings in order, then executes the final statement.
@@ -542,7 +562,7 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			if err != nil {
 				return nil, fmt.Errorf("let %s: %w", let.Name, err)
 			}
-			val, err := evalExpr(rewritten, &types.Schema{}, types.Row{})
+			val, err := evalExpr(e, rewritten, &types.Schema{}, types.Row{})
 			if err != nil {
 				return nil, fmt.Errorf("let %s: %w", let.Name, err)
 			}
@@ -555,7 +575,7 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			// timespan all share that representation internally).
 			// See LookupScalarType's own doc comment for the real,
 			// live bug this closes.
-			ctx.ScalarTypes[let.Name] = inferExprType(rewritten, &types.Schema{})
+			ctx.ScalarTypes[let.Name] = inferExprType(e, rewritten, &types.Schema{})
 
 		case *parser.FunctionDef:
 			// UDF: register for call resolution during expression evaluation
@@ -605,20 +625,8 @@ func (e *Engine) executeQuery(q *parser.Query) (*types.Table, error) {
 	// ONLY when this query's own pipeline actually contains an AsOp --
 	// applyAs (operators.go) is the only thing that can lazily create
 	// and install a LetContext mid-pipeline for a query with no `let`
-	// statements at all, and unconditionally wrapping EVERY query here
-	// (an earlier version of this fix did exactly that) turns out to
-	// be a real, live data race: e.setLetContext writes the package-
-	// level activeLetContext (see its own doc comment for exactly why
-	// that's shared, package-level state), and TestToScalarConcurrentEnginesUseCorrectOwnEngine
-	// runs many independent Engine instances truly concurrently on
-	// separate goroutines -- go test -race caught the unconditional
-	// version immediately, since every one of those goroutines' bare
-	// (no-`as`, no-`let`) queries would ALSO have written that shared
-	// variable via this same deferred call, even though nothing about
-	// their own execution needed to. Checking for AsOp up front keeps
-	// this scoped to exactly the queries that need it -- the vast
-	// majority of queries (no `as` at all) never touch activeLetContext
-	// here, identical to this function's behavior before `as` existed.
+	// statements at all; restore the previous context for exactly
+	// those queries.
 	if queryNeedsLetContextRestore(q.Operators) {
 		prevCtx := e.letContext
 		defer e.setLetContext(prevCtx)
@@ -794,7 +802,7 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	// exact vector predicates and typed accumulators — rows are never
 	// materialized. Falls back to the row engine when any predicate,
 	// aggregate, or by-expression is outside the supported set.
-	if plan := planColumnarAggregate(q.Operators, &tableDef.Schema); plan != nil {
+	if plan := planColumnarAggregate(e, q.Operators, &tableDef.Schema); plan != nil {
 		result, err := e.runColumnarAggregate(tableDef, plan)
 		if err != nil {
 			return nil, err
@@ -805,7 +813,7 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	// Columnar top-N fast path: scan → where → sort|take (or top) with
 	// per-extent bounded heaps over typed vectors. Only heap-resident
 	// rows are boxed; peak memory is one chunk plus N rows per extent.
-	if plan := planColumnarTopN(q.Operators, &tableDef.Schema); plan != nil {
+	if plan := planColumnarTopN(e, q.Operators, &tableDef.Schema); plan != nil {
 		result, err := e.runColumnarTopN(tableDef, plan, q.Operators)
 		if err != nil {
 			return nil, err
@@ -862,7 +870,7 @@ func (e *Engine) scanTableProjected(tableDef *catalog.Table, sourceName string, 
 	}
 
 	projectedSchema := buildProjectedSchema(&tableDef.Schema, scanCols)
-	zoneFilter := extractZoneFilter(operators, &tableDef.Schema)
+	zoneFilter := extractZoneFilter(e, operators, &tableDef.Schema)
 
 	if e.Verbose {
 		total := len(tableDef.Schema.Columns)

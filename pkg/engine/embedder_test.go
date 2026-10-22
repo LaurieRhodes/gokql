@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -391,67 +392,59 @@ func TestEmbedderDoesNotLeakBetweenEngines(t *testing.T) {
 	}
 }
 
-// TestConflictingConcurrentEmbeddersIsALoudError pins the one case
-// the reference-counted scope cannot resolve: two DIFFERENT backends
-// live at once. embed_text() has no way to know which engine called
-// it, so the only honest answers are "error" or "wrong vectors", and
-// wrong vectors are unrecoverable once written.
-func TestConflictingConcurrentEmbeddersIsALoudError(t *testing.T) {
-	outer := testEngine(t)
-	outer.SetEmbedder(embed.NewMock(8))
-	leave, err := outer.beginEmbedderScope()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer leave()
-
-	other := testEngine(t)
-	other.SetEmbedder(embed.NewMock(16)) // a different instance
-	if _, err := other.beginEmbedderScope(); !errors.Is(err, ErrConcurrentEmbedders) {
-		t.Fatalf("got %v, want ErrConcurrentEmbedders", err)
-	}
-}
-
-// TestUnconfiguredEnginesDoNotConflict guards the false positive that
-// the first version of the conflict check produced: defaultEmbedder()
-// returned a fresh instance per call, so two plain engines looked like
-// two different backends and every nested query failed.
-func TestUnconfiguredEnginesDoNotConflict(t *testing.T) {
-	os.Unsetenv("GOKQL_EMBED")
+// TestConcurrentEnginesKeepTheirOwnEmbedders: two engines with
+// different backends embed concurrently and each gets its own vectors.
+// This used to be refused with ErrConcurrentEmbedders, because
+// embed_text() reached the backend through a process-wide ambient and
+// could not tell which engine called it; the evaluator now carries its
+// engine.
+func TestConcurrentEnginesKeepTheirOwnEmbedders(t *testing.T) {
 	a, b := testEngine(t), testEngine(t)
-	leaveA, err := a.beginEmbedderScope()
-	if err != nil {
-		t.Fatal(err)
+	a.SetEmbedder(embed.NewMock(8))
+	b.SetEmbedder(embed.NewMock(16))
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, c := range []struct {
+		eng  *Engine
+		want string
+	}{{a, "8"}, {b, "16"}} {
+		wg.Add(1)
+		go func(eng *Engine, want string) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				tbl, err := runEngine(eng, `range r from 1 to 20 step 1 | extend n = array_length(embed_text(strcat("t", r))) | summarize max(n)`)
+				if err != nil {
+					errs <- err
+					return
+				}
+				if got := fmt.Sprint(tbl.Rows[0][0]); got != want {
+					errs <- fmt.Errorf("engine with %s-wide backend got %s-wide vectors", want, got)
+					return
+				}
+			}
+		}(c.eng, c.want)
 	}
-	defer leaveA()
-	leaveB, err := b.beginEmbedderScope()
-	if err != nil {
-		t.Fatalf("two unconfigured engines conflicted: %v", err)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
-	leaveB()
 }
 
-// TestScopeIsRefCountedNotRestored guards the save-and-restore bug:
-// the inner scope leaving must not tear down the outer one.
-func TestScopeIsRefCountedNotRestored(t *testing.T) {
+// TestNestedScopeKeepsOuterMemo: a nested statement's scope leaving
+// must not tear down the outer statement's memo.
+func TestNestedScopeKeepsOuterMemo(t *testing.T) {
 	eng := testEngine(t)
 	eng.SetEmbedder(embed.NewMock(8))
-
-	leaveOuter, err := eng.beginEmbedderScope()
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaveInner, err := eng.beginEmbedderScope()
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaveInner()
-	if getActiveEmbedder() == nil {
-		t.Fatal("inner scope leaving tore down the outer scope")
+	leaveOuter := eng.beginEmbedderScope()
+	outer := eng.stmtEmbedder
+	eng.beginEmbedderScope()()
+	if eng.stmtEmbedder != outer || outer == nil {
+		t.Fatal("inner scope leaving replaced or cleared the outer memo")
 	}
 	leaveOuter()
-	if getActiveEmbedder() != nil {
-		t.Fatal("last holder leaving did not end the scope")
+	if eng.stmtEmbedder != nil {
+		t.Fatal("outer scope leaving did not end the memo")
 	}
 }
 

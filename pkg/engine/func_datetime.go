@@ -10,7 +10,7 @@ import (
 )
 
 // evalDatetimeFunc handles datetime and timespan functions.
-func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "now":
 		return time.Now().UTC().UnixNano(), true, nil
@@ -55,7 +55,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("ago requires 1 argument (timespan)")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -67,7 +67,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) < 1 {
 			return nil, true, fmt.Errorf("%s requires at least 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -85,21 +85,21 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		return parsed, true, nil
 
 	case "bin", "floor", "bin_at":
-		return evalBin(fc, schema, row)
+		return evalBin(eng, fc, schema, row)
 
 	case "datetime_diff":
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("datetime_diff requires 3 arguments (part, dt1, dt2)")
 		}
-		partVal, err := evalExpr(fc.Args[0], schema, row)
+		partVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		dt1Val, err := evalExpr(fc.Args[1], schema, row)
+		dt1Val, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		dt2Val, err := evalExpr(fc.Args[2], schema, row)
+		dt2Val, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -135,7 +135,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("startofday requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -149,7 +149,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("startofweek requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -164,7 +164,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("startofmonth requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -178,7 +178,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("startofyear requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -192,7 +192,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("endofday requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -206,7 +206,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("endofweek requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -221,7 +221,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("endofmonth requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -235,11 +235,11 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("format_datetime requires 2 arguments")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		fmtVal, err := evalExpr(fc.Args[1], schema, row)
+		fmtVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -256,7 +256,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("format_timespan requires 1-2 arguments")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -266,7 +266,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		ticks := types.ToInt64(val) // 100ns ticks
 		fmtStr := "d.hh:mm:ss.fffffff"
 		if len(fc.Args) == 2 {
-			fmtVal, err := evalExpr(fc.Args[1], schema, row)
+			fmtVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -278,7 +278,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("dayofweek requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -293,7 +293,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -319,7 +319,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("unixtime_seconds_todatetime requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -333,7 +333,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("unixtime_milliseconds_todatetime requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -354,7 +354,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("unixtime_microseconds_todatetime requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -376,7 +376,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("unixtime_nanoseconds_todatetime requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -409,11 +409,11 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("datetime_local_to_utc requires 2 arguments (from, timezone)")
 		}
-		fromVal, err := evalExpr(fc.Args[0], schema, row)
+		fromVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		tzVal, err := evalExpr(fc.Args[1], schema, row)
+		tzVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -446,11 +446,11 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("datetime_utc_to_local requires 2 arguments (from, timezone)")
 		}
-		fromVal, err := evalExpr(fc.Args[0], schema, row)
+		fromVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		tzVal, err := evalExpr(fc.Args[1], schema, row)
+		tzVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -472,15 +472,15 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("datetime_add requires 3 arguments (part, amount, datetime)")
 		}
-		partVal, err := evalExpr(fc.Args[0], schema, row)
+		partVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		amountVal, err := evalExpr(fc.Args[1], schema, row)
+		amountVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		dtVal, err := evalExpr(fc.Args[2], schema, row)
+		dtVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -540,11 +540,11 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("%s requires 2 arguments (part, datetime)", fc.Name)
 		}
-		partVal, err := evalExpr(fc.Args[0], schema, row)
+		partVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		dtVal, err := evalExpr(fc.Args[1], schema, row)
+		dtVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -588,7 +588,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -615,7 +615,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		}
 		args := make([]int64, len(fc.Args))
 		for i, arg := range fc.Args {
-			v, err := evalExpr(arg, schema, row)
+			v, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -636,7 +636,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("endofyear requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -650,7 +650,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("dayofyear requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -664,7 +664,7 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("weekofyear requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}

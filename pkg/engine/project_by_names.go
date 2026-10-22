@@ -37,7 +37,7 @@ func (e *Engine) applyProjectByNames(input *types.Table, op *parser.ProjectByNam
 			continue
 		}
 
-		val, err := evalExpr(spec.Expr, &emptySchema, emptyRow)
+		val, err := evalExpr(e, spec.Expr, &emptySchema, emptyRow)
 		if err != nil {
 			return nil, fmt.Errorf("project-by-names: %w", err)
 		}

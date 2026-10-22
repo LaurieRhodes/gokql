@@ -41,17 +41,17 @@ func init() {
 
 // pluginScalar evaluates a constant plugin argument (literals, let
 // scalars, constant expressions) and returns it with its static type.
-func pluginScalar(text string) (types.Value, types.KQLType, error) {
+func pluginScalar(eng *Engine, text string) (types.Value, types.KQLType, error) {
 	expr, err := parser.ParseExpr(strings.TrimSpace(text))
 	if err != nil {
 		return nil, 0, err
 	}
 	empty := &types.Schema{}
-	v, err := evalExpr(expr, empty, types.Row{})
+	v, err := evalExpr(eng, expr, empty, types.Row{})
 	if err != nil {
 		return nil, 0, err
 	}
-	return v, inferExprType(expr, empty), nil
+	return v, inferExprType(eng, expr, empty), nil
 }
 
 func pluginColumn(in *types.Table, plugin, which, name string) (int, error) {
@@ -157,7 +157,7 @@ func applySlidingWindowCounts(e *Engine, in *types.Table, args []string, _ *type
 	var sv [4]types.Value
 	var st [4]types.KQLType
 	for i, a := range args[2:6] {
-		v, vt, err := pluginScalar(a)
+		v, vt, err := pluginScalar(e, a)
 		if err != nil {
 			return nil, fmt.Errorf("%s: argument %d: %w", name, i+3, err)
 		}
@@ -243,7 +243,7 @@ func applyRollingPercentile(e *Engine, in *types.Table, args []string, _ *types.
 	if err != nil {
 		return nil, err
 	}
-	pv, _, err := pluginScalar(args[1])
+	pv, _, err := pluginScalar(e, args[1])
 	if err != nil || pv == nil {
 		return nil, fmt.Errorf("%s: Percentile: must be a number", name)
 	}
@@ -253,7 +253,7 @@ func applyRollingPercentile(e *Engine, in *types.Table, args []string, _ *types.
 		return nil, err
 	}
 	axis := in.Schema.Columns[iCol].Type
-	bv, bt, err := pluginScalar(args[3])
+	bv, bt, err := pluginScalar(e, args[3])
 	if err != nil || bv == nil {
 		return nil, fmt.Errorf("%s: BinSize: must be a number or timespan", name)
 	}
@@ -266,7 +266,7 @@ func applyRollingPercentile(e *Engine, in *types.Table, args []string, _ *types.
 	if err != nil {
 		return nil, fmt.Errorf("%s: BinSize: %w", name, err)
 	}
-	nv, _, err := pluginScalar(args[4])
+	nv, _, err := pluginScalar(e, args[4])
 	if err != nil || nv == nil {
 		return nil, fmt.Errorf("%s: BinsPerWindow: must be an integer", name)
 	}

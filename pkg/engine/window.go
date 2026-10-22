@@ -178,25 +178,25 @@ func newWindowEval(schema *types.Schema, rows []types.Row) *windowEval {
 }
 
 // valueAt evaluates expr at row i.
-func (w *windowEval) valueAt(expr parser.Expr, i int) (types.Value, error) {
+func (w *windowEval) valueAt(eng *Engine, expr parser.Expr, i int) (types.Value, error) {
 	rewritten, err := rewriteExpr(expr, func(e parser.Expr) (parser.Expr, error) {
 		fc, ok := e.(*parser.FuncCall)
 		if !ok || !windowFuncNames[fc.Name] {
 			return nil, nil
 		}
-		v, err := w.windowAt(fc, i)
+		v, err := w.windowAt(eng, fc, i)
 		if err != nil {
 			return nil, err
 		}
-		return &parser.Literal{Value: v, Type: inferExprType(fc, w.schema)}, nil
+		return &parser.Literal{Value: v, Type: inferExprType(eng, fc, w.schema)}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return evalExpr(rewritten, w.schema, w.rows[i])
+	return evalExpr(eng, rewritten, w.schema, w.rows[i])
 }
 
-func (w *windowEval) windowAt(fc *parser.FuncCall, i int) (types.Value, error) {
+func (w *windowEval) windowAt(eng *Engine, fc *parser.FuncCall, i int) (types.Value, error) {
 	switch fc.Name {
 	case "prev", "next":
 		if len(fc.Args) < 1 || len(fc.Args) > 3 {
@@ -204,7 +204,7 @@ func (w *windowEval) windowAt(fc *parser.FuncCall, i int) (types.Value, error) {
 		}
 		offset := int64(1)
 		if len(fc.Args) >= 2 {
-			v, err := w.valueAt(fc.Args[1], i)
+			v, err := w.valueAt(eng, fc.Args[1], i)
 			if err != nil {
 				return nil, err
 			}
@@ -220,16 +220,16 @@ func (w *windowEval) windowAt(fc *parser.FuncCall, i int) (types.Value, error) {
 		}
 		if j < 0 || j >= len(w.rows) {
 			if len(fc.Args) == 3 {
-				return w.valueAt(fc.Args[2], i)
+				return w.valueAt(eng, fc.Args[2], i)
 			}
 			return nil, nil
 		}
-		return w.valueAt(fc.Args[0], j)
+		return w.valueAt(eng, fc.Args[0], j)
 	}
 	col, ok := w.cols[fc]
 	if !ok {
 		var err error
-		if col, err = w.computeColumn(fc); err != nil {
+		if col, err = w.computeColumn(eng, fc); err != nil {
 			return nil, err
 		}
 		w.cols[fc] = col
@@ -238,10 +238,10 @@ func (w *windowEval) windowAt(fc *parser.FuncCall, i int) (types.Value, error) {
 }
 
 // computeColumn evaluates a stateful window function over every row.
-func (w *windowEval) computeColumn(fc *parser.FuncCall) ([]types.Value, error) {
+func (w *windowEval) computeColumn(eng *Engine, fc *parser.FuncCall) ([]types.Value, error) {
 	n := len(w.rows)
 	out := make([]types.Value, n)
-	arg := func(k, i int) (types.Value, error) { return w.valueAt(fc.Args[k], i) }
+	arg := func(k, i int) (types.Value, error) { return w.valueAt(eng, fc.Args[k], i) }
 	restartAt := func(k, i int) (bool, error) {
 		if len(fc.Args) <= k {
 			return false, nil
@@ -295,7 +295,7 @@ func (w *windowEval) computeColumn(fc *parser.FuncCall) ([]types.Value, error) {
 		if err := argc(1, 2); err != nil {
 			return nil, err
 		}
-		integral := sumIsIntegral(fc.Args[0], w.schema)
+		integral := sumIsIntegral(eng, fc.Args[0], w.schema)
 		var isum int64
 		var fsum float64
 		for i := 0; i < n; i++ {
@@ -332,7 +332,7 @@ func (w *windowEval) computeColumn(fc *parser.FuncCall) ([]types.Value, error) {
 		if err := argc(1, 2); err != nil {
 			return nil, err
 		}
-		termType := inferExprType(fc.Args[0], w.schema)
+		termType := inferExprType(eng, fc.Args[0], w.schema)
 		var prev types.Value
 		var rank, pos int64
 		for i := 0; i < n; i++ {
@@ -440,9 +440,9 @@ func newRowEvaluator(schema *types.Schema, rows []types.Row, exprs ...parser.Exp
 	return re
 }
 
-func (re *rowEvaluator) eval(expr parser.Expr, i int, row types.Row) (types.Value, error) {
+func (re *rowEvaluator) eval(eng *Engine, expr parser.Expr, i int, row types.Row) (types.Value, error) {
 	if re.has[expr] {
-		return re.w.valueAt(expr, i)
+		return re.w.valueAt(eng, expr, i)
 	}
-	return evalExpr(expr, re.schema, row)
+	return evalExpr(eng, expr, re.schema, row)
 }

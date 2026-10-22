@@ -162,7 +162,7 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	if cmd.Where != nil {
 		kept := allRows[:0]
 		for _, row := range allRows {
-			val, err := evalExpr(cmd.Where, &tableDef.Schema, row)
+			val, err := evalExpr(e, cmd.Where, &tableDef.Schema, row)
 			if err != nil {
 				return nil, fmt.Errorf(".compact: where: %w", err)
 			}

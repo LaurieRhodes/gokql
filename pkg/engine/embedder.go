@@ -18,7 +18,6 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -90,110 +89,22 @@ func (o *ollamaEmbedder) WithModel(model string) (embed.Embedder, error) {
 
 // --- resolution ---
 
-// activeEmbedder mirrors activeLetContext's existing pattern: scalar
-// function evaluation (evalFunc and everything below it) has no Engine
-// receiver, so an ambient package-level reference is the only way to
-// reach per-engine state from inside embed_text() without threading an
-// *Engine through evalExpr's entire call graph.
-//
-// This carries the same caveat activeLetContext already documents and
-// that ExternalResolver's comment warns about: two Engine instances
-// embedding concurrently would race here. That is not a new hazard
-// introduced by this change -- today's code has the identical problem
-// via the package-level EmbedEndpoint, only without a field to fix it
-// from. The field on Engine is the durable answer; the ambient is the
-// bridge until evalExpr takes a context.
-// activeEmbedding is the process-wide, reference-counted embedding
-// scope for the scalar embed_text() path.
-//
-// REFERENCE COUNTED, not save-and-restore. Two earlier versions of
-// this were wrong, both found by running the suite rather than by
-// reading it:
-//
-//  1. SetEmbedder published to the ambient directly, so one engine's
-//     backend became every later engine's backend for the life of the
-//     process. Three unrelated tests passed when they should have
-//     failed.
-//  2. Execute then saved the previous value on entry and restored it
-//     on exit. That is the classic broken pattern under concurrency:
-//     engine A captures nil, engine B installs, A finishes and
-//     restores nil, and B -- still mid-statement -- silently falls
-//     through to the default backend. It failed exactly that way with
-//     eight goroutines sharing ONE embedder, which is the supported
-//     configuration.
-//
-// Counting fixes the supported case properly: the scope is installed
-// on the first entry and torn down only when the last holder leaves,
-// so concurrent engines sharing a backend all see it for their whole
-// statement. The unsupported case -- two DIFFERENT backends live at
-// once -- is now a loud error instead of a silent wrong backend,
-// because there is no correct answer available to a function that
-// cannot see which engine called it.
-//
-// The durable fix remains an evaluation context threaded through
-// evalExpr's 319 call sites, which would make this whole variable
-// unnecessary along with activeLetContext.
-type activeEmbedding struct {
-	base  embed.Embedder // identity used to detect a conflicting backend
-	em    embed.Embedder // the memo-wrapped embedder actually used
-	depth int            // live holders; the scope ends when this hits 0
-}
-
-var (
-	activeEmbedderMu sync.Mutex
-	activeEmbedder   *activeEmbedding
-)
-
-// ErrConcurrentEmbedders reports two different embedding backends live
-// in one process at the same time.
-var ErrConcurrentEmbedders = errors.New(
-	"two different embedding backends are active concurrently in this process; " +
-		"embed_text() cannot tell which engine called it. Use one embedder per process, " +
-		"or serialise the statements that call embed_text()")
-
-// SetEmbedder sets the backend for this engine only. It deliberately
-// does NOT publish to the ambient: see activeEmbedding above.
+// SetEmbedder sets the backend for this engine only.
 func (e *Engine) SetEmbedder(em embed.Embedder) { e.Embedder = em }
 
-// beginEmbedderScope joins (or opens) the embedding scope for one
-// statement and returns the leave function. The error is non-nil only
-// for the genuinely ambiguous case described on
+// beginEmbedderScope installs a statement-scoped memo in front of this
+// engine's backend for the outermost statement and returns the leave
+// function; nested statements share it. The memo is per engine: the
+// evaluator reaches it through the engine it is threaded with, so two
+// engines with different backends run concurrently without seeing
+// each other's. An earlier process-wide ambient refused that case with
 // ErrConcurrentEmbedders.
-func (e *Engine) beginEmbedderScope() (func(), error) {
-	base := e.resolveEmbedder()
-
-	activeEmbedderMu.Lock()
-	defer activeEmbedderMu.Unlock()
-
-	if activeEmbedder == nil {
-		activeEmbedder = &activeEmbedding{base: base, em: embed.NewCaching(base), depth: 1}
-	} else {
-		if activeEmbedder.base != base {
-			return nil, ErrConcurrentEmbedders
-		}
-		activeEmbedder.depth++
+func (e *Engine) beginEmbedderScope() func() {
+	if e.stmtEmbedder != nil {
+		return func() {}
 	}
-
-	return func() {
-		activeEmbedderMu.Lock()
-		defer activeEmbedderMu.Unlock()
-		if activeEmbedder == nil {
-			return
-		}
-		activeEmbedder.depth--
-		if activeEmbedder.depth <= 0 {
-			activeEmbedder = nil
-		}
-	}, nil
-}
-
-func getActiveEmbedder() embed.Embedder {
-	activeEmbedderMu.Lock()
-	defer activeEmbedderMu.Unlock()
-	if activeEmbedder == nil {
-		return nil
-	}
-	return activeEmbedder.em
+	e.stmtEmbedder = embed.NewCaching(e.resolveEmbedder())
+	return func() { e.stmtEmbedder = nil }
 }
 
 // resolveEmbedder returns the embedder for this engine, falling back
@@ -206,17 +117,14 @@ func (e *Engine) resolveEmbedder() embed.Embedder {
 	return defaultEmbedder()
 }
 
-// currentEmbedder is what the scalar embed_text() path calls. It
-// prefers the ambient (set by Execute) and falls back to the default,
-// so a direct evalExpr call in a test still works.
-func currentEmbedder() embed.Embedder {
-	if em := getActiveEmbedder(); em != nil {
-		return em
+// currentEmbedder is what the scalar embed_text() path calls: the
+// statement's memoised embedder, or, outside a statement (a direct
+// evalExpr call in a test), a memo over the engine's backend.
+func (e *Engine) currentEmbedder() embed.Embedder {
+	if e != nil && e.stmtEmbedder != nil {
+		return e.stmtEmbedder
 	}
-	// No statement-scoped embedder installed (a direct evalExpr call
-	// in a test, say). Wrap the default so even this path does not
-	// issue one request per row for a constant argument.
-	return embed.NewCaching(defaultEmbedder())
+	return embed.NewCaching(e.resolveEmbedder())
 }
 
 // defaultEmbedder builds an embedder from GOKQL_EMBED, or the Ollama

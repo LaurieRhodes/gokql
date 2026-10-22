@@ -228,7 +228,7 @@ func applyNarrowPlugin(e *Engine, input *types.Table, args []string, _ *types.Sc
 	}
 	for i, r := range input.Rows {
 		for j, c := range input.Schema.Columns {
-			v, err := evalExpr(calls[j], &input.Schema, r)
+			v, err := evalExpr(e, calls[j], &input.Schema, r)
 			if err != nil {
 				return nil, fmt.Errorf("narrow: %w", err)
 			}

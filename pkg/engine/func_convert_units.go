@@ -25,7 +25,7 @@ func init() {
 	convertUnits["convert_volume"]["acrefoot"] = unitAffine{a: 1 / 0.000810714, b: 0}
 }
 
-func evalConvertUnitsFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalConvertUnitsFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	table, ok := convertUnits[fc.Name]
 	if !ok {
 		return nil, false, nil
@@ -35,7 +35,7 @@ func evalConvertUnitsFunc(fc *parser.FuncCall, schema *types.Schema, row types.R
 	}
 	vals := make([]types.Value, 3)
 	for i, a := range fc.Args {
-		v, err := evalExpr(a, schema, row)
+		v, err := evalExpr(eng, a, schema, row)
 		if err != nil {
 			return nil, true, err
 		}

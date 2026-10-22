@@ -12,13 +12,13 @@ import (
 )
 
 // evalStringFunc handles string manipulation functions.
-func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "strlen":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("strlen requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -31,7 +31,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("tolower requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -44,7 +44,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("toupper requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -56,7 +56,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 	case "strcat":
 		var sb strings.Builder
 		for _, arg := range fc.Args {
-			str, _, err := exprToString(arg, schema, row)
+			str, _, err := exprToString(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -68,7 +68,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("substring requires 2 or 3 arguments")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -76,7 +76,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 			return nil, true, nil
 		}
 		s := fmt.Sprintf("%v", val)
-		startVal, err := evalExpr(fc.Args[1], schema, row)
+		startVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -88,7 +88,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 			return "", true, nil
 		}
 		if len(fc.Args) == 3 {
-			lenVal, err := evalExpr(fc.Args[2], schema, row)
+			lenVal, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -105,14 +105,14 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("split requires 2 arguments")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		if val == nil {
 			return nil, true, nil
 		}
-		delimVal, err := evalExpr(fc.Args[1], schema, row)
+		delimVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -148,15 +148,15 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 3 || len(fc.Args) > 4 {
 			return nil, true, fmt.Errorf("extract requires 3-4 arguments (regex, captureGroup, source [, typeLiteral])")
 		}
-		regexVal, err := evalExpr(fc.Args[0], schema, row)
+		regexVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		groupVal, err := evalExpr(fc.Args[1], schema, row)
+		groupVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		sourceVal, err := evalExpr(fc.Args[2], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -174,7 +174,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		matched := matches[group]
 		if len(fc.Args) == 4 {
-			typeVal, err := evalExpr(fc.Args[3], schema, row)
+			typeVal, err := evalExpr(eng, fc.Args[3], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -220,23 +220,23 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("extract_all requires 2-3 arguments")
 		}
-		regexVal, err := evalExpr(fc.Args[0], schema, row)
+		regexVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		var captureGroupsVal types.Value
 		var sourceVal types.Value
 		if len(fc.Args) == 3 {
-			captureGroupsVal, err = evalExpr(fc.Args[1], schema, row)
+			captureGroupsVal, err = evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
-			sourceVal, err = evalExpr(fc.Args[2], schema, row)
+			sourceVal, err = evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
 		} else {
-			sourceVal, err = evalExpr(fc.Args[1], schema, row)
+			sourceVal, err = evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -324,15 +324,15 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("replace_string requires 3 arguments")
 		}
-		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		lookupVal, err := evalExpr(fc.Args[1], schema, row)
+		lookupVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		rewriteVal, err := evalExpr(fc.Args[2], schema, row)
+		rewriteVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -368,15 +368,15 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("replace_regex requires 3 arguments")
 		}
-		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		regexVal, err := evalExpr(fc.Args[1], schema, row)
+		regexVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		rewriteVal, err := evalExpr(fc.Args[2], schema, row)
+		rewriteVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -402,7 +402,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("regex_quote requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -441,18 +441,18 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("replace_strings requires 3 arguments (text, lookups, rewrites)")
 		}
-		textVal, err := evalExpr(fc.Args[0], schema, row)
+		textVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		if textVal == nil {
 			return nil, true, nil
 		}
-		lookupsVal, err := evalExpr(fc.Args[1], schema, row)
+		lookupsVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		rewritesVal, err := evalExpr(fc.Args[2], schema, row)
+		rewritesVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -480,7 +480,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -504,7 +504,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("unicode_codepoints_to_string requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -525,7 +525,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isascii requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -548,7 +548,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isutf8 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -561,11 +561,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("trim requires 2 arguments")
 		}
-		regexVal, err := evalExpr(fc.Args[0], schema, row)
+		regexVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		sourceVal, err := evalExpr(fc.Args[1], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -588,11 +588,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("trim_start requires 2 arguments")
 		}
-		regexVal, err := evalExpr(fc.Args[0], schema, row)
+		regexVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		sourceVal, err := evalExpr(fc.Args[1], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -609,11 +609,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("trim_end requires 2 arguments")
 		}
-		regexVal, err := evalExpr(fc.Args[0], schema, row)
+		regexVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		sourceVal, err := evalExpr(fc.Args[1], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -630,11 +630,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("indexof requires at least 2 arguments")
 		}
-		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		lookupVal, err := evalExpr(fc.Args[1], schema, row)
+		lookupVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -645,7 +645,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		lookup := fmt.Sprintf("%v", lookupVal)
 		start := 0
 		if len(fc.Args) >= 3 {
-			sv, _ := evalExpr(fc.Args[2], schema, row)
+			sv, _ := evalExpr(eng, fc.Args[2], schema, row)
 			start = int(types.ToInt64(sv))
 		}
 		if start >= len(s) {
@@ -691,11 +691,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 2 || len(fc.Args) > 5 {
 			return nil, true, fmt.Errorf("indexof_regex requires 2-5 arguments (string, match [, start [, length [, occurrence]]])")
 		}
-		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		matchVal, err := evalExpr(fc.Args[1], schema, row)
+		matchVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -709,7 +709,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		start := 0
 		if len(fc.Args) >= 3 {
-			sv, err := evalExpr(fc.Args[2], schema, row)
+			sv, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -717,7 +717,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		length := -1
 		if len(fc.Args) >= 4 {
-			lv, err := evalExpr(fc.Args[3], schema, row)
+			lv, err := evalExpr(eng, fc.Args[3], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -725,7 +725,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		}
 		occurrence := 1
 		if len(fc.Args) >= 5 {
-			ov, err := evalExpr(fc.Args[4], schema, row)
+			ov, err := evalExpr(eng, fc.Args[4], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -766,11 +766,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("has_any_index requires 2 arguments (source, values)")
 		}
-		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		valuesVal, err := evalExpr(fc.Args[1], schema, row)
+		valuesVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -794,11 +794,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("countof requires 2 arguments")
 		}
-		sourceVal, err := evalExpr(fc.Args[0], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		searchVal, err := evalExpr(fc.Args[1], schema, row)
+		searchVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -811,7 +811,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("reverse requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -828,7 +828,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isempty requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -841,7 +841,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isnotempty requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -854,11 +854,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("strcmp requires 2 arguments")
 		}
-		v1, err := evalExpr(fc.Args[0], schema, row)
+		v1, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		v2, err := evalExpr(fc.Args[1], schema, row)
+		v2, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -871,14 +871,14 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("strrep requires 2 or 3 arguments")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		if val == nil {
 			return nil, true, nil
 		}
-		countVal, err := evalExpr(fc.Args[1], schema, row)
+		countVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -889,7 +889,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		s := fmt.Sprintf("%v", val)
 		delim := ""
 		if len(fc.Args) == 3 {
-			dv, err := evalExpr(fc.Args[2], schema, row)
+			dv, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -906,15 +906,15 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("translate requires 3 arguments")
 		}
-		searchVal, err := evalExpr(fc.Args[0], schema, row)
+		searchVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		replaceVal, err := evalExpr(fc.Args[1], schema, row)
+		replaceVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		sourceVal, err := evalExpr(fc.Args[2], schema, row)
+		sourceVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -948,14 +948,14 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("strcat_delim requires at least 2 arguments")
 		}
-		delimVal, err := evalExpr(fc.Args[0], schema, row)
+		delimVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		delim := fmt.Sprintf("%v", delimVal)
 		var parts []string
 		for _, arg := range fc.Args[1:] {
-			s, notNull, err := exprToString(arg, schema, row)
+			s, notNull, err := exprToString(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -969,7 +969,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("url_decode requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -988,7 +988,7 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("string_size requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}

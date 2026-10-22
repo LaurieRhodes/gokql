@@ -193,7 +193,7 @@ func isASCII(s string) bool {
 	return true
 }
 
-func evalPunycodeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalPunycodeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "punycode_from_string", "punycode_to_string", "punycode_domain_to_string", "punycode_domain_from_string":
 	default:
@@ -202,7 +202,7 @@ func evalPunycodeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 	if len(fc.Args) != 1 {
 		return nil, true, fmt.Errorf("%s: expected 1 argument", fc.Name)
 	}
-	v, err := evalExpr(fc.Args[0], schema, row)
+	v, err := evalExpr(eng, fc.Args[0], schema, row)
 	if err != nil {
 		return nil, true, err
 	}

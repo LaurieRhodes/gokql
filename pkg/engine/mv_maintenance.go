@@ -169,7 +169,12 @@ func (e *Engine) triggerMaterializedViewMaintenance(sourceTable string, deltaRow
 			// keeping SOME visibility path permanently, not removing
 			// it back to full silence, given how directly that
 			// silence contributed to the bug staying hidden.
-			if mergeErr := e.mergeMaterializedView(mv, deltaRows, sourceSchema); mergeErr != nil && e.Verbose {
+			// Its own engine: this runs concurrently with whatever the
+			// caller's engine executes next, and an engine's
+			// evaluation state (let bindings, UDF depth, embedding
+			// memo) belongs to one statement at a time.
+			bg := e.forBackground()
+			if mergeErr := bg.mergeMaterializedView(mv, deltaRows, sourceSchema); mergeErr != nil && e.Verbose {
 				fmt.Fprintf(os.Stderr, "[mv] materialized view %q: maintenance failed, view left stale: %v\n", mv.Name, mergeErr)
 			}
 		}()

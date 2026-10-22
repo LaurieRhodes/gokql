@@ -38,46 +38,46 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-func evalSeriesFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalSeriesFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 
 	// --- Tier 1: arithmetic (series1, series2) -> dynamic ---
 	case "series_add", "series_subtract", "series_multiply", "series_divide", "series_pow":
-		return evalSeriesBinaryNumeric(fc, schema, row)
+		return evalSeriesBinaryNumeric(eng, fc, schema, row)
 
 	// --- Tier 1: comparison (series1, series2) -> dynamic of bool ---
 	case "series_equals", "series_not_equals", "series_less", "series_less_equals",
 		"series_greater", "series_greater_equals":
-		return evalSeriesBinaryBool(fc, schema, row)
+		return evalSeriesBinaryBool(eng, fc, schema, row)
 
 	// --- Tier 1: unary math (series) -> dynamic ---
 	case "series_abs", "series_sign", "series_ceiling", "series_floor",
 		"series_log", "series_exp",
 		"series_sin", "series_cos", "series_tan",
 		"series_asin", "series_acos", "series_atan":
-		return evalSeriesUnary(fc, schema, row)
+		return evalSeriesUnary(eng, fc, schema, row)
 
 	// --- Tier 2: gap filling ---
 	case "series_fill_forward":
-		return evalSeriesFillForward(fc, schema, row)
+		return evalSeriesFillForward(eng, fc, schema, row)
 	case "series_fill_backward":
-		return evalSeriesFillBackward(fc, schema, row)
+		return evalSeriesFillBackward(eng, fc, schema, row)
 	case "series_fill_const":
-		return evalSeriesFillConst(fc, schema, row)
+		return evalSeriesFillConst(eng, fc, schema, row)
 	case "series_fill_linear":
-		return evalSeriesFillLinear(fc, schema, row)
+		return evalSeriesFillLinear(eng, fc, schema, row)
 
 	// --- Tier 3: summary statistics ---
 	case "series_sum":
-		return evalSeriesSum(fc, schema, row)
+		return evalSeriesSum(eng, fc, schema, row)
 	case "series_product":
-		return evalSeriesProduct(fc, schema, row)
+		return evalSeriesProduct(eng, fc, schema, row)
 	case "series_magnitude":
-		return evalSeriesMagnitude(fc, schema, row)
+		return evalSeriesMagnitude(eng, fc, schema, row)
 	case "series_pearson_correlation":
-		return evalSeriesPearsonCorrelation(fc, schema, row)
+		return evalSeriesPearsonCorrelation(eng, fc, schema, row)
 	case "series_stats_dynamic":
-		return evalSeriesStatsDynamic(fc, schema, row)
+		return evalSeriesStatsDynamic(eng, fc, schema, row)
 
 		// series_stats (NOT series_stats_dynamic) is deliberately NOT
 		// implemented — see this file's own Tier 3 section comment below
@@ -127,8 +127,8 @@ func evalSeriesFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 // own explicitly documented "yields a null result" rule for arrays of
 // different sizes) instead.
 
-func evalSeriesSum(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesSum(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -144,8 +144,8 @@ func evalSeriesSum(fc *parser.FuncCall, schema *types.Schema, row types.Row) (ty
 	return sum, true, nil
 }
 
-func evalSeriesProduct(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesProduct(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -166,8 +166,8 @@ func evalSeriesProduct(fc *parser.FuncCall, schema *types.Schema, row types.Row)
 // directly against real ADX's own docs before writing this as
 // math.Sqrt(sum of squares) rather than assumed from the function
 // name alone.
-func evalSeriesMagnitude(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesMagnitude(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -193,8 +193,8 @@ func evalSeriesMagnitude(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 // anywhere fails the whole computation closed, matching that wording
 // exactly rather than reusing the single-array functions' own
 // skip-nulls assumption.
-func evalSeriesPearsonCorrelation(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	a, b, ok, err := evalSeriesTwoArrayArgs(fc, schema, row)
+func evalSeriesPearsonCorrelation(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	a, b, ok, err := evalSeriesTwoArrayArgs(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -259,8 +259,8 @@ func evalSeriesPearsonCorrelation(fc *parser.FuncCall, schema *types.Schema, row
 // engine's own normal arithmetic paths to exercise the parameter's
 // real distinction against, so it's accepted syntactically (to avoid
 // a hard error on a real, valid call) without changing behavior.
-func evalSeriesStatsDynamic(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesStatsDynamic(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -353,15 +353,15 @@ func seriesElementToFloat(el interface{}) (float64, bool) {
 // nil value, no error) covers every real-ADX-documented "the result is
 // null" case a caller should just pass through: either argument itself
 // null, or not decodable as a JSON array at all.
-func evalSeriesTwoArrayArgs(fc *parser.FuncCall, schema *types.Schema, row types.Row) (a, b []interface{}, ok bool, err error) {
+func evalSeriesTwoArrayArgs(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (a, b []interface{}, ok bool, err error) {
 	if len(fc.Args) != 2 {
 		return nil, nil, false, fmt.Errorf("%s requires 2 arguments (series1, series2)", fc.Name)
 	}
-	aVal, err := evalExpr(fc.Args[0], schema, row)
+	aVal, err := evalExpr(eng, fc.Args[0], schema, row)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	bVal, err := evalExpr(fc.Args[1], schema, row)
+	bVal, err := evalExpr(eng, fc.Args[1], schema, row)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -383,8 +383,8 @@ func evalSeriesTwoArrayArgs(fc *parser.FuncCall, schema *types.Schema, row types
 // verified against series_multiply's own real-ADX worked example:
 // s1=[1,2,4], s2=[4,2,1] -> s1_multiply_s2=[4,4,4] (element-wise:
 // 1*4=4, 2*2=4, 4*1=4).
-func evalSeriesBinaryNumeric(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	a, b, ok, err := evalSeriesTwoArrayArgs(fc, schema, row)
+func evalSeriesBinaryNumeric(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	a, b, ok, err := evalSeriesTwoArrayArgs(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -442,8 +442,8 @@ func evalSeriesBinaryNumeric(fc *parser.FuncCall, schema *types.Schema, row type
 // directly against real ADX's own series_greater_equals docs — "Dynamic
 // array of booleans..." — not 1.0/0.0 floats). Same length/null rules
 // as evalSeriesBinaryNumeric.
-func evalSeriesBinaryBool(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	a, b, ok, err := evalSeriesTwoArrayArgs(fc, schema, row)
+func evalSeriesBinaryBool(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	a, b, ok, err := evalSeriesTwoArrayArgs(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -494,11 +494,11 @@ func evalSeriesBinaryBool(fc *parser.FuncCall, schema *types.Schema, row types.R
 // functions (func_convert.go) — confirmed live before assuming, not
 // copied blindly: log(e)=1, exp(1)=e, log10(1000)=3, exp10(2)=100 all
 // check out already.
-func evalSeriesUnary(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalSeriesUnary(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if len(fc.Args) != 1 {
 		return nil, true, fmt.Errorf("%s requires 1 argument (series)", fc.Name)
 	}
-	val, err := evalExpr(fc.Args[0], schema, row)
+	val, err := evalExpr(eng, fc.Args[0], schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -575,11 +575,11 @@ func marshalSeriesArray(out []interface{}) (types.Value, bool, error) {
 
 // evalSeriesFillArrayArg evaluates the mandatory first argument
 // (series, a dynamic array) shared by all four fill functions.
-func evalSeriesFillArrayArg(fc *parser.FuncCall, schema *types.Schema, row types.Row) ([]interface{}, bool, error) {
+func evalSeriesFillArrayArg(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) ([]interface{}, bool, error) {
 	if len(fc.Args) == 0 {
 		return nil, false, fmt.Errorf("%s requires at least 1 argument (series)", fc.Name)
 	}
-	val, err := evalExpr(fc.Args[0], schema, row)
+	val, err := evalExpr(eng, fc.Args[0], schema, row)
 	if err != nil {
 		return nil, false, err
 	}
@@ -615,15 +615,15 @@ func elementMatchesPlaceholder(el interface{}, placeholder types.Value) bool {
 // (see that function's own comment) rather than against a fetched
 // example for THIS direction specifically, since the two are simple
 // mirror images of the same algorithm.
-func evalSeriesFillForward(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesFillForward(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
 	if !ok {
 		return nil, true, nil
 	}
-	placeholder, err := seriesOptionalPlaceholderArg(fc, schema, row, 1)
+	placeholder, err := seriesOptionalPlaceholderArg(eng, fc, schema, row, 1)
 	if err != nil {
 		return nil, true, err
 	}
@@ -656,15 +656,15 @@ func evalSeriesFillForward(fc *parser.FuncCall, schema *types.Schema, row types.
 // [111,36,36,41,16,16,16,61,33,null,null] — traced by hand against
 // this implementation's own right-to-left scan before trusting it,
 // not assumed to match from the algorithm description alone.
-func evalSeriesFillBackward(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesFillBackward(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
 	if !ok {
 		return nil, true, nil
 	}
-	placeholder, err := seriesOptionalPlaceholderArg(fc, schema, row, 1)
+	placeholder, err := seriesOptionalPlaceholderArg(eng, fc, schema, row, 1)
 	if err != nil {
 		return nil, true, err
 	}
@@ -692,22 +692,22 @@ func evalSeriesFillBackward(fc *parser.FuncCall, schema *types.Schema, row types
 // constant_value[, missing_value_placeholder]) — every placeholder
 // position is replaced with the literal constant_value, unconditionally
 // (no "nearest neighbor" search, unlike forward/backward fill).
-func evalSeriesFillConst(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalSeriesFillConst(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if len(fc.Args) < 2 {
 		return nil, true, fmt.Errorf("series_fill_const requires at least 2 arguments (series, constant_value)")
 	}
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
 	if !ok {
 		return nil, true, nil
 	}
-	constVal, err := evalExpr(fc.Args[1], schema, row)
+	constVal, err := evalExpr(eng, fc.Args[1], schema, row)
 	if err != nil {
 		return nil, true, err
 	}
-	placeholder, err := seriesOptionalPlaceholderArg(fc, schema, row, 2)
+	placeholder, err := seriesOptionalPlaceholderArg(eng, fc, schema, row, 2)
 	if err != nil {
 		return nil, true, err
 	}
@@ -751,21 +751,21 @@ func evalSeriesFillConst(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 // value alone, so this always returns exact (non-rounded)
 // interpolation. A real, narrow, deliberately-scoped gap, not an
 // oversight.
-func evalSeriesFillLinear(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	arr, ok, err := evalSeriesFillArrayArg(fc, schema, row)
+func evalSeriesFillLinear(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	arr, ok, err := evalSeriesFillArrayArg(eng, fc, schema, row)
 	if err != nil {
 		return nil, true, err
 	}
 	if !ok {
 		return nil, true, nil
 	}
-	placeholder, err := seriesOptionalPlaceholderArg(fc, schema, row, 1)
+	placeholder, err := seriesOptionalPlaceholderArg(eng, fc, schema, row, 1)
 	if err != nil {
 		return nil, true, err
 	}
 	fillEdges := true
 	if len(fc.Args) >= 3 {
-		fev, err := evalExpr(fc.Args[2], schema, row)
+		fev, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -775,7 +775,7 @@ func evalSeriesFillLinear(fc *parser.FuncCall, schema *types.Schema, row types.R
 	}
 	var constantValue float64 = 0
 	if len(fc.Args) >= 4 {
-		cv, err := evalExpr(fc.Args[3], schema, row)
+		cv, err := evalExpr(eng, fc.Args[3], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -846,9 +846,9 @@ func evalSeriesFillLinear(fc *parser.FuncCall, schema *types.Schema, row types.R
 // argument at argIndex if present, defaulting to nil (representing
 // double(null), real ADX's own documented default for every fill
 // function) when omitted.
-func seriesOptionalPlaceholderArg(fc *parser.FuncCall, schema *types.Schema, row types.Row, argIndex int) (types.Value, error) {
+func seriesOptionalPlaceholderArg(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row, argIndex int) (types.Value, error) {
 	if len(fc.Args) <= argIndex {
 		return nil, nil
 	}
-	return evalExpr(fc.Args[argIndex], schema, row)
+	return evalExpr(eng, fc.Args[argIndex], schema, row)
 }

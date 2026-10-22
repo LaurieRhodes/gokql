@@ -37,7 +37,7 @@ func applySchemaMerge(e *Engine, in *types.Table, args []string, _ *types.Schema
 			}
 			a = strings.TrimSpace(a[eq+1:])
 		}
-		v, _, err := pluginScalar(a)
+		v, _, err := pluginScalar(e, a)
 		b, ok := v.(bool)
 		if err != nil || !ok {
 			return nil, fmt.Errorf("schema_merge: PreserveOrder must be true or false")

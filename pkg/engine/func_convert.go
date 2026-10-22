@@ -10,7 +10,7 @@ import (
 )
 
 // evalConvertFunc handles type conversion, null-test, and conditional functions.
-func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalConvertFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "toint", "tolong", "int", "long":
 		// Also serves as this engine's bare int()/long() literal-cast
@@ -27,14 +27,14 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		// below, already null-checks correctly) — confirmed live,
 		// not assumed, before fixing.
 		if fc.Name == "int" || fc.Name == "long" {
-			if userFuncOverridesBuiltinName(fc.Name) {
+			if userFuncOverridesBuiltinName(eng, fc.Name) {
 				return nil, false, nil
 			}
 		}
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -55,14 +55,14 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		// let a fill function distinguish "genuinely no data" from
 		// "a real value of zero."
 		if fc.Name == "real" || fc.Name == "double" {
-			if userFuncOverridesBuiltinName(fc.Name) {
+			if userFuncOverridesBuiltinName(eng, fc.Name) {
 				return nil, false, nil
 			}
 		}
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -75,7 +75,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isnull requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -85,7 +85,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isnotnull requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -95,7 +95,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -117,7 +117,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_xml requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -134,7 +134,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("tostring requires 1 argument")
 		}
-		str, _, err := exprToString(fc.Args[0], schema, row)
+		str, _, err := exprToString(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -146,16 +146,16 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("iff requires 3 arguments")
 		}
-		predVal, err := evalExpr(fc.Args[0], schema, row)
+		predVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		pred, _ := predVal.(bool)
 		if pred {
-			v, err := evalExpr(fc.Args[1], schema, row)
+			v, err := evalExpr(eng, fc.Args[1], schema, row)
 			return v, true, err
 		}
-		v, err := evalExpr(fc.Args[2], schema, row)
+		v, err := evalExpr(eng, fc.Args[2], schema, row)
 		return v, true, err
 
 	case "case":
@@ -163,21 +163,21 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 			return nil, true, fmt.Errorf("case requires odd number of arguments (pred, val pairs + default)")
 		}
 		for i := 0; i < len(fc.Args)-1; i += 2 {
-			predVal, err := evalExpr(fc.Args[i], schema, row)
+			predVal, err := evalExpr(eng, fc.Args[i], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
 			if pred, ok := predVal.(bool); ok && pred {
-				v, err := evalExpr(fc.Args[i+1], schema, row)
+				v, err := evalExpr(eng, fc.Args[i+1], schema, row)
 				return v, true, err
 			}
 		}
-		v, err := evalExpr(fc.Args[len(fc.Args)-1], schema, row)
+		v, err := evalExpr(eng, fc.Args[len(fc.Args)-1], schema, row)
 		return v, true, err
 
 	case "coalesce":
 		for _, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -197,7 +197,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		var best types.Value
 		for _, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -231,7 +231,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		var best types.Value
 		for _, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -261,14 +261,14 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 
 	case "tobool", "toboolean", "bool":
 		if fc.Name == "bool" {
-			if userFuncOverridesBuiltinName(fc.Name) {
+			if userFuncOverridesBuiltinName(eng, fc.Name) {
 				return nil, false, nil
 			}
 		}
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -300,7 +300,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("round requires 1 or 2 arguments")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -310,7 +310,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		f := types.ToFloat64(val)
 		precision := 0
 		if len(fc.Args) == 2 {
-			pv, err := evalExpr(fc.Args[1], schema, row)
+			pv, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -340,7 +340,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) < 1 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("format_bytes requires 1-3 arguments (size [, precision [, units]])")
 		}
-		sizeVal, err := evalExpr(fc.Args[0], schema, row)
+		sizeVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -349,7 +349,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		precision := 0
 		if len(fc.Args) >= 2 {
-			pv, err := evalExpr(fc.Args[1], schema, row)
+			pv, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -359,7 +359,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		v := types.ToFloat64(sizeVal)
 		unitIdx := 0
 		if len(fc.Args) == 3 {
-			uv, err := evalExpr(fc.Args[2], schema, row)
+			uv, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -390,7 +390,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("abs requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -411,11 +411,11 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("pow requires 2 arguments")
 		}
-		baseVal, err := evalExpr(fc.Args[0], schema, row)
+		baseVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		expVal, err := evalExpr(fc.Args[1], schema, row)
+		expVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -428,7 +428,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("sqrt requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -441,7 +441,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("log requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -454,7 +454,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("log2 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -467,7 +467,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("log10 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -480,7 +480,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("ceiling requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -493,7 +493,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("exp requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -506,7 +506,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("exp2 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -519,7 +519,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("exp10 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -535,7 +535,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("sign requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -570,7 +570,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -599,11 +599,11 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("atan2 requires 2 arguments")
 		}
-		yVal, err := evalExpr(fc.Args[0], schema, row)
+		yVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		xVal, err := evalExpr(fc.Args[1], schema, row)
+		xVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -616,7 +616,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("degrees requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -629,7 +629,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("radians requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -642,7 +642,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isnan requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -655,7 +655,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isinf requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -668,7 +668,7 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("isfinite requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -698,8 +698,8 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 // this file, since broadening it to the whole dispatch chain (letting
 // ANY user function shadow ANY built-in) is a bigger, separate change
 // with its own test implications not audited here.
-func userFuncOverridesBuiltinName(name string) bool {
-	_, ok := activeLetContext.LookupFunction(name)
+func userFuncOverridesBuiltinName(eng *Engine, name string) bool {
+	_, ok := eng.lets().LookupFunction(name)
 	return ok
 }
 

@@ -15,8 +15,8 @@ import (
 // next handler is tried. This keeps the dispatch O(1) per category while
 // allowing each file to own its own switch statement.
 
-func evalFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
-	v, err := evalFuncRaw(fc, schema, row)
+func evalFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
+	v, err := evalFuncRaw(eng, fc, schema, row)
 	if err != nil || v == nil {
 		return v, err
 	}
@@ -63,61 +63,61 @@ func coerceToDeclared(v types.Value, t types.KQLType) types.Value {
 	return v
 }
 
-func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
+func evalFuncRaw(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
 	// Try each category in turn. The order doesn't matter for correctness
 	// (function names are unique) but we put the most common categories first.
-	if v, ok, err := evalStringFunc(fc, schema, row); ok {
+	if v, ok, err := evalStringFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalDatetimeFunc(fc, schema, row); ok {
+	if v, ok, err := evalDatetimeFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalConvertFunc(fc, schema, row); ok {
+	if v, ok, err := evalConvertFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalNetFunc(fc, schema, row); ok {
+	if v, ok, err := evalNetFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalNetFuncExtended(fc, schema, row); ok {
+	if v, ok, err := evalNetFuncExtended(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalDynamicFunc(fc, schema, row); ok {
+	if v, ok, err := evalDynamicFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalConvertUnitsFunc(fc, schema, row); ok {
+	if v, ok, err := evalConvertUnitsFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalMathExtraFunc(fc, schema, row); ok {
+	if v, ok, err := evalMathExtraFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalColumnIfExists(fc, schema, row); ok {
+	if v, ok, err := evalColumnIfExists(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalPackAll(fc, schema, row); ok {
+	if v, ok, err := evalPackAll(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalBinaryFunc(fc, schema, row); ok {
+	if v, ok, err := evalBinaryFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalVectorFunc(fc, schema, row); ok {
+	if v, ok, err := evalVectorFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalSeriesFunc(fc, schema, row); ok {
+	if v, ok, err := evalSeriesFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalSketchFunc(fc, schema, row); ok {
+	if v, ok, err := evalSketchFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalBetaFunc(fc, schema, row); ok {
+	if v, ok, err := evalBetaFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalPunycodeFunc(fc, schema, row); ok {
+	if v, ok, err := evalPunycodeFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalSeriesFitFunc(fc, schema, row); ok {
+	if v, ok, err := evalSeriesFitFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
-	if v, ok, err := evalUserFunc(fc, schema, row); ok {
+	if v, ok, err := evalUserFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
 	if windowFuncNames[fc.Name] {
@@ -130,9 +130,7 @@ func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 // udfDepth guards against runaway recursion in user-defined functions.
 // KQL does not support recursive UDFs; a generous depth allows legitimate
 // nested calls (f calling g calling h) while catching cycles.
-// NOTE: package-level state assumes single-threaded query execution, like
-// activeLetContext. Revisit both if parallel extent scanning lands.
-var udfDepth int
+// The depth is per engine (Engine.udfDepth).
 
 const maxUDFDepth = 64
 
@@ -144,11 +142,11 @@ var errUDFDepth = errors.New("UDF call depth exceeded (recursive user-defined fu
 // evalUserFunc resolves a call against let-bound user-defined functions.
 // Arguments are evaluated in the caller's scope, then the body is evaluated
 // in an isolated scope where only the parameters are visible as columns.
-// Scalar let bindings remain visible through activeLetContext, matching KQL.
-func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	fn, ok := activeLetContext.LookupFunction(fc.RawName)
+// Scalar let bindings remain visible through the engine's let context, matching KQL.
+func evalUserFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	fn, ok := eng.lets().LookupFunction(fc.RawName)
 	if !ok {
-		fn, ok = activeLetContext.LookupFunction(fc.Name)
+		fn, ok = eng.lets().LookupFunction(fc.Name)
 	}
 	if !ok {
 		return nil, false, nil
@@ -193,7 +191,7 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 		argFor[next] = a
 		next++
 	}
-	if udfDepth >= maxUDFDepth {
+	if eng.udfDepth >= maxUDFDepth {
 		return nil, true, fmt.Errorf("function %s: %w", fc.Name, errUDFDepth)
 	}
 
@@ -204,13 +202,13 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 		var val types.Value
 		var err error
 		if argFor[i] != nil {
-			val, err = evalExpr(argFor[i], schema, row)
+			val, err = evalExpr(eng, argFor[i], schema, row)
 		} else if !param.HasDefault {
 			return nil, true, fmt.Errorf("function %s: missing argument %s", fc.Name, param.Name)
 		} else {
 			// Omitted trailing argument: the declared default,
 			// evaluated without the caller's row.
-			val, err = evalExpr(param.Default, &types.Schema{}, types.Row{})
+			val, err = evalExpr(eng, param.Default, &types.Schema{}, types.Row{})
 		}
 		if err != nil {
 			return nil, true, fmt.Errorf("function %s argument %s: %w", fc.Name, param.Name, err)
@@ -220,9 +218,9 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 	}
 
 	// Evaluate the body in the isolated parameter scope
-	udfDepth++
-	val, err := evalExpr(fn.Body, &paramSchema, paramRow)
-	udfDepth--
+	eng.udfDepth++
+	val, err := evalExpr(eng, fn.Body, &paramSchema, paramRow)
+	eng.udfDepth--
 	if err != nil {
 		if errors.Is(err, errUDFDepth) {
 			return nil, true, err // don't stack a prefix per frame
@@ -240,10 +238,10 @@ func evalUserFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 // column's value with JSON semantics ("e.Tags.sev" → column "e.Tags",
 // then ".sev"). Real dynamic columns keep plain JSON-access semantics
 // because the base-column check takes precedence.
-func evalAccess(ae *parser.AccessExpr, schema *types.Schema, row types.Row) (types.Value, error) {
+func evalAccess(eng *Engine, ae *parser.AccessExpr, schema *types.Schema, row types.Row) (types.Value, error) {
 	for _, k := range ae.Path {
 		if k.Expr != nil {
-			path, err := resolveAccessPath(ae.Path, schema, row)
+			path, err := resolveAccessPath(eng, ae.Path, schema, row)
 			if err != nil {
 				return nil, err
 			}
@@ -258,7 +256,7 @@ func evalAccess(ae *parser.AccessExpr, schema *types.Schema, row types.Row) (typ
 		return accessJSONPath(row[idx], rest), nil
 	}
 
-	val, err := evalExpr(ae.Object, schema, row)
+	val, err := evalExpr(eng, ae.Object, schema, row)
 	if err != nil {
 		return nil, err
 	}
@@ -268,14 +266,14 @@ func evalAccess(ae *parser.AccessExpr, schema *types.Schema, row types.Row) (typ
 // resolveAccessPath evaluates computed keys for this row: an integer
 // becomes an index (FromEnd: negative counts from the end), anything
 // else a property name. A null key makes the access null.
-func resolveAccessPath(path []parser.AccessKey, schema *types.Schema, row types.Row) ([]parser.AccessKey, error) {
+func resolveAccessPath(eng *Engine, path []parser.AccessKey, schema *types.Schema, row types.Row) ([]parser.AccessKey, error) {
 	out := make([]parser.AccessKey, len(path))
 	for i, k := range path {
 		if k.Expr == nil {
 			out[i] = k
 			continue
 		}
-		v, err := evalExpr(k.Expr, schema, row)
+		v, err := evalExpr(eng, k.Expr, schema, row)
 		if err != nil {
 			return nil, err
 		}

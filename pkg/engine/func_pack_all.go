@@ -15,7 +15,7 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-func evalPackAll(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalPackAll(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if fc.Name != "pack_all" {
 		return nil, false, nil
 	}
@@ -24,7 +24,7 @@ func evalPackAll(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 	}
 	ignore := false
 	if len(fc.Args) == 1 {
-		v, err := evalExpr(fc.Args[0], schema, row)
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}

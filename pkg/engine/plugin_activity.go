@@ -187,16 +187,16 @@ func (b *periodBinner) value(k int64) types.Value {
 func (b *periodBinner) inRange(k int64) bool { return k >= b.kFirst && k <= b.kLast }
 
 // newPeriodBinner builds a binner from plugin argument texts.
-func newPeriodBinner(plugin string, axis types.KQLType, startArg, endArg, stepArg string) (*periodBinner, error) {
-	sv, st, err := pluginScalar(startArg)
+func newPeriodBinner(eng *Engine, plugin string, axis types.KQLType, startArg, endArg, stepArg string) (*periodBinner, error) {
+	sv, st, err := pluginScalar(eng, startArg)
 	if err != nil || sv == nil {
 		return nil, fmt.Errorf("%s: Start: invalid value", plugin)
 	}
-	ev, et, err := pluginScalar(endArg)
+	ev, et, err := pluginScalar(eng, endArg)
 	if err != nil || ev == nil {
 		return nil, fmt.Errorf("%s: End: invalid value", plugin)
 	}
-	pv, pt, err := pluginScalar(stepArg)
+	pv, pt, err := pluginScalar(eng, stepArg)
 	if err != nil || pv == nil {
 		return nil, fmt.Errorf("%s: step: invalid value", plugin)
 	}
@@ -302,7 +302,7 @@ func applyActivityCountsMetrics(e *Engine, in *types.Table, args []string, _ *ty
 	if err != nil {
 		return nil, err
 	}
-	b, err := newPeriodBinner(name, in.Schema.Columns[a.tCol].Type, args[2], args[3], args[4])
+	b, err := newPeriodBinner(e, name, in.Schema.Columns[a.tCol].Type, args[2], args[3], args[4])
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +342,7 @@ func applyActivityMetrics(e *Engine, in *types.Table, args []string, _ *types.Sc
 	if err != nil {
 		return nil, err
 	}
-	b, err := newPeriodBinner(name, in.Schema.Columns[a.tCol].Type, args[2], args[3], args[4])
+	b, err := newPeriodBinner(e, name, in.Schema.Columns[a.tCol].Type, args[2], args[3], args[4])
 	if err != nil {
 		return nil, err
 	}
@@ -390,14 +390,14 @@ func applyActiveUsersCount(e *Engine, in *types.Table, args []string, _ *types.S
 		return nil, err
 	}
 	axis := in.Schema.Columns[a.tCol].Type
-	b, err := newPeriodBinner(name, axis, args[2], args[3], args[7])
+	b, err := newPeriodBinner(e, name, axis, args[2], args[3], args[7])
 	if err != nil {
 		return nil, err
 	}
 	var sv [3]types.Value
 	var stypes [3]types.KQLType
 	for i, arg := range args[4:7] {
-		v, vt, err := pluginScalar(arg)
+		v, vt, err := pluginScalar(e, arg)
 		if err != nil || v == nil {
 			return nil, fmt.Errorf("%s: argument %d: invalid value", name, i+5)
 		}
@@ -497,7 +497,7 @@ func applyNewActivityMetrics(e *Engine, in *types.Table, args []string, _ *types
 			dimArgs = append(dimArgs, arg)
 			continue
 		}
-		if v, vt, err := pluginScalar(arg); err == nil {
+		if v, vt, err := pluginScalar(e, arg); err == nil {
 			cohortVal, cohortType = v, vt
 			continue
 		}
@@ -527,7 +527,7 @@ func applyNewActivityMetrics(e *Engine, in *types.Table, args []string, _ *types
 	if err != nil {
 		return nil, err
 	}
-	b, err := newPeriodBinner(name, axis, args[2], args[3], args[4])
+	b, err := newPeriodBinner(e, name, axis, args[2], args[3], args[4])
 	if err != nil {
 		return nil, err
 	}

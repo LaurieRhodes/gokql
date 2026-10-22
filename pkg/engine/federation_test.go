@@ -252,3 +252,17 @@ func TestFederationSummarizePushdownMatchesFullyLocalResult(t *testing.T) {
 
 	expectCell(t, federated, 0, 0, fmt.Sprintf("%v", local.Rows[0][0]))
 }
+
+// TestFederationSeesOuterLetBindings: operators pushed to the remote
+// scope evaluate as part of the outer statement, so they see its let
+// bindings and let functions. They used to through a process-wide
+// variable; the remote engine now shares them explicitly (forNested).
+func TestFederationSeesOuterLetBindings(t *testing.T) {
+	localDir, remoteDir := federationTestScopes(t)
+	writeFederationConfig(t, localDir, map[string]string{"remote": remoteDir})
+
+	eng := discoverEngine(t, localDir)
+	tbl := diskQuery(t, eng, `let word = "Mars"; let tag = (s: string) { strcat("id-", s) }; database('remote').Findings | where Claim has word | project T = tag(Id)`)
+	expectRows(t, tbl, 1)
+	expectCell(t, tbl, 0, 0, "id-f001")
+}

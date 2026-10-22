@@ -31,15 +31,15 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 	}
 	axisIdx := input.Schema.ColumnIndex(op.AxisColumn)
 
-	fromVal, err := evalExpr(op.From, &emptySchema, emptyRow)
+	fromVal, err := evalExpr(e, op.From, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("make-series: from: %w", err)
 	}
-	toVal, err := evalExpr(op.To, &emptySchema, emptyRow)
+	toVal, err := evalExpr(e, op.To, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("make-series: to: %w", err)
 	}
-	stepVal, err := evalExpr(op.Step, &emptySchema, emptyRow)
+	stepVal, err := evalExpr(e, op.Step, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("make-series: step: %w", err)
 	}
@@ -49,7 +49,7 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 	// make-series operator" per real ADX docs.
 	aggOutTypes := make([]types.KQLType, len(op.Aggregations))
 	for i, msAgg := range op.Aggregations {
-		t := inferAggType(msAgg.Agg.Function, msAgg.Agg.Args, &input.Schema)
+		t := inferAggType(e, msAgg.Agg.Function, msAgg.Agg.Args, &input.Schema)
 		if !t.IsNumeric() {
 			return nil, fmt.Errorf("make-series: aggregation %q does not return a numeric result (got %s) — only numeric aggregations are supported", msAgg.Agg.Function, t)
 		}
@@ -67,7 +67,7 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 			defaults[i] = coerceNumeric(int64(0), aggOutTypes[i])
 			continue
 		}
-		dv, err := evalExpr(msAgg.Default, &emptySchema, emptyRow)
+		dv, err := evalExpr(e, msAgg.Default, &emptySchema, emptyRow)
 		if err != nil {
 			return nil, fmt.Errorf("make-series: default for %q: %w", msAgg.Agg.Function, err)
 		}
@@ -206,7 +206,7 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 		byVals := make([]types.Value, len(op.ByExprs))
 		keyParts := make([]string, len(op.ByExprs))
 		for i, byExpr := range op.ByExprs {
-			val, err := evalExpr(byExpr.Expr, &input.Schema, row)
+			val, err := evalExpr(e, byExpr.Expr, &input.Schema, row)
 			if err != nil {
 				return nil, fmt.Errorf("make-series by %s: %w", byExpr.Name, err)
 			}
@@ -255,7 +255,7 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 	}
 	byOffset := len(outCols)
 	for _, byExpr := range op.ByExprs {
-		byType := inferExprType(byExpr.Expr, &input.Schema)
+		byType := inferExprType(e, byExpr.Expr, &input.Schema)
 		outCols = append(outCols, types.Column{Name: byExpr.Name, Type: byType})
 	}
 	axisOutIdx := len(outCols)
@@ -290,7 +290,7 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 					arr[b] = valueForJSONArray(defaults[i], aggOutTypes[i])
 					continue
 				}
-				val, err := computeAgg(msAgg.Agg, bucketRows, &input.Schema)
+				val, err := computeAgg(e, msAgg.Agg, bucketRows, &input.Schema)
 				if err != nil {
 					return nil, fmt.Errorf("make-series %s: %w", msAgg.Agg.Function, err)
 				}

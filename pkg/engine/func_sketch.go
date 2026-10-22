@@ -241,10 +241,10 @@ func mergeHLLs(vals []types.Value) (types.Value, error) {
 
 // computeSketchAgg implements the sketch aggregates; ok is false for
 // any other function.
-func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, bool, error) {
+func computeSketchAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, bool, error) {
 	switch agg.Function {
 	case "buildschema":
-		v, err := computeBuildSchema(agg, rows, schema)
+		v, err := computeBuildSchema(eng, agg, rows, schema)
 		return v, true, err
 	case "hll", "hll_if":
 		min, max := 1, 2
@@ -257,7 +257,7 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 		set := map[string]bool{}
 		for _, r := range rows {
 			if agg.Function == "hll_if" {
-				p, err := evalExpr(agg.Args[1], schema, r)
+				p, err := evalExpr(eng, agg.Args[1], schema, r)
 				if err != nil {
 					return nil, true, err
 				}
@@ -265,7 +265,7 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 					continue
 				}
 			}
-			v, err := evalExpr(agg.Args[0], schema, r)
+			v, err := evalExpr(eng, agg.Args[0], schema, r)
 			if err != nil {
 				return nil, true, err
 			}
@@ -278,7 +278,7 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 		if len(agg.Args) != 1 {
 			return nil, true, fmt.Errorf("hll_merge: expected 1 argument")
 		}
-		vals, err := aggArgValues(agg.Args[0], rows, schema)
+		vals, err := aggArgValues(eng, agg.Args[0], rows, schema)
 		if err != nil {
 			return nil, true, err
 		}
@@ -288,14 +288,14 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 		if len(agg.Args) < 1 || len(agg.Args) > 2 {
 			return nil, true, fmt.Errorf("tdigest: expected 1-2 arguments")
 		}
-		t := inferExprType(agg.Args[0], schema)
+		t := inferExprType(eng, agg.Args[0], schema)
 		if t == types.TypeInt {
 			t = types.TypeLong
 		}
 		sk := &tdigestSketch{Type: t.String(), Samples: [][2]json.Number{}}
 		isInt := sk.isInt()
 		for _, r := range rows {
-			v, err := evalExpr(agg.Args[0], schema, r)
+			v, err := evalExpr(eng, agg.Args[0], schema, r)
 			if err != nil {
 				return nil, true, err
 			}
@@ -304,7 +304,7 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 			}
 			w := 1.0
 			if len(agg.Args) == 2 {
-				wv, err := evalExpr(agg.Args[1], schema, r)
+				wv, err := evalExpr(eng, agg.Args[1], schema, r)
 				if err != nil {
 					return nil, true, err
 				}
@@ -323,7 +323,7 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 		if len(agg.Args) != 1 {
 			return nil, true, fmt.Errorf("%s: expected 1 argument", agg.Function)
 		}
-		vals, err := aggArgValues(agg.Args[0], rows, schema)
+		vals, err := aggArgValues(eng, agg.Args[0], rows, schema)
 		if err != nil {
 			return nil, true, err
 		}
@@ -333,10 +333,10 @@ func computeSketchAgg(agg parser.Aggregation, rows []types.Row, schema *types.Sc
 	return nil, false, nil
 }
 
-func aggArgValues(e parser.Expr, rows []types.Row, schema *types.Schema) ([]types.Value, error) {
+func aggArgValues(eng *Engine, e parser.Expr, rows []types.Row, schema *types.Schema) ([]types.Value, error) {
 	out := make([]types.Value, 0, len(rows))
 	for _, r := range rows {
-		v, err := evalExpr(e, schema, r)
+		v, err := evalExpr(eng, e, schema, r)
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +345,7 @@ func aggArgValues(e parser.Expr, rows []types.Row, schema *types.Schema) ([]type
 	return out, nil
 }
 
-func evalSketchFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalSketchFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "dcount_hll", "hll_merge", "percentile_tdigest", "percentiles_array_tdigest",
 		"percentrank_tdigest", "rank_tdigest", "tdigest_merge", "merge_tdigest":
@@ -357,7 +357,7 @@ func evalSketchFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if fc.Name == "percentile_tdigest" && i == 2 {
 			continue // typeof(T)
 		}
-		v, err := evalExpr(a, schema, row)
+		v, err := evalExpr(eng, a, schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -490,7 +490,7 @@ func applyDcountIntersect(e *Engine, in *types.Table, args []string, _ *types.Sc
 		row := append(types.Row(nil), r...)
 		var inter map[string]bool
 		for i, ex := range exprs {
-			v, err := evalExpr(ex, &in.Schema, r)
+			v, err := evalExpr(e, ex, &in.Schema, r)
 			if err != nil {
 				return nil, err
 			}

@@ -186,7 +186,7 @@ func (e *Engine) resolveFederatedTable(ref *parser.DatabaseTableRef, operators [
 	if err != nil {
 		return nil, nil, fmt.Errorf("database(%q): opening %s: %w", ref.Alias, remotePath, err)
 	}
-	remoteEng := New(remoteCat)
+	remoteEng := e.forNested(remoteCat)
 
 	remoteTableDef := remoteEng.Catalog.GetTable(ref.TableName)
 	if remoteTableDef == nil {

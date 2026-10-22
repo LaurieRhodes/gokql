@@ -98,7 +98,7 @@ func substituteToScalars(e *Engine, expr parser.Expr) (parser.Expr, error) {
 		// operator before any row: ADX checks it at query analysis, so
 		// it fails even when no rows reach it.
 		if ex.Name == "assert" && len(ex.Args) == 2 && !exprReferencesAnyColumn(e, ex) {
-			if _, _, err := evalAssert(ex, &types.Schema{}, types.Row{}); err != nil {
+			if _, _, err := evalAssert(e, ex, &types.Schema{}, types.Row{}); err != nil {
 				return nil, err
 			}
 			return &parser.Literal{Value: true, Type: types.TypeBool}, nil
@@ -317,7 +317,7 @@ func evalInSubqueryOnce(e *Engine, queryText string) ([]parser.Expr, error) {
 	return vals, nil
 }
 
-func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Value, error) {
+func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row) (types.Value, error) {
 	switch e := expr.(type) {
 	case *parser.Literal:
 		return e.Value, nil
@@ -329,24 +329,24 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		}
 		// Check scalar let bindings — walks the parent chain, not
 		// just the innermost context's own local map.
-		if val, ok := activeLetContext.LookupScalar(e.Name); ok {
+		if val, ok := eng.lets().LookupScalar(e.Name); ok {
 			return val, nil
 		}
 		return nil, fmt.Errorf("column %q not found", e.Name)
 
 	case *parser.BinaryExpr:
-		left, err := evalExpr(e.Left, schema, row)
+		left, err := evalExpr(eng, e.Left, schema, row)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evalExpr(e.Right, schema, row)
+		right, err := evalExpr(eng, e.Right, schema, row)
 		if err != nil {
 			return nil, err
 		}
-		return evalBinaryOp(left, e.Op, right, schema, e)
+		return evalBinaryOp(eng, left, e.Op, right, schema, e)
 
 	case *parser.UnaryExpr:
-		val, err := evalExpr(e.Expr, schema, row)
+		val, err := evalExpr(eng, e.Expr, schema, row)
 		if err != nil {
 			return nil, err
 		}
@@ -359,13 +359,13 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		return nil, fmt.Errorf("unsupported unary op: %s", e.Op)
 
 	case *parser.FuncCall:
-		return evalFunc(e, schema, row)
+		return evalFunc(eng, e, schema, row)
 
 	case *parser.AccessExpr:
-		return evalAccess(e, schema, row)
+		return evalAccess(eng, e, schema, row)
 
 	case *parser.InExpr:
-		colVal, err := evalExpr(e.Column, schema, row)
+		colVal, err := evalExpr(eng, e.Column, schema, row)
 		if err != nil {
 			return nil, err
 		}
@@ -380,7 +380,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 			// Check against a let-bound table's first column — walks
 			// the parent chain, not just the innermost context's own
 			// local map.
-			if tbl, ok := activeLetContext.LookupTable(e.TableRef); ok {
+			if tbl, ok := eng.lets().LookupTable(e.TableRef); ok {
 				for _, row := range tbl.Rows {
 					if len(row) > 0 {
 						rowStr := fmtV(row[0])
@@ -398,7 +398,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		} else {
 			// Check against literal value list
 			for _, valExpr := range e.Values {
-				val, err := evalExpr(valExpr, schema, row)
+				val, err := evalExpr(eng, valExpr, schema, row)
 				if err != nil {
 					return nil, err
 				}
@@ -420,7 +420,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		return found, nil
 
 	case *parser.HasAnyAllExpr:
-		colVal, err := evalExpr(e.Column, schema, row)
+		colVal, err := evalExpr(eng, e.Column, schema, row)
 		if err != nil {
 			return nil, err
 		}
@@ -432,7 +432,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		if e.All {
 			// has_all: every term must be found (whole-term, case-insensitive)
 			for _, valExpr := range e.Values {
-				val, err := evalExpr(valExpr, schema, row)
+				val, err := evalExpr(eng, valExpr, schema, row)
 				if err != nil {
 					return nil, err
 				}
@@ -445,7 +445,7 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		}
 		// has_any: at least one term must be found (whole-term, case-insensitive)
 		for _, valExpr := range e.Values {
-			val, err := evalExpr(valExpr, schema, row)
+			val, err := evalExpr(eng, valExpr, schema, row)
 			if err != nil {
 				return nil, err
 			}
@@ -457,15 +457,15 @@ func evalExpr(expr parser.Expr, schema *types.Schema, row types.Row) (types.Valu
 		return false, nil
 
 	case *parser.BetweenExpr:
-		val, err := evalExpr(e.Expr, schema, row)
+		val, err := evalExpr(eng, e.Expr, schema, row)
 		if err != nil || val == nil {
 			return false, err
 		}
-		low, err := evalExpr(e.Low, schema, row)
+		low, err := evalExpr(eng, e.Low, schema, row)
 		if err != nil || low == nil {
 			return false, err
 		}
-		high, err := evalExpr(e.High, schema, row)
+		high, err := evalExpr(eng, e.High, schema, row)
 		if err != nil || high == nil {
 			return false, err
 		}
@@ -496,7 +496,7 @@ func isStringOperator(op parser.BinaryOp) bool {
 	return false
 }
 
-func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, error) {
+func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, error) {
 	// Logical operators
 	if op == parser.OpAnd {
 		lb, _ := left.(bool)
@@ -541,7 +541,7 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 		return ok, nil
 	}
 
-	if v, ok, err := evalMixedNumeric(left, op, right, schema, expr); ok {
+	if v, ok, err := evalMixedNumeric(eng, left, op, right, schema, expr); ok {
 		return v, err
 	}
 
@@ -570,8 +570,8 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 		// For arithmetic involving datetime/timespan, normalise units.
 		// Datetime values are nanos; timespan values are 100ns ticks.
 		if op == parser.OpAdd || op == parser.OpSub {
-			lt := inferExprType(expr.Left, schema)
-			rt := inferExprType(expr.Right, schema)
+			lt := inferExprType(eng, expr.Left, schema)
+			rt := inferExprType(eng, expr.Right, schema)
 
 			hasDT := lt == types.TypeDatetime || rt == types.TypeDatetime
 			hasTS := lt == types.TypeTimespan || rt == types.TypeTimespan
@@ -689,7 +689,7 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 
 // inferExprType determines the KQL type an expression will produce at runtime.
 // Used by arithmetic operators to distinguish datetime (nanos) from timespan (ticks).
-func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
+func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQLType {
 	switch e := expr.(type) {
 	case *parser.Literal:
 		return e.Type
@@ -708,7 +708,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 		// let-bound name, not a real schema column) previously always
 		// fell through to TypeString regardless of the let's actual
 		// type.
-		if t, ok := activeLetContext.LookupScalarType(e.Name); ok {
+		if t, ok := eng.lets().LookupScalarType(e.Name); ok {
 			return t
 		}
 		return types.TypeString
@@ -734,16 +734,16 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"datetime_local_to_utc", "datetime_utc_to_local", "ingestion_time":
 			return types.TypeDatetime
 		case "bin", "floor", "bin_at":
-			return binResultType(e.Args, schema)
+			return binResultType(eng, e.Args, schema)
 		case "column_ifexists", "columnifexists":
-			return columnIfExistsType(e, schema)
+			return columnIfExistsType(eng, e, schema)
 		case "prev", "next":
 			if len(e.Args) > 0 {
-				return inferExprType(e.Args[0], schema)
+				return inferExprType(eng, e.Args[0], schema)
 			}
 			return types.TypeDynamic
 		case "row_cumsum":
-			if len(e.Args) > 0 && sumIsIntegral(e.Args[0], schema) {
+			if len(e.Args) > 0 && sumIsIntegral(eng, e.Args[0], schema) {
 				return types.TypeLong
 			}
 			return types.TypeReal
@@ -829,8 +829,8 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 	case *parser.BinaryExpr:
 		switch e.Op {
 		case parser.OpAdd, parser.OpSub:
-			lt := inferExprType(e.Left, schema)
-			rt := inferExprType(e.Right, schema)
+			lt := inferExprType(eng, e.Left, schema)
+			rt := inferExprType(eng, e.Right, schema)
 			// datetime - datetime = timespan
 			if e.Op == parser.OpSub && lt == types.TypeDatetime && rt == types.TypeDatetime {
 				return types.TypeTimespan
@@ -845,8 +845,8 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			}
 			return numericPromote(lt, rt)
 		case parser.OpMul, parser.OpDiv, parser.OpMod:
-			lt := inferExprType(e.Left, schema)
-			rt := inferExprType(e.Right, schema)
+			lt := inferExprType(eng, e.Left, schema)
+			rt := inferExprType(eng, e.Right, schema)
 			if lt == types.TypeTimespan || rt == types.TypeTimespan {
 				if e.Op == parser.OpDiv && lt == types.TypeTimespan && rt == types.TypeTimespan {
 					return types.TypeReal // 90m / 1h is 1.5
@@ -860,7 +860,7 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			parser.OpStartsWith, parser.OpEndsWith:
 			return types.TypeBool
 		default:
-			return inferExprType(e.Left, schema)
+			return inferExprType(eng, e.Left, schema)
 		}
 	case *parser.AccessExpr:
 		// A fully-consumed literal dotted column (graph-match pattern
@@ -1034,7 +1034,7 @@ func isArithOrCompare(op parser.BinaryOp) bool {
 // operands (widened to long), timespan scaled by a real (1h * 1.5 is
 // 01:30:00), and timespan / timespan (a real ratio). ok is false when
 // the operands are left to the paths below.
-func evalMixedNumeric(left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, bool, error) {
+func evalMixedNumeric(eng *Engine, left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, bool, error) {
 	if !isArithOrCompare(op) {
 		return nil, false, nil
 	}
@@ -1055,7 +1055,7 @@ func evalMixedNumeric(left types.Value, op parser.BinaryOp, right types.Value, s
 	_, r32 := right.(int32)
 	var lt, rt types.KQLType = types.TypeLong, types.TypeLong
 	if expr != nil {
-		lt, rt = inferExprType(expr.Left, schema), inferExprType(expr.Right, schema)
+		lt, rt = inferExprType(eng, expr.Left, schema), inferExprType(eng, expr.Right, schema)
 	}
 	lts, rts := lt == types.TypeTimespan, rt == types.TypeTimespan
 
@@ -1112,7 +1112,7 @@ func evalMixedNumeric(left types.Value, op parser.BinaryOp, right types.Value, s
 		return nil, false, nil
 	}
 	if l32 || r32 {
-		v, err := evalBinaryOp(types.ToInt64(left), op, types.ToInt64(right), schema, expr)
+		v, err := evalBinaryOp(eng, types.ToInt64(left), op, types.ToInt64(right), schema, expr)
 		return v, true, err
 	}
 	return nil, false, nil

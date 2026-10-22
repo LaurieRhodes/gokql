@@ -127,13 +127,9 @@ string; this was measured at 10 HTTP calls for a 10-row search before
 the memo existed. The memo does not help a *column* argument, which is
 what `.embed-into` is for.
 
-**Concurrent engines with different backends.** Not supported. The
-scalar path reaches its backend through a process-wide reference
-counted scope, because `evalFunc` has no `Engine` receiver. Many
-engines sharing one embedder is fine. Two *different* embedders live at
-once returns `ErrConcurrentEmbedders` rather than silently using the
-wrong one. The durable fix is an evaluation context threaded through
-`evalExpr`'s 319 call sites.
+**Concurrent engines with different backends** are supported. The
+evaluator carries the engine it runs for, so each engine's
+`embed_text()` reaches its own backend and statement memo.
 
 **`Id` must be unique across the whole source query.** Duplicate Ids
 break two things silently. The embeddings table is

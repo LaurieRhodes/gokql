@@ -86,7 +86,7 @@ func applyBagUnpackPlugin(e *Engine, input *types.Table, argTexts []string, outp
 			if positionalSeen != 1 {
 				return nil, fmt.Errorf("bag_unpack: unexpected positional argument %q", raw)
 			}
-			val, err := evalConstExpr(raw)
+			val, err := evalConstExpr(e, raw)
 			if err != nil {
 				return nil, fmt.Errorf("bag_unpack: OutputColumnPrefix %q: %w", raw, err)
 			}
@@ -101,7 +101,7 @@ func applyBagUnpackPlugin(e *Engine, input *types.Table, argTexts []string, outp
 
 		name := strings.ToLower(strings.TrimSpace(raw[:eqIdx]))
 		valText := strings.TrimSpace(raw[eqIdx+1:])
-		val, err := evalConstExpr(valText)
+		val, err := evalConstExpr(e, valText)
 		if err != nil {
 			return nil, fmt.Errorf("bag_unpack: %s: %w", name, err)
 		}
@@ -296,10 +296,10 @@ func jsonValueKQLType(v interface{}) types.KQLType {
 // evaluate plugin arguments, which real ADX documents as always being
 // constants, never column references (a plugin's arguments configure
 // its behavior once for the whole operator invocation, not per row).
-func evalConstExpr(text string) (types.Value, error) {
+func evalConstExpr(eng *Engine, text string) (types.Value, error) {
 	expr, err := parser.ParseExpr(text)
 	if err != nil {
 		return nil, err
 	}
-	return evalExpr(expr, &types.Schema{}, types.Row{})
+	return evalExpr(eng, expr, &types.Schema{}, types.Row{})
 }

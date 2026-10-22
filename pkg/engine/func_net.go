@@ -99,13 +99,13 @@ func guidStringToBytesLE(guidStr string) ([]byte, bool) {
 }
 
 // evalNetFunc handles IP, URL, encoding, and hashing functions.
-func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "parse_ipv4":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_ipv4 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -138,7 +138,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("ipv4_is_private requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -174,11 +174,11 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("ipv4_is_in_range requires 2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		cidrVal, err := evalExpr(fc.Args[1], schema, row)
+		cidrVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -197,7 +197,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("hash_sha256 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -211,7 +211,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("base64_encode_tostring requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -224,7 +224,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("base64_decode_tostring requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -258,7 +258,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("base64_decode_toarray requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -289,7 +289,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("base64_encode_fromarray requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -336,7 +336,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("base64_decode_toguid requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -369,7 +369,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("base64_encode_fromguid requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -398,7 +398,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("gzip_compress_to_base64_string requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -428,7 +428,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("gzip_decompress_from_base64_string requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -465,7 +465,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("zlib_compress_to_base64_string requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -492,7 +492,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("zlib_decompress_from_base64_string requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -518,7 +518,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("url_encode_component requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -554,7 +554,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("url_encode requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -575,7 +575,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_url requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -590,7 +590,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_urlquery requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -617,7 +617,7 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_path requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -671,11 +671,11 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("parse_command_line requires 2 arguments")
 		}
-		cmdVal, err := evalExpr(fc.Args[0], schema, row)
+		cmdVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		typeVal, err := evalExpr(fc.Args[1], schema, row)
+		typeVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -722,11 +722,11 @@ func evalNetFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("parse_user_agent requires 2 arguments")
 		}
-		uaVal, err := evalExpr(fc.Args[0], schema, row)
+		uaVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		lookForVal, err := evalExpr(fc.Args[1], schema, row)
+		lookForVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -816,7 +816,7 @@ func parseWindowsCommandLine(s string) []string {
 }
 
 // evalNetFuncExtended handles additional network and identity functions.
-func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Row) (interface{}, bool, error) {
+func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (interface{}, bool, error) {
 	switch fc.Name {
 	case "has_ipv4":
 		// has_ipv4(text, ip_or_prefix) — checks if an IPv4 address appears in text
@@ -845,11 +845,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("has_ipv4 requires 2 arguments")
 		}
-		textVal, err := evalExpr(fc.Args[0], schema, row)
+		textVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		ipVal, err := evalExpr(fc.Args[1], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -883,7 +883,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("has_any_ipv4 requires at least 2 arguments")
 		}
-		textVal, err := evalExpr(fc.Args[0], schema, row)
+		textVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -891,7 +891,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			return false, true, nil
 		}
 		text := fmt.Sprintf("%v", textVal)
-		ips, err := collectIPv4SearchTerms(fc.Args[1:], schema, row)
+		ips, err := collectIPv4SearchTerms(eng, fc.Args[1:], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -911,11 +911,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("has_ipv4_prefix requires 2 arguments")
 		}
-		textVal, err := evalExpr(fc.Args[0], schema, row)
+		textVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		prefixVal, err := evalExpr(fc.Args[1], schema, row)
+		prefixVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -936,7 +936,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("has_any_ipv4_prefix requires at least 2 arguments")
 		}
-		textVal, err := evalExpr(fc.Args[0], schema, row)
+		textVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -944,7 +944,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			return false, true, nil
 		}
 		text := fmt.Sprintf("%v", textVal)
-		prefixes, err := collectIPv4SearchTerms(fc.Args[1:], schema, row)
+		prefixes, err := collectIPv4SearchTerms(eng, fc.Args[1:], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -966,7 +966,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("ipv4_is_in_any_range requires at least 2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -977,7 +977,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if net.ParseIP(ipStr) == nil {
 			return nil, true, nil
 		}
-		ranges, err := collectIPv4SearchTerms(fc.Args[1:], schema, row)
+		ranges, err := collectIPv4SearchTerms(eng, fc.Args[1:], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1002,11 +1002,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("ipv4_is_match requires 2-3 arguments")
 		}
-		ip1Val, err := evalExpr(fc.Args[0], schema, row)
+		ip1Val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		ip2Val, err := evalExpr(fc.Args[1], schema, row)
+		ip2Val, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1023,7 +1023,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			effective = p2
 		}
 		if len(fc.Args) == 3 {
-			pVal, err := evalExpr(fc.Args[2], schema, row)
+			pVal, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1046,11 +1046,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("ipv4_range_to_cidr_list requires 2 arguments")
 		}
-		startVal, err := evalExpr(fc.Args[0], schema, row)
+		startVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		endVal, err := evalExpr(fc.Args[1], schema, row)
+		endVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1075,7 +1075,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("ipv4_netmask_suffix requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1108,7 +1108,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("format_ipv4_mask requires 1-2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1121,7 +1121,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		}
 		effective := embeddedPrefix
 		if len(fc.Args) == 2 {
-			pVal, err := evalExpr(fc.Args[1], schema, row)
+			pVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1156,11 +1156,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("parse_ipv4_mask requires 2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		prefixVal, err := evalExpr(fc.Args[1], schema, row)
+		prefixVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1207,11 +1207,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("ipv4_compare requires 2-3 arguments")
 		}
-		ip1Val, err := evalExpr(fc.Args[0], schema, row)
+		ip1Val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		ip2Val, err := evalExpr(fc.Args[1], schema, row)
+		ip2Val, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1228,7 +1228,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			effective = p2
 		}
 		if len(fc.Args) == 3 {
-			pVal, err := evalExpr(fc.Args[2], schema, row)
+			pVal, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1278,7 +1278,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("format_ipv4 requires 1-2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1291,7 +1291,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		}
 		effective := embeddedPrefix
 		if len(fc.Args) == 2 {
-			pVal, err := evalExpr(fc.Args[1], schema, row)
+			pVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1311,7 +1311,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("hash_md5 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1325,7 +1325,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("hash_sha1 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1374,14 +1374,14 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("%s requires 1 or 2 arguments (source [, mod])", fc.Name)
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		if val == nil {
 			return nil, true, nil
 		}
-		argType := inferExprType(fc.Args[0], schema)
+		argType := inferExprType(eng, fc.Args[0], schema)
 		var data []byte
 		switch argType {
 		case types.TypeDatetime:
@@ -1399,7 +1399,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		}
 		h := xxhash.Sum64(data)
 		if len(fc.Args) == 2 {
-			modVal, err := evalExpr(fc.Args[1], schema, row)
+			modVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1449,7 +1449,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("toguid requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1504,7 +1504,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("tohex requires 1 or 2 arguments (value [, minLength])")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1512,7 +1512,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			return nil, true, nil
 		}
 		n := types.ToInt64(val)
-		isInt32 := inferExprType(fc.Args[0], schema) == types.TypeInt
+		isInt32 := inferExprType(eng, fc.Args[0], schema) == types.TypeInt
 		var hexStr string
 		if isInt32 {
 			hexStr = fmt.Sprintf("%x", uint32(int32(n)))
@@ -1528,7 +1528,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			}
 		}
 		if len(fc.Args) == 2 {
-			mlVal, err := evalExpr(fc.Args[1], schema, row)
+			mlVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1601,11 +1601,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("gettype requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		argType := inferExprType(fc.Args[0], schema)
+		argType := inferExprType(eng, fc.Args[0], schema)
 		if argType != types.TypeDynamic {
 			return argType.String(), true, nil
 		}
@@ -1655,7 +1655,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) == 0 {
 			return rand.Float64(), true, nil
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1675,7 +1675,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_ipv6 requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1719,11 +1719,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("parse_ipv6_mask requires 2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		prefixVal, err := evalExpr(fc.Args[1], schema, row)
+		prefixVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1756,11 +1756,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("ipv6_compare requires 2-3 arguments")
 		}
-		ip1Val, err := evalExpr(fc.Args[0], schema, row)
+		ip1Val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		ip2Val, err := evalExpr(fc.Args[1], schema, row)
+		ip2Val, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1777,7 +1777,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			effective = p2
 		}
 		if len(fc.Args) == 3 {
-			pVal, err := evalExpr(fc.Args[2], schema, row)
+			pVal, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1813,11 +1813,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("ipv6_is_match requires 2-3 arguments")
 		}
-		ip1Val, err := evalExpr(fc.Args[0], schema, row)
+		ip1Val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		ip2Val, err := evalExpr(fc.Args[1], schema, row)
+		ip2Val, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1834,7 +1834,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 			effective = p2
 		}
 		if len(fc.Args) == 3 {
-			pVal, err := evalExpr(fc.Args[2], schema, row)
+			pVal, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1854,11 +1854,11 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("ipv6_is_in_range requires 2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		rangeVal, err := evalExpr(fc.Args[1], schema, row)
+		rangeVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1882,7 +1882,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if len(fc.Args) < 2 {
 			return nil, true, fmt.Errorf("ipv6_is_in_any_range requires at least 2 arguments")
 		}
-		ipVal, err := evalExpr(fc.Args[0], schema, row)
+		ipVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1893,7 +1893,7 @@ func evalNetFuncExtended(fc *parser.FuncCall, schema *types.Schema, row types.Ro
 		if !ipOk {
 			return nil, true, nil
 		}
-		ranges, err := collectIPv4SearchTerms(fc.Args[1:], schema, row)
+		ranges, err := collectIPv4SearchTerms(eng, fc.Args[1:], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -2097,10 +2097,10 @@ func hasIPv4PrefixDelimited(text, prefix string) bool {
 // scalar string arguments, or a single dynamic array argument, for
 // the "list of terms to search for" parameter — verified against
 // each function's own worked examples using both forms.
-func collectIPv4SearchTerms(argExprs []parser.Expr, schema *types.Schema, row types.Row) ([]string, error) {
+func collectIPv4SearchTerms(eng *Engine, argExprs []parser.Expr, schema *types.Schema, row types.Row) ([]string, error) {
 	var terms []string
 	for _, argExpr := range argExprs {
-		val, err := evalExpr(argExpr, schema, row)
+		val, err := evalExpr(eng, argExpr, schema, row)
 		if err != nil {
 			return nil, err
 		}

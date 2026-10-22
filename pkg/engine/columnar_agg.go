@@ -92,7 +92,7 @@ type colAggPlan struct {
 
 // planColumnarAggregate returns a plan when the pipeline prefix is
 // fully executable columnar, or nil to use the row engine.
-func planColumnarAggregate(ops []parser.Operator, schema *types.Schema) *colAggPlan {
+func planColumnarAggregate(eng *Engine, ops []parser.Operator, schema *types.Schema) *colAggPlan {
 	plan := &colAggPlan{}
 	i := 0
 	for ; i < len(ops); i++ {
@@ -100,7 +100,7 @@ func planColumnarAggregate(ops []parser.Operator, schema *types.Schema) *colAggP
 		if !ok {
 			break
 		}
-		if !collectExactPreds(where.Predicate, schema, &plan.preds) {
+		if !collectExactPreds(eng, where.Predicate, schema, &plan.preds) {
 			return nil
 		}
 	}
@@ -199,17 +199,17 @@ func planColumnarAggregate(ops []parser.Operator, schema *types.Schema) *colAggP
 // collectExactPreds decomposes a where predicate into exact column
 // predicates. Returns false if any conjunct is outside the supported
 // set (the whole plan is then abandoned).
-func collectExactPreds(expr parser.Expr, schema *types.Schema, out *[]exactPred) bool {
+func collectExactPreds(eng *Engine, expr parser.Expr, schema *types.Schema, out *[]exactPred) bool {
 	be, ok := expr.(*parser.BinaryExpr)
 	if !ok {
 		return false
 	}
 	if be.Op == parser.OpAnd {
-		return collectExactPreds(be.Left, schema, out) &&
-			collectExactPreds(be.Right, schema, out)
+		return collectExactPreds(eng, be.Left, schema, out) &&
+			collectExactPreds(eng, be.Right, schema, out)
 	}
 
-	col, val, colLeft := extractColAndConst(be, schema)
+	col, val, colLeft := extractColAndConst(eng, be, schema)
 	if col == nil || val == nil {
 		return false
 	}
@@ -1110,13 +1110,13 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 	for _, agg := range plan.summarize.Aggregations {
 		outSchema.Columns = append(outSchema.Columns, types.Column{
 			Name: agg.Name,
-			Type: inferAggType(agg.Function, agg.Args, schema),
+			Type: inferAggType(e, agg.Function, agg.Args, schema),
 		})
 	}
 	for _, by := range plan.summarize.ByExprs {
 		outSchema.Columns = append(outSchema.Columns, types.Column{
 			Name: by.Name,
-			Type: inferExprType(by.Expr, schema),
+			Type: inferExprType(e, by.Expr, schema),
 		})
 	}
 

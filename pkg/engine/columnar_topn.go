@@ -54,7 +54,7 @@ type colTopNPlan struct {
 
 // planColumnarTopN returns a plan when the pipeline prefix is columnar
 // top-N, or nil to use the row engine.
-func planColumnarTopN(ops []parser.Operator, schema *types.Schema) *colTopNPlan {
+func planColumnarTopN(eng *Engine, ops []parser.Operator, schema *types.Schema) *colTopNPlan {
 	plan := &colTopNPlan{}
 	i := 0
 	for ; i < len(ops); i++ {
@@ -62,7 +62,7 @@ func planColumnarTopN(ops []parser.Operator, schema *types.Schema) *colTopNPlan 
 		if !ok {
 			break
 		}
-		if !collectExactPreds(where.Predicate, schema, &plan.preds) {
+		if !collectExactPreds(eng, where.Predicate, schema, &plan.preds) {
 			return nil
 		}
 	}

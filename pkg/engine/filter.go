@@ -14,7 +14,7 @@ import (
 // pushing such a predicate against the stored column of the same name
 // silently drops matching rows. Only numeric comparisons against literals
 // are extractable (zone maps store min/max for primitive types only).
-func extractZoneFilter(operators []parser.Operator, schema *types.Schema) *vortex.RowFilter {
+func extractZoneFilter(eng *Engine, operators []parser.Operator, schema *types.Schema) *vortex.RowFilter {
 	var preds []vortex.ColumnPredicate
 
 	for _, op := range operators {
@@ -28,7 +28,7 @@ func extractZoneFilter(operators []parser.Operator, schema *types.Schema) *vorte
 			break
 		}
 		// Extract predicates from this where clause
-		extractPredicates(where.Predicate, schema, &preds)
+		extractPredicates(eng, where.Predicate, schema, &preds)
 	}
 
 	if len(preds) == 0 {
@@ -41,18 +41,18 @@ func extractZoneFilter(operators []parser.Operator, schema *types.Schema) *vorte
 // simple column-op-literal comparisons suitable for zone map pruning.
 // Supports numeric and datetime columns. Constant expressions (e.g. ago(24h))
 // are evaluated at plan time to extract the pushdown value.
-func extractPredicates(expr parser.Expr, schema *types.Schema, preds *[]vortex.ColumnPredicate) {
+func extractPredicates(eng *Engine, expr parser.Expr, schema *types.Schema, preds *[]vortex.ColumnPredicate) {
 	switch e := expr.(type) {
 	case *parser.BinaryExpr:
 		// AND: recurse both sides
 		if e.Op == parser.OpAnd {
-			extractPredicates(e.Left, schema, preds)
-			extractPredicates(e.Right, schema, preds)
+			extractPredicates(eng, e.Left, schema, preds)
+			extractPredicates(eng, e.Right, schema, preds)
 			return
 		}
 
 		// Extract column reference and constant value from either side
-		col, val, colLeft := extractColAndConst(e, schema)
+		col, val, colLeft := extractColAndConst(eng, e, schema)
 		if col == nil || val == nil {
 			return
 		}
@@ -110,14 +110,14 @@ func extractPredicates(expr parser.Expr, schema *types.Schema, preds *[]vortex.C
 // binary comparison expression. The constant can be a literal or a constant
 // function like ago(24h), now(), datetime(...).
 // Returns (column, value, columnIsOnLeft) or (nil, nil, false) if not extractable.
-func extractColAndConst(e *parser.BinaryExpr, schema *types.Schema) (*parser.ColumnRef, interface{}, bool) {
+func extractColAndConst(eng *Engine, e *parser.BinaryExpr, schema *types.Schema) (*parser.ColumnRef, interface{}, bool) {
 	if col, ok := e.Left.(*parser.ColumnRef); ok {
-		if val, ok := tryEvalConstant(e.Right, schema); ok {
+		if val, ok := tryEvalConstant(eng, e.Right, schema); ok {
 			return col, val, true
 		}
 	}
 	if col, ok := e.Right.(*parser.ColumnRef); ok {
-		if val, ok := tryEvalConstant(e.Left, schema); ok {
+		if val, ok := tryEvalConstant(eng, e.Left, schema); ok {
 			return col, val, false
 		}
 	}
@@ -127,24 +127,24 @@ func extractColAndConst(e *parser.BinaryExpr, schema *types.Schema) (*parser.Col
 // tryEvalConstant attempts to evaluate an expression as a constant (no row data needed).
 // Returns the value and true if successful, or nil and false if the expression
 // references columns or cannot be evaluated statically.
-func tryEvalConstant(expr parser.Expr, schema *types.Schema) (interface{}, bool) {
+func tryEvalConstant(eng *Engine, expr parser.Expr, schema *types.Schema) (interface{}, bool) {
 	switch e := expr.(type) {
 	case *parser.Literal:
 		return e.Value, true
 	case *parser.FuncCall:
 		// Try to evaluate constant functions (now, ago, datetime)
 		if isConstantFunc(e) {
-			val, err := evalFunc(e, schema, nil)
+			val, err := evalFunc(eng, e, schema, nil)
 			if err == nil && val != nil {
 				return val, true
 			}
 		}
 	case *parser.BinaryExpr:
 		// Constant arithmetic: e.g. now() - 1h
-		lv, lok := tryEvalConstant(e.Left, schema)
-		rv, rok := tryEvalConstant(e.Right, schema)
+		lv, lok := tryEvalConstant(eng, e.Left, schema)
+		rv, rok := tryEvalConstant(eng, e.Right, schema)
 		if lok && rok {
-			result, err := evalBinaryOp(lv, e.Op, rv, schema, e)
+			result, err := evalBinaryOp(eng, lv, e.Op, rv, schema, e)
 			if err == nil {
 				return result, true
 			}

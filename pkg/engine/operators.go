@@ -29,7 +29,7 @@ func (e *Engine) applyWhere(input *types.Table, op *parser.WhereOp) (*types.Tabl
 	re := newRowEvaluator(&input.Schema, input.Rows, predicate)
 
 	for ri, row := range input.Rows {
-		val, err := re.eval(predicate, ri, row)
+		val, err := re.eval(e, predicate, ri, row)
 		if err != nil {
 			return nil, fmt.Errorf("where: %w", err)
 		}
@@ -97,7 +97,7 @@ func (e *Engine) applyProject(input *types.Table, op *parser.ProjectOp) (*types.
 		}
 		newSchema.Columns = append(newSchema.Columns, types.Column{
 			Name: autoColumnName(item.Name, item.Expr, &input.Schema),
-			Type: inferExprType(item.Expr, &input.Schema),
+			Type: inferExprType(e, item.Expr, &input.Schema),
 		})
 		srcIdx[i] = -1
 	}
@@ -115,7 +115,7 @@ func (e *Engine) applyProject(input *types.Table, op *parser.ProjectOp) (*types.
 				newRow[i] = row[srcIdx[i]]
 				continue
 			}
-			val, err := re.eval(item.Expr, ri, row)
+			val, err := re.eval(e, item.Expr, ri, row)
 			if err != nil {
 				return nil, fmt.Errorf("project %q: %w", item.Name, err)
 			}
@@ -184,12 +184,12 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 	for i, assign := range assignments {
 		if idx := newSchema.ColumnIndex(assign.Name); idx >= 0 {
 			existingIdx[i] = idx
-			newSchema.Columns[idx].Type = inferExprType(assign.Expr, &input.Schema)
+			newSchema.Columns[idx].Type = inferExprType(e, assign.Expr, &input.Schema)
 		} else {
 			existingIdx[i] = -1
 			newSchema.Columns = append(newSchema.Columns, types.Column{
 				Name: assign.Name,
-				Type: inferExprType(assign.Expr, &input.Schema),
+				Type: inferExprType(e, assign.Expr, &input.Schema),
 			})
 			appendCount++
 		}
@@ -214,7 +214,7 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 			// means self-reference (`X = case(X == ..., ..., X)`) reads
 			// the pre-extend value of X, which is exactly what's needed
 			// for a replace-in-place semantics to make sense.
-			val, err := re.eval(assign.Expr, ri, row)
+			val, err := re.eval(e, assign.Expr, ri, row)
 			if err != nil {
 				return nil, fmt.Errorf("extend %q: %w", assign.Name, err)
 			}
@@ -355,7 +355,7 @@ func (e *Engine) applySampleDistinct(input *types.Table, op *parser.SampleDistin
 
 	emptySchema := types.Schema{}
 	emptyRow := types.Row{}
-	countVal, err := evalExpr(op.Count, &emptySchema, emptyRow)
+	countVal, err := evalExpr(e, op.Count, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("sample-distinct: %w", err)
 	}
@@ -501,7 +501,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 			var indices []int
 			for i, ex := range pick.exprs {
 				indices = append(indices, len(outSchema.Columns))
-				outSchema.Columns = append(outSchema.Columns, types.Column{Name: pick.names[i], Type: inferExprType(ex, &input.Schema)})
+				outSchema.Columns = append(outSchema.Columns, types.Column{Name: pick.names[i], Type: inferExprType(e, ex, &input.Schema)})
 			}
 			slots = append(slots, aggSlot{agg: agg, pick: pick, colIndices: indices})
 			continue
@@ -511,7 +511,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 			// → N columns; a written name applies to the first only.
 			var pctVals []float64
 			var indices []int
-			colType := percentileResultType(agg.Args, &input.Schema)
+			colType := percentileResultType(e, agg.Args, &input.Schema)
 			var written []string // (a, b) = percentiles(...) names each column
 			if !agg.AutoNamed && strings.HasPrefix(agg.Name, "(") && strings.HasSuffix(agg.Name, ")") {
 				for _, n := range strings.Split(agg.Name[1:len(agg.Name)-1], ",") {
@@ -521,7 +521,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				written = []string{agg.Name}
 			}
 			for i, pArg := range agg.Args[first:] {
-				pVal, _ := evalExpr(pArg, &input.Schema, types.Row{})
+				pVal, _ := evalExpr(e, pArg, &input.Schema, types.Row{})
 				pctVals = append(pctVals, types.ToFloat64(pVal))
 				colName := parser.PercentileAutoName(&agg, i)
 				if i < len(written) && written[i] != "" {
@@ -532,7 +532,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 			}
 			slots = append(slots, aggSlot{agg: agg, pctValues: pctVals, colIndices: indices})
 		} else {
-			outType := inferAggType(agg.Function, agg.Args, &input.Schema)
+			outType := inferAggType(e, agg.Function, agg.Args, &input.Schema)
 			idx := len(outSchema.Columns)
 			outSchema.Columns = append(outSchema.Columns, types.Column{Name: agg.Name, Type: outType})
 			slots = append(slots, aggSlot{agg: agg, colIndices: []int{idx}})
@@ -551,7 +551,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 	}
 	byOffset := len(outSchema.Columns)
 	for _, byExpr := range op.ByExprs {
-		byType := inferExprType(byExpr.Expr, &input.Schema)
+		byType := inferExprType(e, byExpr.Expr, &input.Schema)
 		outSchema.Columns = append(outSchema.Columns, types.Column{Name: byExpr.Name, Type: byType})
 	}
 
@@ -569,7 +569,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		byVals := make([]types.Value, len(op.ByExprs))
 		keyParts := make([]string, len(op.ByExprs))
 		for i, byExpr := range op.ByExprs {
-			val, err := evalExpr(byExpr.Expr, &input.Schema, row)
+			val, err := evalExpr(e, byExpr.Expr, &input.Schema, row)
 			if err != nil {
 				return nil, fmt.Errorf("summarize by %s: %w", byExpr.Name, err)
 			}
@@ -599,13 +599,13 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				switch slot.agg.Function {
 				case "arg_max", "arg_min":
 					var err error
-					best, err = findArgBestRow(slot.agg.Args[0], g.rows, &input.Schema, slot.agg.Function == "arg_max")
+					best, err = findArgBestRow(e, slot.agg.Args[0], g.rows, &input.Schema, slot.agg.Function == "arg_max")
 					if err != nil {
 						return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
 					}
 				default: // take_any: the first row whose first value is not null
 					for _, r := range g.rows {
-						if v, err := evalExpr(slot.pick.exprs[0], &input.Schema, r); err == nil && v != nil {
+						if v, err := evalExpr(e, slot.pick.exprs[0], &input.Schema, r); err == nil && v != nil {
 							best = r
 							break
 						}
@@ -616,7 +616,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				}
 				if best != nil {
 					for i, ex := range slot.pick.exprs {
-						v, err := evalExpr(ex, &input.Schema, best)
+						v, err := evalExpr(e, ex, &input.Schema, best)
 						if err != nil {
 							return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
 						}
@@ -634,7 +634,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				// itself, shared with the explicit-column form in
 				// computeAgg — see that function's doc comment for
 				// why, verified against a real documented example.
-				bestRow, err := findArgBestRow(slot.agg.Args[0], g.rows, &input.Schema, slot.argWantMax)
+				bestRow, err := findArgBestRow(e, slot.agg.Args[0], g.rows, &input.Schema, slot.argWantMax)
 				if err != nil {
 					return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
 				}
@@ -649,7 +649,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				}
 			} else if slot.pctValues != nil {
 				// percentiles() — compute all requested percentiles
-				vals, err := computePercentileValues(slot.agg, slot.pctValues, g.rows, &input.Schema)
+				vals, err := computePercentileValues(e, slot.agg, slot.pctValues, g.rows, &input.Schema)
 				if err != nil {
 					return nil, fmt.Errorf("summarize percentiles: %w", err)
 				}
@@ -659,7 +659,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 					}
 				}
 			} else {
-				val, err := computeAgg(slot.agg, g.rows, &input.Schema)
+				val, err := computeAgg(e, slot.agg, g.rows, &input.Schema)
 				if err != nil {
 					return nil, fmt.Errorf("summarize %s: %w", slot.agg.Function, err)
 				}
@@ -1220,7 +1220,7 @@ func (e *Engine) applySerialize(input *types.Table, op *parser.SerializeOp) (*ty
 		exprs[i] = a.Expr
 		outSchema.Columns = append(outSchema.Columns, types.Column{
 			Name: a.Name,
-			Type: inferExprType(a.Expr, &input.Schema),
+			Type: inferExprType(e, a.Expr, &input.Schema),
 		})
 	}
 	re := newRowEvaluator(&input.Schema, input.Rows, exprs...)
@@ -1234,7 +1234,7 @@ func (e *Engine) applySerialize(input *types.Table, op *parser.SerializeOp) (*ty
 
 		// Evaluate each computed column with window context
 		for i, a := range op.Columns {
-			val, err := re.eval(a.Expr, rowIdx, row)
+			val, err := re.eval(e, a.Expr, rowIdx, row)
 			if err != nil {
 				return nil, fmt.Errorf("serialize %s: %w", a.Name, err)
 			}
@@ -1276,7 +1276,7 @@ func (e *Engine) applyPrint(op *parser.PrintOp) (*types.Table, error) {
 		if err != nil {
 			return nil, fmt.Errorf("print: %w", err)
 		}
-		val, err := evalExpr(rewritten, &emptySchema, emptyRow)
+		val, err := evalExpr(e, rewritten, &emptySchema, emptyRow)
 		if err != nil {
 			return nil, fmt.Errorf("print: %w", err)
 		}
@@ -1308,7 +1308,7 @@ func (e *Engine) applyPrint(op *parser.PrintOp) (*types.Table, error) {
 		// actual, now-known type) rather than the original, which
 		// inferExprType has no case for at all and would fall back to
 		// an inaccurate default type for.
-		cols[i].Type = inferExprType(rewritten, &emptySchema)
+		cols[i].Type = inferExprType(e, rewritten, &emptySchema)
 	}
 	output.Schema = types.Schema{Columns: cols}
 	output.AddRow(row)
@@ -1334,20 +1334,20 @@ func (e *Engine) applyRange(op *parser.RangeOp) (*types.Table, error) {
 	emptySchema := types.Schema{}
 	emptyRow := types.Row{}
 
-	colType := inferExprType(op.Start, &emptySchema)
+	colType := inferExprType(e, op.Start, &emptySchema)
 	if !colType.IsNumeric() {
 		return nil, fmt.Errorf("range %s: start must be int, long, real, datetime, or timespan, got %s", op.ColumnName, colType)
 	}
 
-	startVal, err := evalExpr(op.Start, &emptySchema, emptyRow)
+	startVal, err := evalExpr(e, op.Start, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("range %s: start: %w", op.ColumnName, err)
 	}
-	stopVal, err := evalExpr(op.Stop, &emptySchema, emptyRow)
+	stopVal, err := evalExpr(e, op.Stop, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("range %s: stop: %w", op.ColumnName, err)
 	}
-	stepVal, err := evalExpr(op.Step, &emptySchema, emptyRow)
+	stepVal, err := evalExpr(e, op.Step, &emptySchema, emptyRow)
 	if err != nil {
 		return nil, fmt.Errorf("range %s: step: %w", op.ColumnName, err)
 	}
@@ -1370,7 +1370,7 @@ func (e *Engine) applyRange(op *parser.RangeOp) (*types.Table, error) {
 	// int, long, datetime, timespan — all int64-backed internally.
 	start := types.ToInt64(startVal)
 	stop := types.ToInt64(stopVal)
-	stepType := inferExprType(op.Step, &emptySchema)
+	stepType := inferExprType(e, op.Step, &emptySchema)
 	step := types.ToInt64(stepVal)
 	if colType == types.TypeDatetime || colType == types.TypeTimespan {
 		// Normalize step to the SAME units as start/stop (nanoseconds)
@@ -1398,7 +1398,7 @@ func (e *Engine) applyDataTable(op *parser.DataTableOp) (*types.Table, error) {
 	for i := 0; i < len(op.Values); i += numCols {
 		row := make(types.Row, numCols)
 		for j := 0; j < numCols && i+j < len(op.Values); j++ {
-			val, err := convertDataTableValue(op.Values[i+j], op.Schema.Columns[j].Type)
+			val, err := convertDataTableValue(e, op.Values[i+j], op.Schema.Columns[j].Type)
 			if err != nil {
 				return nil, fmt.Errorf("datatable row %d, col %q: %w",
 					i/numCols+1, op.Schema.Columns[j].Name, err)
@@ -1446,7 +1446,7 @@ func isQuotedLiteral(raw string) bool {
 	return len(r) >= 2 && (r[0] == '"' || r[0] == '\'') && r[len(r)-1] == r[0]
 }
 
-func convertDataTableValue(raw string, kt types.KQLType) (interface{}, error) {
+func convertDataTableValue(eng *Engine, raw string, kt types.KQLType) (interface{}, error) {
 	// Try ParseExpr + evalExpr first for a function-call-shaped literal
 	// -- datetime(...), timespan(...), dynamic({...}), ago(1h), and
 	// similar -- the same parse-and-evaluate-as-a-constant pattern
@@ -1496,7 +1496,7 @@ func convertDataTableValue(raw string, kt types.KQLType) (interface{}, error) {
 	looksLikeFuncCall := strings.Contains(raw, "(")
 	if kt == types.TypeDynamic || (!looksLikeQuotedString && looksLikeFuncCall) {
 		if expr, err := parser.ParseExpr(raw); err == nil {
-			if val, err := evalExpr(expr, &types.Schema{}, types.Row{}); err == nil {
+			if val, err := evalExpr(eng, expr, &types.Schema{}, types.Row{}); err == nil {
 				return val, nil
 			}
 		}

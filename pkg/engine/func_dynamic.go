@@ -13,7 +13,7 @@ import (
 )
 
 // evalDynamicFunc handles dynamic, array, and bag functions.
-func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "dynamic":
 		// dynamic(Expr) — the RUNTIME form, for any argument shape
@@ -57,14 +57,14 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("dynamic requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
 		if val == nil {
 			return nil, true, nil
 		}
-		argType := inferExprType(fc.Args[0], schema)
+		argType := inferExprType(eng, fc.Args[0], schema)
 		if argType == types.TypeDynamic {
 			return val, true, nil
 		}
@@ -79,7 +79,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("array_length requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -98,11 +98,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("strcat_array requires 2 arguments (array, delimiter)")
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		delimVal, err := evalExpr(fc.Args[1], schema, row)
+		delimVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -131,7 +131,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		// array_concat(arr1, arr2, ...) — concatenate arrays
 		var result []interface{}
 		for _, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -151,11 +151,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("array_index_of requires 2 arguments")
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		searchVal, err := evalExpr(fc.Args[1], schema, row)
+		searchVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -178,7 +178,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) < 1 {
 			return nil, true, fmt.Errorf("array_sort_asc requires at least 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -188,7 +188,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) < 1 {
 			return nil, true, fmt.Errorf("array_sort_desc requires at least 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -198,7 +198,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("array_reverse requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -220,7 +220,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("array_slice requires 3 arguments")
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -231,11 +231,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if !ok {
 			return nil, true, nil
 		}
-		startVal, err := evalExpr(fc.Args[1], schema, row)
+		startVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		endVal, err := evalExpr(fc.Args[2], schema, row)
+		endVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -266,7 +266,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("bag_keys requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -289,11 +289,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("bag_has_key requires 2 arguments")
 		}
-		bagVal, err := evalExpr(fc.Args[0], schema, row)
+		bagVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		keyVal, err := evalExpr(fc.Args[1], schema, row)
+		keyVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -315,11 +315,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		result := make(map[string]interface{})
 		for i := 0; i < len(fc.Args); i += 2 {
-			keyVal, err := evalExpr(fc.Args[i], schema, row)
+			keyVal, err := evalExpr(eng, fc.Args[i], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
-			valVal, err := evalExpr(fc.Args[i+1], schema, row)
+			valVal, err := evalExpr(eng, fc.Args[i+1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -333,7 +333,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		// pack_array(v1, v2, ...) — create array from values
 		result := make([]interface{}, len(fc.Args))
 		for i, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -353,11 +353,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("repeat requires 2 arguments (value, count)")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		countVal, err := evalExpr(fc.Args[1], schema, row)
+		countVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -389,7 +389,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		arrays := make([][]interface{}, len(fc.Args))
 		maxLen := 0
 		for i, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -438,7 +438,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("parse_csv requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -474,7 +474,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("%s requires 2 or 3 arguments (array, shift_count [, default_value])", fc.Name)
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -482,7 +482,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if !ok {
 			return nil, true, nil
 		}
-		shiftVal, err := evalExpr(fc.Args[1], schema, row)
+		shiftVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -492,7 +492,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		var defaultVal interface{}
 		if len(fc.Args) == 3 {
-			dv, err := evalExpr(fc.Args[2], schema, row)
+			dv, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -531,7 +531,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("%s requires 2 arguments (array, rotate_count)", fc.Name)
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -539,7 +539,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if !ok {
 			return nil, true, nil
 		}
-		countVal, err := evalExpr(fc.Args[1], schema, row)
+		countVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -581,7 +581,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("array_split requires 2 arguments (array, index)")
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -590,7 +590,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 			return nil, true, nil
 		}
 		n := int64(len(arr))
-		idxVal, err := evalExpr(fc.Args[1], schema, row)
+		idxVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -636,7 +636,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("array_sum requires 1 argument")
 		}
-		arrVal, err := evalExpr(fc.Args[0], schema, row)
+		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -674,7 +674,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("%s requires 3 arguments (condition_array, when_true, when_false)", fc.Name)
 		}
-		condVal, err := evalExpr(fc.Args[0], schema, row)
+		condVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -682,11 +682,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if !ok {
 			return nil, true, nil
 		}
-		trueVal, err := evalExpr(fc.Args[1], schema, row)
+		trueVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		falseVal, err := evalExpr(fc.Args[2], schema, row)
+		falseVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -741,7 +741,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		bags := make([]map[string]interface{}, len(fc.Args))
 		for i, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -772,7 +772,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("bag_remove_keys requires 2 arguments (bag, keys)")
 		}
-		bagVal, err := evalExpr(fc.Args[0], schema, row)
+		bagVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -780,7 +780,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if !ok {
 			return nil, true, nil
 		}
-		keysVal, err := evalExpr(fc.Args[1], schema, row)
+		keysVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -808,13 +808,13 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		return string(b), true, nil
 
 	case "set_union":
-		return setOperation(fc, schema, row, "union")
+		return setOperation(eng, fc, schema, row, "union")
 
 	case "set_intersect":
-		return setOperation(fc, schema, row, "intersect")
+		return setOperation(eng, fc, schema, row, "intersect")
 
 	case "set_difference":
-		return setOperation(fc, schema, row, "difference")
+		return setOperation(eng, fc, schema, row, "difference")
 
 	case "jaccard_index":
 		// jaccard_index(set1, set2) — verified against real ADX's own
@@ -829,11 +829,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("jaccard_index requires 2 arguments (set1, set2)")
 		}
-		v1, err := evalExpr(fc.Args[0], schema, row)
+		v1, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		v2, err := evalExpr(fc.Args[1], schema, row)
+		v2, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -887,11 +887,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("set_has_element requires 2 arguments (set, value)")
 		}
-		setVal, err := evalExpr(fc.Args[0], schema, row)
+		setVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		valueVal, err := evalExpr(fc.Args[1], schema, row)
+		valueVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -929,11 +929,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("bag_zip requires 2 arguments (KeysArray, ValuesArray)")
 		}
-		keysVal, err := evalExpr(fc.Args[0], schema, row)
+		keysVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		valuesVal, err := evalExpr(fc.Args[1], schema, row)
+		valuesVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -978,7 +978,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("bag_set_key requires 3 arguments (bag, key, value)")
 		}
-		bagVal, err := evalExpr(fc.Args[0], schema, row)
+		bagVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -986,11 +986,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if !ok {
 			return nil, true, nil
 		}
-		keyVal, err := evalExpr(fc.Args[1], schema, row)
+		keyVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		newVal, err := evalExpr(fc.Args[2], schema, row)
+		newVal, err := evalExpr(eng, fc.Args[2], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1028,7 +1028,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 			if !isColRef {
 				return nil, true, fmt.Errorf("bag_pack_columns: argument must be a bare column reference, not an expression")
 			}
-			val, err := evalExpr(arg, schema, row)
+			val, err := evalExpr(eng, arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1055,7 +1055,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("dynamic_to_json requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1079,7 +1079,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("treepath requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1134,11 +1134,11 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) < 2 || len(fc.Args) > 3 {
 			return nil, true, fmt.Errorf("%s requires 2-3 arguments (jsonPath, dataSource [, typeLiteral])", fc.Name)
 		}
-		pathVal, err := evalExpr(fc.Args[0], schema, row)
+		pathVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		dataVal, err := evalExpr(fc.Args[1], schema, row)
+		dataVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1155,7 +1155,7 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		}
 		text := jsonPathValueToString(found)
 		if len(fc.Args) == 3 {
-			typeVal, err := evalExpr(fc.Args[2], schema, row)
+			typeVal, err := evalExpr(eng, fc.Args[2], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1408,12 +1408,12 @@ func sortJSONArray(val types.Value, asc bool) (types.Value, bool, error) {
 	return string(b), true, nil
 }
 
-func setOperation(fc *parser.FuncCall, schema *types.Schema, row types.Row, op string) (types.Value, bool, error) {
+func setOperation(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row, op string) (types.Value, bool, error) {
 	if len(fc.Args) < 2 {
 		return nil, true, fmt.Errorf("%s requires at least 2 arguments", "set_"+op)
 	}
 	// Parse first array
-	v1, err := evalExpr(fc.Args[0], schema, row)
+	v1, err := evalExpr(eng, fc.Args[0], schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1428,7 +1428,7 @@ func setOperation(fc *parser.FuncCall, schema *types.Schema, row types.Row, op s
 	}
 
 	for _, arg := range fc.Args[1:] {
-		v, err := evalExpr(arg, schema, row)
+		v, err := evalExpr(eng, arg, schema, row)
 		if err != nil {
 			return nil, true, err
 		}

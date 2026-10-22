@@ -176,7 +176,7 @@ func (e *Engine) applyFind(op *parser.FindOp) (*types.Table, error) {
 						evalRow = make(types.Row, len(row)+padCount)
 						copy(evalRow, row)
 					}
-					val, err := evalExpr(op.Predicate, &evalSchema, evalRow)
+					val, err := evalExpr(e, op.Predicate, &evalSchema, evalRow)
 					if err != nil {
 						return nil, fmt.Errorf("find: predicate against %q: %w", tableName, err)
 					}

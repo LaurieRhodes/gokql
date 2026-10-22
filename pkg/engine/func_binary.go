@@ -33,7 +33,7 @@ var binaryFuncArity = map[string]int{
 	"bitset_count_ones":  1,
 }
 
-func evalBinaryFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalBinaryFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	arity, ok := binaryFuncArity[fc.Name]
 	if !ok {
 		return nil, false, nil
@@ -43,7 +43,7 @@ func evalBinaryFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 	}
 	ops := make([]int64, arity)
 	for i, a := range fc.Args {
-		v, err := evalExpr(a, schema, row)
+		v, err := evalExpr(eng, a, schema, row)
 		if err != nil {
 			return nil, true, err
 		}

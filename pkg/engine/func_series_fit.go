@@ -20,7 +20,7 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-func evalSeriesFitFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalSeriesFitFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if fc.Name != "series_fit_line_dynamic" && fc.Name != "__series_fit_poly_dynamic" {
 		return nil, false, nil
 	}
@@ -29,7 +29,7 @@ func evalSeriesFitFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row)
 	}
 	vals := make([]types.Value, len(fc.Args))
 	for i, a := range fc.Args {
-		v, err := evalExpr(a, schema, row)
+		v, err := evalExpr(eng, a, schema, row)
 		if err != nil {
 			return nil, true, err
 		}

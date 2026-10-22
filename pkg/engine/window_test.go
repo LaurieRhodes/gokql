@@ -128,7 +128,7 @@ func TestZoneFilterSkipsWindowPredicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := stmt.(*parser.Query)
-	if f := extractZoneFilter(q.Operators, schema); f != nil {
+	if f := extractZoneFilter(nil, q.Operators, schema); f != nil {
 		t.Error("zone filter extracted from a predicate containing prev()")
 	}
 }

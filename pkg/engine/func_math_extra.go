@@ -15,13 +15,13 @@ import (
 // maxRangeElements is range()'s documented result cap (2^20).
 const maxRangeElements = 1 << 20
 
-func evalMathExtraFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalMathExtraFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "cot", "erf", "erfc", "gamma", "loggamma":
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
-		v, err := evalExpr(fc.Args[0], schema, row)
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil || v == nil {
 			return nil, true, err
 		}
@@ -46,30 +46,30 @@ func evalMathExtraFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row)
 		if len(fc.Args) != 3 {
 			return nil, true, fmt.Errorf("replace(regex, rewrite, text) requires 3 arguments")
 		}
-		v, err := evalFunc(&parser.FuncCall{Name: "replace_regex", Args: []parser.Expr{fc.Args[2], fc.Args[0], fc.Args[1]}}, schema, row)
+		v, err := evalFunc(eng, &parser.FuncCall{Name: "replace_regex", Args: []parser.Expr{fc.Args[2], fc.Args[0], fc.Args[1]}}, schema, row)
 		return v, true, err
 
 	case "assert":
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("assert(condition, message) requires 2 arguments")
 		}
-		return evalAssert(fc, schema, row)
+		return evalAssert(eng, fc, schema, row)
 
 	case "range":
-		return evalRangeFunc(fc, schema, row)
+		return evalRangeFunc(eng, fc, schema, row)
 	}
 	return nil, false, nil
 }
 
-func evalAssert(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
-	c, err := evalExpr(fc.Args[0], schema, row)
+func evalAssert(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	c, err := evalExpr(eng, fc.Args[0], schema, row)
 	if err != nil {
 		return nil, true, err
 	}
 	if b, ok := c.(bool); ok && b {
 		return true, true, nil
 	}
-	m, err := evalExpr(fc.Args[1], schema, row)
+	m, err := evalExpr(eng, fc.Args[1], schema, row)
 	if err != nil {
 		return nil, true, err
 	}
@@ -80,13 +80,13 @@ func evalAssert(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types
 // start+step, ... while within stop, for numbers, datetimes and
 // timespans (default step 1, or 1h for datetime and timespan). A
 // negative step counts down; a zero step gives null.
-func evalRangeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalRangeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if len(fc.Args) < 2 || len(fc.Args) > 3 {
 		return nil, true, fmt.Errorf("range(start, stop [, step]) takes 2 or 3 arguments")
 	}
 	vals := make([]types.Value, len(fc.Args))
 	for i, a := range fc.Args {
-		v, err := evalExpr(a, schema, row)
+		v, err := evalExpr(eng, a, schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -95,7 +95,7 @@ func evalRangeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (ty
 		}
 		vals[i] = v
 	}
-	kind := inferExprType(fc.Args[0], schema)
+	kind := inferExprType(eng, fc.Args[0], schema)
 	var out []interface{}
 	switch kind {
 	case types.TypeDatetime, types.TypeTimespan:
@@ -123,7 +123,7 @@ func evalRangeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (ty
 	default:
 		integral := true
 		for i, v := range vals {
-			if t := inferExprType(fc.Args[i], schema); t == types.TypeReal {
+			if t := inferExprType(eng, fc.Args[i], schema); t == types.TypeReal {
 				integral = false
 			}
 			if _, ok := v.(float64); ok {

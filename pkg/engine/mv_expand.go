@@ -259,14 +259,14 @@ func (e *Engine) applyMvExpand(input *types.Table, op *parser.MvExpandOp) (*type
 	bagAsArray := op.BagMode == "array"
 	dynamicSrc := make([]bool, len(op.Columns))
 	for i, col := range op.Columns {
-		dynamicSrc[i] = inferExprType(col.Source, &input.Schema) == types.TypeDynamic
+		dynamicSrc[i] = inferExprType(e, col.Source, &input.Schema) == types.TypeDynamic
 	}
 	output := types.NewTable(input.Name, outSchema)
 	elems := make([][]types.Value, len(op.Columns))
 	for _, row := range input.Rows {
 		n := 0
 		for i, col := range op.Columns {
-			v, err := evalExpr(col.Source, &input.Schema, row)
+			v, err := evalExpr(e, col.Source, &input.Schema, row)
 			if err != nil {
 				return nil, fmt.Errorf("mv-expand %q: %w", col.Name, err)
 			}
@@ -328,7 +328,7 @@ func (e *Engine) applyMvApply(input *types.Table, op *parser.MvApplyOp) (*types.
 	targets := make([]int, len(op.Columns))
 	dynamicSrc := make([]bool, len(op.Columns))
 	for i, col := range op.Columns {
-		dynamicSrc[i] = inferExprType(col.Source, &input.Schema) == types.TypeDynamic
+		dynamicSrc[i] = inferExprType(e, col.Source, &input.Schema) == types.TypeDynamic
 		if idx := subSchema.ColumnIndex(col.Name); idx >= 0 {
 			subSchema.Columns[idx].Type = col.Type
 			targets[i] = idx
@@ -415,7 +415,7 @@ func (e *Engine) applyMvApply(input *types.Table, op *parser.MvApplyOp) (*types.
 	for _, row := range input.Rows {
 		n := 0
 		for i, col := range op.Columns {
-			v, err := evalExpr(col.Source, &input.Schema, row)
+			v, err := evalExpr(e, col.Source, &input.Schema, row)
 			if err != nil {
 				return nil, fmt.Errorf("mv-apply %q: %w", col.Name, err)
 			}

@@ -21,7 +21,7 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-func evalBetaFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalBetaFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	var n int
 	switch fc.Name {
 	case "beta_cdf", "beta_inv", "beta_pdf":
@@ -36,7 +36,7 @@ func evalBetaFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (typ
 	}
 	a := make([]float64, n)
 	for i, e := range fc.Args {
-		v, err := evalExpr(e, schema, row)
+		v, err := evalExpr(eng, e, schema, row)
 		if err != nil {
 			return nil, true, err
 		}

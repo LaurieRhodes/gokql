@@ -21,7 +21,7 @@ import (
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-func evalBin(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalBin(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	want := 2
 	if fc.Name == "bin_at" {
 		want = 3
@@ -31,7 +31,7 @@ func evalBin(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Va
 	}
 	vals := make([]types.Value, want)
 	for i, a := range fc.Args {
-		v, err := evalExpr(a, schema, row)
+		v, err := evalExpr(eng, a, schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -40,8 +40,8 @@ func evalBin(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Va
 		}
 		vals[i] = v
 	}
-	valType := inferExprType(fc.Args[0], schema)
-	sizeType := inferExprType(fc.Args[1], schema)
+	valType := inferExprType(eng, fc.Args[0], schema)
+	sizeType := inferExprType(eng, fc.Args[1], schema)
 
 	switch valType {
 	case types.TypeDatetime, types.TypeTimespan:
@@ -63,7 +63,7 @@ func evalBin(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Va
 		return fixed + floorDivInt64(types.ToInt64(vals[0])-fixed, size)*size, true, nil
 	}
 
-	if binResultType(fc.Args, schema) == types.TypeLong {
+	if binResultType(eng, fc.Args, schema) == types.TypeLong {
 		size := types.ToInt64(vals[1])
 		if size <= 0 {
 			return nil, true, nil
@@ -86,16 +86,16 @@ func evalBin(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Va
 }
 
 // binResultType is the static type of bin/floor/bin_at.
-func binResultType(args []parser.Expr, schema *types.Schema) types.KQLType {
+func binResultType(eng *Engine, args []parser.Expr, schema *types.Schema) types.KQLType {
 	if len(args) == 0 {
 		return types.TypeLong
 	}
-	switch t := inferExprType(args[0], schema); t {
+	switch t := inferExprType(eng, args[0], schema); t {
 	case types.TypeDatetime, types.TypeTimespan:
 		return t
 	}
 	for _, a := range args {
-		if inferExprType(a, schema) == types.TypeReal {
+		if inferExprType(eng, a, schema) == types.TypeReal {
 			return types.TypeReal
 		}
 	}

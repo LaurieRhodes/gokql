@@ -42,7 +42,7 @@ func (e *Engine) applyScan(input *types.Table, op *parser.ScanOp) (*types.Table,
 		}
 		declTypes[i] = t
 		if d.Default != nil {
-			v, err := evalExpr(d.Default, &emptySchema, emptyRow)
+			v, err := evalExpr(e, d.Default, &emptySchema, emptyRow)
 			if err != nil {
 				return nil, fmt.Errorf("scan declare %q: default: %w", d.Name, err)
 			}
@@ -82,7 +82,7 @@ func (e *Engine) applyScan(input *types.Table, op *parser.ScanOp) (*types.Table,
 		copy(augRow, row)
 		augRow[stateColIdx] = stateJSON
 
-		condVal, err := evalExpr(op.Condition, &augSchema, augRow)
+		condVal, err := evalExpr(e, op.Condition, &augSchema, augRow)
 		if err != nil {
 			return nil, fmt.Errorf("scan step %s: condition: %w", op.StepName, err)
 		}
@@ -98,7 +98,7 @@ func (e *Engine) applyScan(input *types.Table, op *parser.ScanOp) (*types.Table,
 			newState[k] = v
 		}
 		for _, a := range op.Assignments {
-			v, err := evalExpr(a.Expr, &augSchema, augRow)
+			v, err := evalExpr(e, a.Expr, &augSchema, augRow)
 			if err != nil {
 				return nil, fmt.Errorf("scan step %s: assignment %s: %w", op.StepName, a.Column, err)
 			}

@@ -47,13 +47,13 @@ var embedBackoff = []time.Duration{
 	200 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second, 2 * time.Second,
 }
 
-func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalVectorFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "embed_text":
 		if len(fc.Args) < 1 || len(fc.Args) > 2 {
 			return nil, true, fmt.Errorf("embed_text requires 1 or 2 arguments (text[, model])")
 		}
-		textVal, err := evalExpr(fc.Args[0], schema, row)
+		textVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -67,7 +67,7 @@ func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		// configured embedder, else GOKQL_EMBED, else the historical
 		// Ollama default -- so an unconfigured engine behaves exactly
 		// as it did before embedder.go existed.
-		em := currentEmbedder()
+		em := eng.currentEmbedder()
 
 		// An explicit second argument still names a MODEL, not a
 		// backend: embed_text(x, "mxbai-embed-large") must keep
@@ -78,7 +78,7 @@ func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		// silently ignoring the argument and returning vectors from
 		// the wrong model.
 		if len(fc.Args) == 2 {
-			mv, err := evalExpr(fc.Args[1], schema, row)
+			mv, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -113,11 +113,11 @@ func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("series_cosine_similarity requires 2 arguments")
 		}
-		aVal, err := evalExpr(fc.Args[0], schema, row)
+		aVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		bVal, err := evalExpr(fc.Args[1], schema, row)
+		bVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -139,11 +139,11 @@ func evalVectorFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		if len(fc.Args) != 2 {
 			return nil, true, fmt.Errorf("series_dot_product requires 2 arguments")
 		}
-		aVal, err := evalExpr(fc.Args[0], schema, row)
+		aVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		bVal, err := evalExpr(fc.Args[1], schema, row)
+		bVal, err := evalExpr(eng, fc.Args[1], schema, row)
 		if err != nil {
 			return nil, true, err
 		}

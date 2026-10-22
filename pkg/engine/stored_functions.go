@@ -410,7 +410,7 @@ func (e *Engine) resolveStoredFunction(call *parser.StoredFunctionCall) (*types.
 	// through the SAME LetContext when executeCompound runs. Either way,
 	// no text substitution into the stored body at all — parameter
 	// references resolve through the same ColumnRef-falls-back-to-
-	// activeLetContext.Scalars path a normal `let x = 5; ...` already
+	// let-context Scalars path a normal `let x = 5; ...` already
 	// uses, not by rewriting the body's text.
 	var toExecute parser.Statement
 	switch s := stmt.(type) {
@@ -533,7 +533,7 @@ func (e *Engine) bindStoredFunctionArgs(fnName string, declared []parser.Functio
 			if err != nil {
 				return nil, fmt.Errorf("function %q: argument %d (%q): %w", fnName, i+1, param.Name, err)
 			}
-			argType := inferExprType(expr, &emptySchema)
+			argType := inferExprType(e, expr, &emptySchema)
 			if !kqlTypesCompatible(argType, param.Type) {
 				return nil, fmt.Errorf("function %q: argument %d (%q): expected %s, got %s",
 					fnName, i+1, param.Name, param.Type, argType)
@@ -546,7 +546,7 @@ func (e *Engine) bindStoredFunctionArgs(fnName string, declared []parser.Functio
 				fnName, i+1, param.Name, param.Type)
 		}
 
-		val, err := evalExpr(valueExpr, &emptySchema, emptyRow)
+		val, err := evalExpr(e, valueExpr, &emptySchema, emptyRow)
 		if err != nil {
 			return nil, fmt.Errorf("function %q: evaluating argument %q: %w", fnName, param.Name, err)
 		}

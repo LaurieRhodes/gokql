@@ -667,7 +667,7 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 			if p.pos != pos {
 				continue
 			}
-			keep, evalErr := evalExpr(p.expr, &lay.schema, row)
+			keep, evalErr := evalExpr(e, p.expr, &lay.schema, row)
 			if evalErr != nil {
 				return false, fmt.Errorf("graph-match where: %w", evalErr)
 			}

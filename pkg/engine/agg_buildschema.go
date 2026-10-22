@@ -132,13 +132,13 @@ func (n *schemaNode) render(b *bytes.Buffer) {
 	}
 }
 
-func computeBuildSchema(agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, error) {
+func computeBuildSchema(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, error) {
 	if len(agg.Args) != 1 {
 		return nil, fmt.Errorf("buildschema: expected 1 argument")
 	}
 	root := &schemaNode{}
 	for _, r := range rows {
-		v, err := evalExpr(agg.Args[0], schema, r)
+		v, err := evalExpr(eng, agg.Args[0], schema, r)
 		if err != nil {
 			return nil, err
 		}

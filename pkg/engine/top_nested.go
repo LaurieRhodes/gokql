@@ -25,8 +25,8 @@ func (e *Engine) applyTopNested(input *types.Table, op *parser.TopNestedOp) (*ty
 	var cols []types.Column
 	for _, l := range op.Levels {
 		cols = append(cols,
-			types.Column{Name: l.Name, Type: inferExprType(l.Expr, &input.Schema)},
-			types.Column{Name: l.Agg.Name, Type: inferAggType(l.Agg.Function, l.Agg.Args, &input.Schema)})
+			types.Column{Name: l.Name, Type: inferExprType(e, l.Expr, &input.Schema)},
+			types.Column{Name: l.Agg.Name, Type: inferAggType(e, l.Agg.Function, l.Agg.Args, &input.Schema)})
 	}
 	out := types.NewTable(input.Name, types.Schema{Columns: cols})
 	rows, err := e.topNestedLevel(input, op.Levels, 0, input.Rows)
@@ -55,7 +55,7 @@ func (e *Engine) topNestedLevel(input *types.Table, levels []parser.TopNestedLev
 	index := map[string]int{}
 	var groups []*topNestedGroup
 	for _, r := range rows {
-		k, err := evalExpr(lvl.Expr, schema, r)
+		k, err := evalExpr(e, lvl.Expr, schema, r)
 		if err != nil {
 			return nil, fmt.Errorf("top-nested %s: %w", lvl.Name, err)
 		}
@@ -68,9 +68,9 @@ func (e *Engine) topNestedLevel(input *types.Table, levels []parser.TopNestedLev
 		}
 		groups[gi].rows = append(groups[gi].rows, r)
 	}
-	aggType := inferAggType(lvl.Agg.Function, lvl.Agg.Args, schema)
+	aggType := inferAggType(e, lvl.Agg.Function, lvl.Agg.Args, schema)
 	for _, g := range groups {
-		v, err := computeAgg(lvl.Agg, g.rows, schema)
+		v, err := computeAgg(e, lvl.Agg, g.rows, schema)
 		if err != nil {
 			return nil, fmt.Errorf("top-nested %s: %w", lvl.Agg.Name, err)
 		}
@@ -108,11 +108,11 @@ func (e *Engine) topNestedLevel(input *types.Table, levels []parser.TopNestedLev
 		for _, g := range rest {
 			otherRows = append(otherRows, g.rows...)
 		}
-		v, err := computeAgg(lvl.Agg, otherRows, schema)
+		v, err := computeAgg(e, lvl.Agg, otherRows, schema)
 		if err != nil {
 			return nil, fmt.Errorf("top-nested %s: %w", lvl.Agg.Name, err)
 		}
-		c, err := evalExpr(lvl.Others, &types.Schema{}, types.Row{})
+		c, err := evalExpr(e, lvl.Others, &types.Schema{}, types.Row{})
 		if err != nil {
 			return nil, fmt.Errorf("top-nested others: %w", err)
 		}

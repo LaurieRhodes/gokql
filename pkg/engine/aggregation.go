@@ -26,7 +26,7 @@ import (
 // output for exactly this case (a "Banana" group with only null
 // Version values still appears in the result, with Version null and
 // the OTHER star-expanded columns taken from the first Banana row).
-func findArgBestRow(maxExpr parser.Expr, rows []types.Row, schema *types.Schema, wantMax bool) (types.Row, error) {
+func findArgBestRow(eng *Engine, maxExpr parser.Expr, rows []types.Row, schema *types.Schema, wantMax bool) (types.Row, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -36,7 +36,7 @@ func findArgBestRow(maxExpr parser.Expr, rows []types.Row, schema *types.Schema,
 	haveNonNullCandidate := false
 
 	for _, row := range rows {
-		val, err := evalExpr(maxExpr, schema, row)
+		val, err := evalExpr(eng, maxExpr, schema, row)
 		if err != nil {
 			return nil, err
 		}
@@ -65,8 +65,8 @@ func findArgBestRow(maxExpr parser.Expr, rows []types.Row, schema *types.Schema,
 	return rows[0], nil
 }
 
-func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, error) {
-	if v, ok, err := computeSketchAgg(agg, rows, schema); ok {
+func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *types.Schema) (types.Value, error) {
+	if v, ok, err := computeSketchAgg(eng, agg, rows, schema); ok {
 		return v, err
 	}
 	switch agg.Function {
@@ -79,7 +79,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		count := int64(0)
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil {
 				continue
 			}
@@ -93,11 +93,11 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("sum requires 1 argument")
 		}
-		integral := sumIsIntegral(agg.Args[0], schema)
+		integral := sumIsIntegral(eng, agg.Args[0], schema)
 		sum := float64(0)
 		var isum int64
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -121,7 +121,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		sum := float64(0)
 		count := 0
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -140,7 +140,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		var minVal types.Value
 		var valType types.KQLType
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -160,7 +160,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		var maxVal types.Value
 		var valType types.KQLType
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -181,14 +181,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		var minVal types.Value
 		var valType types.KQLType
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -209,14 +209,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		var maxVal types.Value
 		var valType types.KQLType
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -244,7 +244,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		seen := make(map[string]bool)
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -279,15 +279,15 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 1 || len(agg.Args) > 2 {
 			return nil, fmt.Errorf("make_set requires 1-2 arguments (expr [, maxSize])")
 		}
-		maxSize, err := aggMaxSize(agg, 1, schema)
+		maxSize, err := aggMaxSize(eng, agg, 1, schema)
 		if err != nil {
 			return nil, err
 		}
-		argType := inferExprType(agg.Args[0], schema)
+		argType := inferExprType(eng, agg.Args[0], schema)
 		seen := make(map[string]bool)
 		var values []interface{}
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -314,14 +314,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 1 || len(agg.Args) > 2 {
 			return nil, fmt.Errorf("make_list requires 1-2 arguments (expr [, maxSize])")
 		}
-		maxSize, err := aggMaxSize(agg, 1, schema)
+		maxSize, err := aggMaxSize(eng, agg, 1, schema)
 		if err != nil {
 			return nil, err
 		}
-		argType := inferExprType(agg.Args[0], schema)
+		argType := inferExprType(eng, agg.Args[0], schema)
 		var values []interface{}
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -348,14 +348,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 1 || len(agg.Args) > 2 {
 			return nil, fmt.Errorf("make_list_with_nulls requires 1-2 arguments (expr [, maxSize])")
 		}
-		maxSize, err := aggMaxSize(agg, 1, schema)
+		maxSize, err := aggMaxSize(eng, agg, 1, schema)
 		if err != nil {
 			return nil, err
 		}
-		argType := inferExprType(agg.Args[0], schema)
+		argType := inferExprType(eng, agg.Args[0], schema)
 		values := make([]interface{}, 0, len(rows))
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil {
 				continue
 			}
@@ -384,22 +384,22 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 2 || len(agg.Args) > 3 {
 			return nil, fmt.Errorf("make_set_if requires 2-3 arguments (expr, predicate [, maxSize])")
 		}
-		maxSize, err := aggMaxSize(agg, 2, schema)
+		maxSize, err := aggMaxSize(eng, agg, 2, schema)
 		if err != nil {
 			return nil, err
 		}
-		argType := inferExprType(agg.Args[0], schema)
+		argType := inferExprType(eng, agg.Args[0], schema)
 		seen := make(map[string]bool)
 		var values []interface{}
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -423,21 +423,21 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 2 || len(agg.Args) > 3 {
 			return nil, fmt.Errorf("make_list_if requires 2-3 arguments (expr, predicate [, maxSize])")
 		}
-		maxSize, err := aggMaxSize(agg, 2, schema)
+		maxSize, err := aggMaxSize(eng, agg, 2, schema)
 		if err != nil {
 			return nil, err
 		}
-		argType := inferExprType(agg.Args[0], schema)
+		argType := inferExprType(eng, agg.Args[0], schema)
 		var values []interface{}
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -455,13 +455,13 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 1 || len(agg.Args) > 2 {
 			return nil, fmt.Errorf("make_bag requires 1-2 arguments")
 		}
-		maxSize, err := aggMaxSize(agg, 1, schema)
+		maxSize, err := aggMaxSize(eng, agg, 1, schema)
 		if err != nil {
 			return nil, err
 		}
 		merged := make(map[string]interface{})
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -475,20 +475,20 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 2 || len(agg.Args) > 3 {
 			return nil, fmt.Errorf("make_bag_if requires 2-3 arguments (expr, predicate [, maxSize])")
 		}
-		maxSize, err := aggMaxSize(agg, 2, schema)
+		maxSize, err := aggMaxSize(eng, agg, 2, schema)
 		if err != nil {
 			return nil, err
 		}
 		merged := make(map[string]interface{})
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -506,14 +506,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 2 {
 			return nil, fmt.Errorf("arg_max requires at least 2 arguments")
 		}
-		bestRow, err := findArgBestRow(agg.Args[0], rows, schema, true)
+		bestRow, err := findArgBestRow(eng, agg.Args[0], rows, schema, true)
 		if err != nil {
 			return nil, err
 		}
 		if bestRow == nil {
 			return nil, nil
 		}
-		return evalExpr(agg.Args[1], schema, bestRow)
+		return evalExpr(eng, agg.Args[1], schema, bestRow)
 
 	case "arg_min":
 		// arg_min(expr, ExprToReturn | *) — returns the row where expr
@@ -522,14 +522,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) < 2 {
 			return nil, fmt.Errorf("arg_min requires at least 2 arguments")
 		}
-		bestRow, err := findArgBestRow(agg.Args[0], rows, schema, false)
+		bestRow, err := findArgBestRow(eng, agg.Args[0], rows, schema, false)
 		if err != nil {
 			return nil, err
 		}
 		if bestRow == nil {
 			return nil, nil
 		}
-		return evalExpr(agg.Args[1], schema, bestRow)
+		return evalExpr(eng, agg.Args[1], schema, bestRow)
 
 	case "any", "take_any":
 		// any(expr) / take_any(expr) — returns an arbitrary value from
@@ -544,7 +544,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			return nil, fmt.Errorf("%s requires 1 argument", agg.Function)
 		}
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -565,7 +565,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			return nil, fmt.Errorf("%s requires 2 arguments (expr, predicate)", agg.Function)
 		}
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
@@ -573,7 +573,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			if !ok {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -591,11 +591,11 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != want {
 			return nil, fmt.Errorf("%s: expected %d arguments, got %d", agg.Function, want, len(agg.Args))
 		}
-		pctVal, err := evalExpr(agg.Args[want-1], schema, types.Row{})
+		pctVal, err := evalExpr(eng, agg.Args[want-1], schema, types.Row{})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", agg.Function, err)
 		}
-		vals, err := computePercentileValues(agg, []float64{types.ToFloat64(pctVal)}, rows, schema)
+		vals, err := computePercentileValues(eng, agg, []float64{types.ToFloat64(pctVal)}, rows, schema)
 		if err != nil {
 			return nil, err
 		}
@@ -637,7 +637,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			first = 2
 		}
 		if len(agg.Args) == first+1 {
-			arrVal, err := evalExpr(agg.Args[first], schema, types.Row{})
+			arrVal, err := evalExpr(eng, agg.Args[first], schema, types.Row{})
 			if err == nil {
 				if arr, ok := parseJSONArray(arrVal); ok {
 					for _, item := range arr {
@@ -648,14 +648,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		if pcts == nil {
 			for _, pArg := range agg.Args[first:] {
-				pVal, err := evalExpr(pArg, schema, types.Row{})
+				pVal, err := evalExpr(eng, pArg, schema, types.Row{})
 				if err != nil {
 					return nil, fmt.Errorf("percentiles_array: %w", err)
 				}
 				pcts = append(pcts, types.ToFloat64(pVal))
 			}
 		}
-		results, err := computePercentileValues(agg, pcts, rows, schema)
+		results, err := computePercentileValues(eng, agg, pcts, rows, schema)
 		if err != nil {
 			return nil, err
 		}
@@ -674,7 +674,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -703,7 +703,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -731,14 +731,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			pred, err := evalExpr(agg.Args[1], schema, row)
+			pred, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if b, ok := pred.(bool); !ok || !b {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -766,7 +766,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -794,7 +794,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -827,14 +827,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -864,14 +864,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		var values []float64
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -908,7 +908,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("covariance requires 2 arguments")
 		}
-		xs, ys := collectPairedFloats(agg.Args[0], agg.Args[1], schema, rows)
+		xs, ys := collectPairedFloats(eng, agg.Args[0], agg.Args[1], schema, rows)
 		if len(xs) < 2 {
 			return nil, nil
 		}
@@ -929,7 +929,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("covariancep requires 2 arguments")
 		}
-		xs, ys := collectPairedFloats(agg.Args[0], agg.Args[1], schema, rows)
+		xs, ys := collectPairedFloats(eng, agg.Args[0], agg.Args[1], schema, rows)
 		if len(xs) == 0 {
 			return nil, nil
 		}
@@ -946,7 +946,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 3 {
 			return nil, fmt.Errorf("covarianceif requires 3 arguments")
 		}
-		xs, ys := collectPairedFloatsIf(agg.Args[0], agg.Args[1], agg.Args[2], schema, rows)
+		xs, ys := collectPairedFloatsIf(eng, agg.Args[0], agg.Args[1], agg.Args[2], schema, rows)
 		if len(xs) < 2 {
 			return nil, nil
 		}
@@ -960,7 +960,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 3 {
 			return nil, fmt.Errorf("covariancepif requires 3 arguments")
 		}
-		xs, ys := collectPairedFloatsIf(agg.Args[0], agg.Args[1], agg.Args[2], schema, rows)
+		xs, ys := collectPairedFloatsIf(eng, agg.Args[0], agg.Args[1], agg.Args[2], schema, rows)
 		if len(xs) == 0 {
 			return nil, nil
 		}
@@ -971,18 +971,18 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("sumif requires 2 arguments")
 		}
-		integral := sumIsIntegral(agg.Args[0], schema)
+		integral := sumIsIntegral(eng, agg.Args[0], schema)
 		sum := float64(0)
 		var isum int64
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1007,14 +1007,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		sum := float64(0)
 		count := 0
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1034,14 +1034,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		seen := make(map[string]bool)
 		for _, row := range rows {
-			predVal, err := evalExpr(agg.Args[1], schema, row)
+			predVal, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil {
 				continue
 			}
 			if pred, ok := predVal.(bool); !ok || !pred {
 				continue
 			}
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1056,7 +1056,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		result := int64(0)
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1072,7 +1072,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		result := int64(-1) // all bits set
 		first := true
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1095,7 +1095,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		result := int64(0)
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
+			val, err := evalExpr(eng, agg.Args[0], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1112,14 +1112,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		if len(agg.Args) != 2 {
 			return nil, fmt.Errorf("strcat_delim as aggregation requires 2 arguments (delimiter, expr)")
 		}
-		delimVal, err := evalExpr(agg.Args[0], schema, types.Row{})
+		delimVal, err := evalExpr(eng, agg.Args[0], schema, types.Row{})
 		if err != nil {
 			return nil, err
 		}
 		delim := fmt.Sprintf("%v", delimVal)
 		var parts []string
 		for _, row := range rows {
-			val, err := evalExpr(agg.Args[1], schema, row)
+			val, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil || val == nil {
 				continue
 			}
@@ -1154,15 +1154,15 @@ func inferValType(v types.Value) types.KQLType {
 
 // sumIsIntegral reports whether sum/sumif over expr accumulates exactly
 // in int64: int, long and timespan (100 ns ticks) arguments.
-func sumIsIntegral(expr parser.Expr, schema *types.Schema) bool {
-	switch inferExprType(expr, schema) {
+func sumIsIntegral(eng *Engine, expr parser.Expr, schema *types.Schema) bool {
+	switch inferExprType(eng, expr, schema) {
 	case types.TypeInt, types.TypeLong, types.TypeTimespan:
 		return true
 	}
 	return false
 }
 
-func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) types.KQLType {
+func inferAggType(eng *Engine, funcName string, args []parser.Expr, schema *types.Schema) types.KQLType {
 	switch funcName {
 	case "count", "countif", "dcount", "dcountif", "count_distinct", "count_distinctif":
 		return types.TypeLong
@@ -1170,7 +1170,7 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 		// ADX: sum of int or long is long, of timespan is timespan,
 		// otherwise real.
 		if len(args) > 0 {
-			switch t := inferExprType(args[0], schema); t {
+			switch t := inferExprType(eng, args[0], schema); t {
 			case types.TypeInt, types.TypeLong:
 				return types.TypeLong
 			case types.TypeTimespan:
@@ -1179,7 +1179,7 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 		}
 		return types.TypeReal
 	case "percentile", "percentiles", "percentilew", "percentilesw":
-		return percentileResultType(args, schema)
+		return percentileResultType(eng, args, schema)
 	case "hll", "hll_if", "hll_merge", "tdigest", "tdigest_merge", "merge_tdigest", "buildschema":
 		return types.TypeDynamic
 	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "covariance", "covariancep", "covarianceif", "covariancepif":
@@ -1196,7 +1196,7 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 	case "arg_max", "arg_min", "any", "take_any":
 		// Return type depends on the second argument
 		if len(args) > 1 {
-			return inferExprType(args[1], schema)
+			return inferExprType(eng, args[1], schema)
 		}
 		return types.TypeDynamic
 
@@ -1206,7 +1206,7 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 		// argument is the predicate (a bool), never the value being
 		// selected, so inferring from args[1] here would be wrong.
 		if len(args) > 0 {
-			return inferExprType(args[0], schema)
+			return inferExprType(eng, args[0], schema)
 		}
 		return types.TypeDynamic
 	case "make_set", "make_list", "make_set_if", "make_list_if", "make_list_with_nulls", "make_bag", "make_bag_if":
@@ -1229,11 +1229,11 @@ const maxAggElements = 1048576
 
 // aggMaxSize reads the optional constant maxSize argument at position
 // idx, defaulting to and capped at maxAggElements.
-func aggMaxSize(agg parser.Aggregation, idx int, schema *types.Schema) (int, error) {
+func aggMaxSize(eng *Engine, agg parser.Aggregation, idx int, schema *types.Schema) (int, error) {
 	if len(agg.Args) <= idx {
 		return maxAggElements, nil
 	}
-	v, err := evalExpr(agg.Args[idx], schema, make(types.Row, len(schema.Columns)))
+	v, err := evalExpr(eng, agg.Args[idx], schema, make(types.Row, len(schema.Columns)))
 	if err != nil {
 		return 0, fmt.Errorf("%s: maxSize: %w", agg.Function, err)
 	}
@@ -1291,7 +1291,7 @@ func mergeDynamicIntoBag(bag map[string]interface{}, val interface{}) {
 // ADX's documented definition; ADX estimates it with T-Digest, which
 // is exact for small populations. Results keep the value's type (int
 // widens to long); an empty population gives nulls.
-func computePercentileValues(agg parser.Aggregation, pcts []float64, rows []types.Row, schema *types.Schema) ([]types.Value, error) {
+func computePercentileValues(eng *Engine, agg parser.Aggregation, pcts []float64, rows []types.Row, schema *types.Schema) ([]types.Value, error) {
 	if len(agg.Args) < 2 {
 		return nil, fmt.Errorf("%s requires at least 2 arguments", agg.Function)
 	}
@@ -1304,13 +1304,13 @@ func computePercentileValues(agg parser.Aggregation, pcts []float64, rows []type
 	var items []item
 	var total int64
 	for _, row := range rows {
-		val, err := evalExpr(agg.Args[0], schema, row)
+		val, err := evalExpr(eng, agg.Args[0], schema, row)
 		if err != nil || val == nil {
 			continue
 		}
 		w := int64(1)
 		if weighted {
-			wv, err := evalExpr(agg.Args[1], schema, row)
+			wv, err := evalExpr(eng, agg.Args[1], schema, row)
 			if err != nil || wv == nil {
 				continue
 			}
@@ -1350,11 +1350,11 @@ func computePercentileValues(agg parser.Aggregation, pcts []float64, rows []type
 
 // percentileResultType is the type of a percentile of expr: the
 // expression's own type (int widens to long).
-func percentileResultType(args []parser.Expr, schema *types.Schema) types.KQLType {
+func percentileResultType(eng *Engine, args []parser.Expr, schema *types.Schema) types.KQLType {
 	if len(args) == 0 {
 		return types.TypeReal
 	}
-	switch t := inferExprType(args[0], schema); t {
+	switch t := inferExprType(eng, args[0], schema); t {
 	case types.TypeInt, types.TypeLong:
 		return types.TypeLong
 	case types.TypeDatetime, types.TypeTimespan, types.TypeReal:
@@ -1371,14 +1371,14 @@ func percentileResultType(args []parser.Expr, schema *types.Schema) types.KQLTyp
 // ("null values are ignored") applied correctly for a two-variable
 // statistic, where a null on either side makes the whole pair
 // unusable, not just the null side.
-func collectPairedFloats(expr1, expr2 parser.Expr, schema *types.Schema, rows []types.Row) ([]float64, []float64) {
+func collectPairedFloats(eng *Engine, expr1, expr2 parser.Expr, schema *types.Schema, rows []types.Row) ([]float64, []float64) {
 	var xs, ys []float64
 	for _, row := range rows {
-		xVal, err := evalExpr(expr1, schema, row)
+		xVal, err := evalExpr(eng, expr1, schema, row)
 		if err != nil || xVal == nil {
 			continue
 		}
-		yVal, err := evalExpr(expr2, schema, row)
+		yVal, err := evalExpr(eng, expr2, schema, row)
 		if err != nil || yVal == nil {
 			continue
 		}
@@ -1391,21 +1391,21 @@ func collectPairedFloats(expr1, expr2 parser.Expr, schema *types.Schema, rows []
 // collectPairedFloatsIf is collectPairedFloats with an additional
 // per-row predicate filter, applied before the pairwise-null check —
 // the shared logic behind covarianceif/covariancepif.
-func collectPairedFloatsIf(expr1, expr2, predicate parser.Expr, schema *types.Schema, rows []types.Row) ([]float64, []float64) {
+func collectPairedFloatsIf(eng *Engine, expr1, expr2, predicate parser.Expr, schema *types.Schema, rows []types.Row) ([]float64, []float64) {
 	var xs, ys []float64
 	for _, row := range rows {
-		predVal, err := evalExpr(predicate, schema, row)
+		predVal, err := evalExpr(eng, predicate, schema, row)
 		if err != nil {
 			continue
 		}
 		if pred, ok := predVal.(bool); !ok || !pred {
 			continue
 		}
-		xVal, err := evalExpr(expr1, schema, row)
+		xVal, err := evalExpr(eng, expr1, schema, row)
 		if err != nil || xVal == nil {
 			continue
 		}
-		yVal, err := evalExpr(expr2, schema, row)
+		yVal, err := evalExpr(eng, expr2, schema, row)
 		if err != nil || yVal == nil {
 			continue
 		}

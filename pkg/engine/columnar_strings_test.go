@@ -106,7 +106,7 @@ func TestColumnarStringPlanned(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return planColumnarAggregate(stmt.(*parser.Query).Operators, &def.Schema)
+		return planColumnarAggregate(eng, stmt.(*parser.Query).Operators, &def.Schema)
 	}
 	for _, q := range []string{
 		`S | where Name has "foo" | count`,

@@ -46,7 +46,7 @@ func applySequenceDetect(e *Engine, in *types.Table, args []string, _ *types.Sch
 	axis := in.Schema.Columns[tCol].Type
 	var lim [2]int64
 	for i, a := range args[1:3] {
-		v, vt, err := pluginScalar(a)
+		v, vt, err := pluginScalar(e, a)
 		if err != nil || v == nil {
 			return nil, fmt.Errorf("%s: argument %d: invalid value", name, i+2)
 		}
@@ -131,7 +131,7 @@ func applySequenceDetect(e *Engine, in *types.Table, args []string, _ *types.Sch
 		x := ev{t: types.ToInt64(r[tCol]), tv: r[tCol], steps: make([]bool, len(preds))}
 		anyStep := false
 		for i, p := range preds {
-			v, err := evalExpr(p, &in.Schema, r)
+			v, err := evalExpr(e, p, &in.Schema, r)
 			if err != nil {
 				return nil, fmt.Errorf("%s: predicate %d: %w", name, i+1, err)
 			}

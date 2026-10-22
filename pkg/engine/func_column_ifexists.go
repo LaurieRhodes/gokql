@@ -38,7 +38,7 @@ func columnIfExistsName(fc *parser.FuncCall) (string, error) {
 	return s, nil
 }
 
-func evalColumnIfExists(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+func evalColumnIfExists(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if !isColumnIfExists(fc.Name) {
 		return nil, false, nil
 	}
@@ -52,20 +52,20 @@ func evalColumnIfExists(fc *parser.FuncCall, schema *types.Schema, row types.Row
 		}
 		return nil, true, nil
 	}
-	v, err := evalExpr(fc.Args[1], schema, row)
+	v, err := evalExpr(eng, fc.Args[1], schema, row)
 	return v, true, err
 }
 
 // columnIfExistsType: the column's type when it exists, otherwise the
 // default's.
-func columnIfExistsType(fc *parser.FuncCall, schema *types.Schema) types.KQLType {
+func columnIfExistsType(eng *Engine, fc *parser.FuncCall, schema *types.Schema) types.KQLType {
 	if name, err := columnIfExistsName(fc); err == nil {
 		if c := schema.ColumnByName(name); c != nil {
 			return c.Type
 		}
 	}
 	if len(fc.Args) == 2 {
-		return inferExprType(fc.Args[1], schema)
+		return inferExprType(eng, fc.Args[1], schema)
 	}
 	return types.TypeDynamic
 }

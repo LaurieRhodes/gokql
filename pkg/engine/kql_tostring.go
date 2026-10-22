@@ -58,12 +58,12 @@ func kqlToString(v types.Value, t types.KQLType) string {
 }
 
 // exprToString evaluates expr and renders it with kqlToString.
-func exprToString(expr parser.Expr, schema *types.Schema, row types.Row) (string, bool, error) {
-	v, err := evalExpr(expr, schema, row)
+func exprToString(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row) (string, bool, error) {
+	v, err := evalExpr(eng, expr, schema, row)
 	if err != nil || v == nil {
 		return "", v != nil, err
 	}
-	return kqlToString(v, inferExprType(expr, schema)), true, nil
+	return kqlToString(v, inferExprType(eng, expr, schema)), true, nil
 }
 
 func asInt64(v types.Value) (int64, bool) {
