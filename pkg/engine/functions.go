@@ -14,7 +14,6 @@ import (
 // Each handler returns (value, handled, error). If handled is false, the
 // next handler is tried. This keeps the dispatch O(1) per category while
 // allowing each file to own its own switch statement.
-var windowFuncNames = map[string]bool{"row_number": true, "prev": true, "next": true}
 
 func evalFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, error) {
 	v, err := evalFuncRaw(fc, schema, row)
@@ -101,8 +100,8 @@ func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 		return v, err
 	}
 	if windowFuncNames[fc.Name] {
-		return nil, fmt.Errorf("%s is a window function and only works inside serialize "+
-			"(e.g. 'serialize rank = %s()'), not extend/project/where", fc.Name, fc.Name)
+		return nil, fmt.Errorf("%s is a window function: use it in extend, project, where or "+
+			"serialize over a serialized row set", fc.Name)
 	}
 	return nil, fmt.Errorf("unsupported function: %s", fc.Name)
 }

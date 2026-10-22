@@ -706,6 +706,18 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			return types.TypeDatetime
 		case "bin", "floor", "bin_at":
 			return binResultType(e.Args, schema)
+		case "prev", "next":
+			if len(e.Args) > 0 {
+				return inferExprType(e.Args[0], schema)
+			}
+			return types.TypeDynamic
+		case "row_cumsum":
+			if len(e.Args) > 0 && sumIsIntegral(e.Args[0], schema) {
+				return types.TypeLong
+			}
+			return types.TypeReal
+		case "row_window_session":
+			return types.TypeDatetime
 		case "time", "totime":
 			return types.TypeTimespan
 		case "dayofweek":
@@ -835,80 +847,6 @@ func toNanos(val int64, typ types.KQLType) int64 {
 		return val * 100
 	}
 	return val
-}
-
-// evalExprWithWindow evaluates an expression with window-function awareness.
-// Window functions (row_number, prev, next) use rowIdx and allRows.
-func evalExprWithWindow(expr parser.Expr, schema *types.Schema, row types.Row, rowIdx int, allRows []types.Row) (interface{}, error) {
-	// Check if this is a window function call
-	if fc, ok := expr.(*parser.FuncCall); ok {
-		switch fc.Name {
-		case "row_number":
-			// row_number() — 1-based row index
-			return int64(rowIdx + 1), nil
-
-		case "prev":
-			// prev(col [, offset [, default_value]])
-			if len(fc.Args) < 1 {
-				return nil, fmt.Errorf("prev requires at least 1 argument")
-			}
-			offset := 1
-			if len(fc.Args) >= 2 {
-				offsetVal, err := evalExpr(fc.Args[1], schema, row)
-				if err != nil {
-					return nil, err
-				}
-				if n, ok2 := offsetVal.(int64); ok2 {
-					offset = int(n)
-				}
-			}
-			var defaultVal interface{}
-			if len(fc.Args) >= 3 {
-				var err error
-				defaultVal, err = evalExpr(fc.Args[2], schema, row)
-				if err != nil {
-					return nil, err
-				}
-			}
-			prevIdx := rowIdx - offset
-			if prevIdx < 0 || prevIdx >= len(allRows) {
-				return defaultVal, nil
-			}
-			return evalExpr(fc.Args[0], schema, allRows[prevIdx])
-
-		case "next":
-			// next(col [, offset [, default_value]])
-			if len(fc.Args) < 1 {
-				return nil, fmt.Errorf("next requires at least 1 argument")
-			}
-			offset := 1
-			if len(fc.Args) >= 2 {
-				offsetVal, err := evalExpr(fc.Args[1], schema, row)
-				if err != nil {
-					return nil, err
-				}
-				if n, ok2 := offsetVal.(int64); ok2 {
-					offset = int(n)
-				}
-			}
-			var defaultVal interface{}
-			if len(fc.Args) >= 3 {
-				var err error
-				defaultVal, err = evalExpr(fc.Args[2], schema, row)
-				if err != nil {
-					return nil, err
-				}
-			}
-			nextIdx := rowIdx + offset
-			if nextIdx < 0 || nextIdx >= len(allRows) {
-				return defaultVal, nil
-			}
-			return evalExpr(fc.Args[0], schema, allRows[nextIdx])
-		}
-	}
-
-	// Not a window function — use standard eval
-	return evalExpr(expr, schema, row)
 }
 
 // matchLike implements KQL's like operator.

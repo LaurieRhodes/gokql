@@ -26,9 +26,10 @@ func (e *Engine) applyWhere(input *types.Table, op *parser.WhereOp) (*types.Tabl
 	}
 
 	result := types.NewTable(input.Name, input.Schema)
+	re := newRowEvaluator(&input.Schema, input.Rows, predicate)
 
-	for _, row := range input.Rows {
-		val, err := evalExpr(predicate, &input.Schema, row)
+	for ri, row := range input.Rows {
+		val, err := re.eval(predicate, ri, row)
 		if err != nil {
 			return nil, fmt.Errorf("where: %w", err)
 		}
@@ -80,14 +81,19 @@ func (e *Engine) applyProject(input *types.Table, op *parser.ProjectOp) (*types.
 	}
 
 	result := types.NewTable(input.Name, newSchema)
-	for _, row := range input.Rows {
+	exprs := make([]parser.Expr, len(items))
+	for i, item := range items {
+		exprs[i] = item.Expr
+	}
+	re := newRowEvaluator(&input.Schema, input.Rows, exprs...)
+	for ri, row := range input.Rows {
 		newRow := make(types.Row, len(items))
 		for i, item := range items {
 			if srcIdx[i] >= 0 {
 				newRow[i] = row[srcIdx[i]]
 				continue
 			}
-			val, err := evalExpr(item.Expr, &input.Schema, row)
+			val, err := re.eval(item.Expr, ri, row)
 			if err != nil {
 				return nil, fmt.Errorf("project %q: %w", item.Name, err)
 			}
@@ -149,7 +155,12 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 	}
 
 	result := types.NewTable(input.Name, newSchema)
-	for _, row := range input.Rows {
+	exprs := make([]parser.Expr, len(assignments))
+	for i, a := range assignments {
+		exprs[i] = a.Expr
+	}
+	re := newRowEvaluator(&input.Schema, input.Rows, exprs...)
+	for ri, row := range input.Rows {
 		newRow := make(types.Row, len(input.Schema.Columns)+appendCount)
 		copy(newRow, row)
 
@@ -162,7 +173,7 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 			// means self-reference (`X = case(X == ..., ..., X)`) reads
 			// the pre-extend value of X, which is exactly what's needed
 			// for a replace-in-place semantics to make sense.
-			val, err := evalExpr(assign.Expr, &input.Schema, row)
+			val, err := re.eval(assign.Expr, ri, row)
 			if err != nil {
 				return nil, fmt.Errorf("extend %q: %w", assign.Name, err)
 			}
@@ -1086,13 +1097,16 @@ func (e *Engine) applySerialize(input *types.Table, op *parser.SerializeOp) (*ty
 	}
 
 	// Build output schema: input columns + new computed columns
-	outSchema := input.Schema
-	for _, a := range op.Columns {
+	outSchema := types.Schema{Columns: append([]types.Column(nil), input.Schema.Columns...)}
+	exprs := make([]parser.Expr, len(op.Columns))
+	for i, a := range op.Columns {
+		exprs[i] = a.Expr
 		outSchema.Columns = append(outSchema.Columns, types.Column{
 			Name: a.Name,
-			Type: types.TypeDynamic, // will be refined
+			Type: inferExprType(a.Expr, &input.Schema),
 		})
 	}
+	re := newRowEvaluator(&input.Schema, input.Rows, exprs...)
 
 	output := types.NewTable(input.Name, outSchema)
 	inputColCount := len(input.Schema.Columns)
@@ -1103,7 +1117,7 @@ func (e *Engine) applySerialize(input *types.Table, op *parser.SerializeOp) (*ty
 
 		// Evaluate each computed column with window context
 		for i, a := range op.Columns {
-			val, err := evalExprWithWindow(a.Expr, &input.Schema, row, rowIdx, input.Rows)
+			val, err := re.eval(a.Expr, rowIdx, row)
 			if err != nil {
 				return nil, fmt.Errorf("serialize %s: %w", a.Name, err)
 			}

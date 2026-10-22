@@ -22,6 +22,11 @@ func extractZoneFilter(operators []parser.Operator, schema *types.Schema) *vorte
 		if !ok {
 			break
 		}
+		// A predicate with prev()/next()/row_* reads neighbouring rows,
+		// so no row may be pruned before it runs.
+		if containsWindow(where.Predicate) {
+			break
+		}
 		// Extract predicates from this where clause
 		extractPredicates(where.Predicate, schema, &preds)
 	}
