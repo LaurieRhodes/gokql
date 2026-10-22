@@ -31,6 +31,8 @@ var multiColumnFuncs = map[string]struct {
 	"series_fit_line": {"series_fit_line_dynamic", []multiKey{
 		{"rsquare", "todouble"}, {"slope", "todouble"}, {"variance", "todouble"},
 		{"rvariance", "todouble"}, {"interception", "todouble"}, {"line_fit", "todynamic"}}},
+	"series_fft":  {"__series_fft_dynamic", []multiKey{{"real", "todynamic"}, {"imag", "todynamic"}}},
+	"series_ifft": {"__series_ifft_dynamic", []multiKey{{"real", "todynamic"}, {"imag", "todynamic"}}},
 	"series_fit_poly": {"__series_fit_poly_dynamic", []multiKey{
 		{"rsquare", "todouble"}, {"coefficients", "todynamic"}, {"variance", "todouble"},
 		{"rvariance", "todouble"}, {"poly_fit", "todynamic"}}},

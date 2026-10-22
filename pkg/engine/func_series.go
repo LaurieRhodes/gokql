@@ -67,6 +67,14 @@ func evalSeriesFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		return evalSeriesFillConst(eng, fc, schema, row)
 	case "series_fill_linear":
 		return evalSeriesFillLinear(eng, fc, schema, row)
+	case "series_fir":
+		return evalSeriesFir(eng, fc, schema, row)
+	case "__series_fft_dynamic":
+		return evalSeriesFFTBag(eng, fc, schema, row, false)
+	case "__series_ifft_dynamic":
+		return evalSeriesFFTBag(eng, fc, schema, row, true)
+	case "series_seasonal":
+		return evalSeriesSeasonal(eng, fc, schema, row)
 
 	// --- Tier 3: summary statistics ---
 	case "series_sum":

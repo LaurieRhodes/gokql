@@ -186,3 +186,24 @@ func TestSweep2Around(t *testing.T) {
 		expectCell(t, tbl, 0, c, w)
 	}
 }
+
+func TestSweep2SeriesSignal(t *testing.T) {
+	cases := []struct{ name, query, want string }{
+		{"fir moving average", `print series_fir(dynamic([0,0,0,10,20,40,100]), dynamic([1,1,1,1,1]))`, "[0,0,0,2,6,14,34]"},
+		{"fir centered", `print series_fir(dynamic([0,0,10,0,0]), dynamic([1,1,1]), true, true)`, "[0,3.333333333333333,3.333333333333333,3.333333333333333,0]"},
+		{"fir difference", `print series_fir(dynamic([0, 0, 2, 2, 3, 3]), dynamic([1, -1]), false, false)`, "[0,0,2,0,1,0]"},
+		{"fir negative normalized", `print isnull(series_fir(dynamic([1,2]), dynamic([1,-1])))`, "true"},
+		{"seasonal period", `print series_seasonal(dynamic([1, 3, 5, 2, 4, 6, 1, 3, 5, 2, 4, 6]), 3)`, "[1.5,3.5,5.5,1.5,3.5,5.5,1.5,3.5,5.5,1.5,3.5,5.5]"},
+		{"fft imag", `print a=dynamic([1,2,3,4]) | extend (r, i) = series_fft(a) | project i`, "[0,2,0,-2]"},
+		{"ifft round trip", `print a=dynamic([1,2,3,4]) | extend (r, i) = series_fft(a) | extend (r2, i2) = series_ifft(r, i) | project r2`, "[1,2,3,4]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			expectCell(t, queryResult(t, c.query), 0, 0, c.want)
+		})
+	}
+	tbl := queryResult(t, `print a=dynamic([1,2]) | extend series_fft(a)`)
+	if tbl.Schema.Columns[1].Name != "series_fft_a_real" || tbl.Schema.Columns[2].Name != "series_fft_a_imag" {
+		t.Fatalf("columns %v", tbl.Schema.Columns)
+	}
+}
