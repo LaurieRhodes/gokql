@@ -25,8 +25,6 @@ and ASIM parsers, which is this engine's main query population.
 | Item | Observed |
 |---|---|
 | `mv-apply ... = <expression>` (only a bare column works) | "column not found" |
-| `materialize()` | parse error |
-| Literals: hex `0x1F`, `guid(...)`, `real(+inf)`/`real(-inf)`/`real(nan)`, obfuscated `h"..."`, adjacent string-literal concatenation `'a' 'b'` | parse errors |
 
 ## Closed
 
@@ -46,6 +44,9 @@ and ASIM parsers, which is this engine's main query population.
 | `column_ifexists` / `columnifexists`: constant name, column type when present (default's otherwise), ADX result naming; the named column is read under projection pushdown | `func_column_ifexists.go`; reference example exact |
 | `let` functions: tabular bodies (including `print`, `range`, inner `let`s), tabular parameters `(T:(*))` and `(T:(col:type))`, default parameter values (scalar and tabular functions), parameterised `view`s, `invoke` of let functions | let functions resolve through the stored-function binder; a let function shadows a stored one of the same name |
 | `column_names_of(expr)` | the three reference examples exact |
+| Literals: hex `0x1F`, `real(+inf)`/`real(-inf)`/`real(nan)`, unquoted `guid(...)`, obfuscated `h"..."`/`h@'...'`, adjacent string concatenation `'a' 'b'` | expression parser |
+| `//` comments in any position (previously only where a parser happened to ignore trailing text) | stripped once at `parser.Parse`, outside string literals; `.ingest inline` payloads exempt |
+| `materialize(expr)` as a let value or query source | a tabular let is already evaluated once |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
@@ -70,7 +71,6 @@ and ASIM parsers, which is this engine's main query population.
   `dcount_intersect`. Pattern-mining plugins (`autocluster`,
   `basket`, `diffpatterns`) have the same specification problem as
   `reduce` and need their algorithm pinned before work starts.
-- `print x = "s" // comment` on a single line (comments work elsewhere).
 
 ## P3 — carried over
 

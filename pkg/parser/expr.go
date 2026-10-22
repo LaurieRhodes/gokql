@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -698,25 +699,12 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 		return expr, nil
 	}
 
-	// String literal
-	if ch == '"' || ch == '\'' {
-		return p.parseString()
-	}
-
-	// Verbatim string literal (@"..." or @'...') — added 2026-08-18.
-	// Real KQL: the backslash stands for itself (no escape processing
-	// at all) inside a verbatim string; the one exception is the
-	// enclosing quote character itself, which is escaped by doubling
-	// it (e.g. @"say ""hi""" == say "hi"), the same convention CSV
-	// uses. Verified against real KQL's own docs before implementing
-	// — this was a real, total gap: @"..." previously wasn't
-	// recognized at all ("unexpected character: @"), which blocked
-	// every regex-bearing KQL example that (like virtually all of
-	// Microsoft's own official docs examples for extract/
-	// extract_all/replace_regex/parse kind=regex) uses verbatim
-	// strings to avoid double-backslash-escaping a regex pattern.
-	if ch == '@' && p.pos+1 < len(p.input) && (p.input[p.pos+1] == '"' || p.input[p.pos+1] == '\'') {
-		return p.parseVerbatimString()
+	// String literals: '...', "...", verbatim @'...' (the backslash
+	// stands for itself; a doubled quote escapes the quote), obfuscated
+	// h'...', and whitespace-separated sequences of these, which KQL
+	// concatenates.
+	if p.atStringLiteral() {
+		return p.parseStringSequence()
 	}
 
 	// Number literal (including negative)
@@ -737,6 +725,56 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 // escape is doubling the enclosing quote character to represent one
 // literal instance of it. See the call site above for the fuller
 // rationale and verification note.
+// atStringLiteral reports whether a string literal starts here: '...',
+// "...", @'...', or an obfuscated h'...' / H"..." / h@'...' literal
+// (obfuscation affects logging only; the value is the plain string).
+func (p *exprParser) atStringLiteral() bool {
+	i := p.pos
+	if i < len(p.input) && (p.input[i] == 'h' || p.input[i] == 'H') {
+		i++
+	}
+	if i < len(p.input) && p.input[i] == '@' {
+		i++
+	}
+	return i < len(p.input) && (p.input[i] == '"' || p.input[i] == '\'')
+}
+
+// parseStringLiteral parses one string literal in any of its forms.
+func (p *exprParser) parseStringLiteral() (Expr, error) {
+	if c := p.input[p.pos]; c == 'h' || c == 'H' {
+		p.pos++
+	}
+	if p.input[p.pos] == '@' {
+		return p.parseVerbatimString()
+	}
+	return p.parseString()
+}
+
+// parseStringSequence parses a string literal and any literals that
+// follow it separated only by whitespace: KQL concatenates adjacent
+// string literals ('a' 'b' is "ab").
+func (p *exprParser) parseStringSequence() (Expr, error) {
+	first, err := p.parseStringLiteral()
+	if err != nil {
+		return nil, err
+	}
+	val := first.(*Literal).Value.(string)
+	for {
+		save := p.pos
+		p.skipWhitespace()
+		if p.pos == save || p.pos >= len(p.input) || !p.atStringLiteral() {
+			p.pos = save
+			break
+		}
+		next, err := p.parseStringLiteral()
+		if err != nil {
+			return nil, err
+		}
+		val += next.(*Literal).Value.(string)
+	}
+	return &Literal{Value: val, Type: types.TypeString}, nil
+}
+
 func (p *exprParser) parseVerbatimString() (Expr, error) {
 	p.pos++ // skip '@'
 	quote := p.input[p.pos]
@@ -795,6 +833,21 @@ func (p *exprParser) parseString() (Expr, error) {
 }
 
 func (p *exprParser) parseNumber() (Expr, error) {
+	// Hexadecimal long literal: 0x1F.
+	if p.pos+2 < len(p.input) && p.input[p.pos] == '0' && (p.input[p.pos+1] == 'x' || p.input[p.pos+1] == 'X') {
+		j := p.pos + 2
+		for j < len(p.input) && isHexDigit(p.input[j]) {
+			j++
+		}
+		if j > p.pos+2 {
+			v, err := strconv.ParseUint(p.input[p.pos+2:j], 16, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid hex literal %q", p.input[p.pos:j])
+			}
+			p.pos = j
+			return &Literal{Value: int64(v), Type: types.TypeLong}, nil
+		}
+	}
 	start := p.pos
 	if p.input[p.pos] == '-' {
 		p.pos++
@@ -852,6 +905,10 @@ func (p *exprParser) parseNumber() (Expr, error) {
 		return nil, fmt.Errorf("invalid integer: %q", numStr)
 	}
 	return &Literal{Value: v, Type: types.TypeLong}, nil
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
 // isTimespanSuffix checks if a character could start a timespan unit suffix.
@@ -926,6 +983,14 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 		// datatable(...) [...] literal). Uses openParenIdx, captured
 		// above BEFORE skipWhitespace ran — p.pos-1 here instead would
 		// be wrong whenever whitespace follows the opening paren.
+		// Typed literal forms that are not expressions: real(+inf),
+		// real(-inf), real(nan) (also double), and an unquoted
+		// guid(74be27de-1e4e-49d9-b579-fe0b331d3642) (also uuid,
+		// uniqueid).
+		if lit, ok := p.trySpecialTypedLiteral(lower, openParenIdx); ok {
+			return p.parsePostfixAccess(lit)
+		}
+
 		if lower == "toscalar" || lower == "column_names_of" {
 			closeIdx := findMatchingParen(p.input, openParenIdx)
 			if closeIdx < 0 {
@@ -1050,6 +1115,42 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 }
 
 // parsePostfixAccess parses chains of .property and ["key"] and [index] access.
+var guidLiteralPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func (p *exprParser) trySpecialTypedLiteral(lower string, openParenIdx int) (Expr, bool) {
+	isReal := lower == "real" || lower == "double"
+	isGUID := lower == "guid" || lower == "uuid" || lower == "uniqueid"
+	if !isReal && !isGUID {
+		return nil, false
+	}
+	closeIdx := findMatchingParen(p.input, openParenIdx)
+	if closeIdx < 0 {
+		return nil, false
+	}
+	raw := strings.TrimSpace(p.input[openParenIdx+1 : closeIdx])
+	var lit *Literal
+	switch {
+	case isReal:
+		switch strings.ToLower(raw) {
+		case "+inf", "inf":
+			lit = &Literal{Value: math.Inf(1), Type: types.TypeReal}
+		case "-inf":
+			lit = &Literal{Value: math.Inf(-1), Type: types.TypeReal}
+		case "nan":
+			lit = &Literal{Value: math.NaN(), Type: types.TypeReal}
+		}
+	case isGUID:
+		if guidLiteralPattern.MatchString(raw) {
+			lit = &Literal{Value: strings.ToLower(raw), Type: types.TypeGUID}
+		}
+	}
+	if lit == nil {
+		return nil, false
+	}
+	p.pos = closeIdx + 1
+	return lit, true
+}
+
 func (p *exprParser) parsePostfixAccess(expr Expr) (Expr, error) {
 	var path []AccessKey
 

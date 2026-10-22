@@ -12,7 +12,77 @@ import (
 // Supports multi-statement input with let bindings:
 //
 //	let name = expr; let name2 = Table | where ...; FinalQuery | ...
+//
+// unwrapMaterialize returns X for a source that is exactly
+// materialize(X).
+func unwrapMaterialize(source string) (string, bool) {
+	t := strings.TrimSpace(source)
+	lower := strings.ToLower(t)
+	if !strings.HasPrefix(lower, "materialize") {
+		return "", false
+	}
+	rest := strings.TrimSpace(t[len("materialize"):])
+	if !strings.HasPrefix(rest, "(") {
+		return "", false
+	}
+	closeIdx := matchingClose(rest, 0, '(', ')')
+	if closeIdx != len(rest)-1 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[1:closeIdx]), true
+}
+
+// stripLineComments removes // comments (to the end of the line)
+// outside string literals. Quoted text is kept byte for byte: "..."
+// and '...' with backslash escapes, and @-prefixed verbatim strings
+// where only a doubled quote escapes. .ingest inline is exempt: its
+// payload is data, not KQL.
+func stripLineComments(s string) string {
+	var b strings.Builder
+	var quote byte
+	verbatim := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if quote != 0 {
+			b.WriteByte(ch)
+			switch {
+			case !verbatim && ch == '\\' && i+1 < len(s):
+				i++
+				b.WriteByte(s[i])
+			case ch == quote:
+				if verbatim && i+1 < len(s) && s[i+1] == quote {
+					i++
+					b.WriteByte(s[i])
+				} else {
+					quote = 0
+				}
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			quote = ch
+			verbatim = i > 0 && s[i-1] == '@'
+			b.WriteByte(ch)
+			continue
+		}
+		if ch == '/' && i+1 < len(s) && s[i+1] == '/' {
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			if i < len(s) {
+				b.WriteByte('\n')
+			}
+			continue
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
+}
+
 func Parse(input string) (Statement, error) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(input)), ".ingest inline") {
+		input = stripLineComments(input)
+	}
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil, fmt.Errorf("empty input")
@@ -144,6 +214,10 @@ func parseLetStatement(input string) (*LetStatement, error) {
 	valueStr := strings.TrimSpace(rest[eqIdx+1:])
 	if valueStr == "" {
 		return nil, fmt.Errorf("expected value after '=' in let statement")
+	}
+
+	if inner, ok := unwrapMaterialize(valueStr); ok {
+		valueStr = inner
 	}
 
 	// view lambda: let V = view () { T | ... }. A parameterless view
@@ -1226,6 +1300,32 @@ func parseQuery(input string) (Statement, error) {
 		return nil, fmt.Errorf("expected table name")
 	}
 	source = normalizeLeadingKeywordWhitespace(source)
+
+	// materialize(Expr): a tabular let is already evaluated once and
+	// cached, so materialize is the expression itself. Its own
+	// operators continue after the inner query's.
+	if inner, ok := unwrapMaterialize(source); ok {
+		stmt, err := parseQuery(inner)
+		if err != nil {
+			return nil, fmt.Errorf("materialize: %w", err)
+		}
+		q, ok := stmt.(*Query)
+		if !ok {
+			return nil, fmt.Errorf("materialize: argument must be a tabular expression")
+		}
+		for i, seg := range segments[1:] {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				continue
+			}
+			op, err := parseOperator(seg)
+			if err != nil {
+				return nil, fmt.Errorf("operator %d: %w", i+1, err)
+			}
+			q.Operators = append(q.Operators, op)
+		}
+		return q, nil
+	}
 
 	// Standalone union: "union T1, T2, T3 | where ..."
 	if strings.HasPrefix(strings.ToLower(source), "union ") {
