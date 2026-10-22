@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 
@@ -613,6 +614,10 @@ func evalBinaryOp(left types.Value, op parser.BinaryOp, right types.Value, schem
 		}
 	}
 
+	if v, ok, err := evalMixedNumeric(left, op, right, schema, expr); ok {
+		return v, err
+	}
+
 	// Determine comparison type from left operand
 	switch left.(type) {
 	case string:
@@ -902,16 +907,20 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 				return types.TypeDatetime
 			}
 			// timespan +/- timespan = timespan
-			if lt == types.TypeTimespan && rt == types.TypeTimespan {
+			if lt == types.TypeTimespan || rt == types.TypeTimespan {
 				return types.TypeTimespan
 			}
-			return lt
-		case parser.OpMul, parser.OpDiv:
+			return numericPromote(lt, rt)
+		case parser.OpMul, parser.OpDiv, parser.OpMod:
 			lt := inferExprType(e.Left, schema)
-			if lt == types.TypeTimespan {
+			rt := inferExprType(e.Right, schema)
+			if lt == types.TypeTimespan || rt == types.TypeTimespan {
+				if e.Op == parser.OpDiv && lt == types.TypeTimespan && rt == types.TypeTimespan {
+					return types.TypeReal // 90m / 1h is 1.5
+				}
 				return types.TypeTimespan
 			}
-			return lt
+			return numericPromote(lt, rt)
 		case parser.OpEQ, parser.OpNEQ, parser.OpLT, parser.OpLTE,
 			parser.OpGT, parser.OpGTE, parser.OpAnd, parser.OpOr,
 			parser.OpContains, parser.OpNotContains, parser.OpHas, parser.OpNotHas,
@@ -1058,4 +1067,120 @@ func hasTermSuffix(s, suffix string, caseSensitive bool) bool {
 		}
 		i = pos + 1
 	}
+}
+
+// numericPromote is the type of arithmetic on two numeric operands:
+// real if either is real, otherwise long (int arithmetic widens to
+// long, as in ADX). A non-numeric left operand is returned unchanged.
+func numericPromote(lt, rt types.KQLType) types.KQLType {
+	isNum := func(t types.KQLType) bool { return t == types.TypeInt || t == types.TypeLong || t == types.TypeReal }
+	if !isNum(lt) {
+		return lt
+	}
+	if !isNum(rt) {
+		return lt
+	}
+	if lt == types.TypeReal || rt == types.TypeReal {
+		return types.TypeReal
+	}
+	return types.TypeLong
+}
+
+func isArithOrCompare(op parser.BinaryOp) bool {
+	switch op {
+	case parser.OpAdd, parser.OpSub, parser.OpMul, parser.OpDiv, parser.OpMod,
+		parser.OpEQ, parser.OpNEQ, parser.OpLT, parser.OpLTE, parser.OpGT, parser.OpGTE:
+		return true
+	}
+	return false
+}
+
+// evalMixedNumeric handles the numeric operand combinations the
+// int64-only and float64-only paths below get wrong: an int with a
+// real (2 * 1.5 is 3.0, x < 1.5 compares as real), int (32-bit)
+// operands (widened to long), timespan scaled by a real (1h * 1.5 is
+// 01:30:00), and timespan / timespan (a real ratio). ok is false when
+// the operands are left to the paths below.
+func evalMixedNumeric(left types.Value, op parser.BinaryOp, right types.Value, schema *types.Schema, expr *parser.BinaryExpr) (types.Value, bool, error) {
+	if !isArithOrCompare(op) {
+		return nil, false, nil
+	}
+	kind := func(v types.Value) int { // 0 other, 1 integer, 2 float
+		switch v.(type) {
+		case int64, int32, int:
+			return 1
+		case float64:
+			return 2
+		}
+		return 0
+	}
+	lk, rk := kind(left), kind(right)
+	if lk == 0 || rk == 0 {
+		return nil, false, nil
+	}
+	_, l32 := left.(int32)
+	_, r32 := right.(int32)
+	var lt, rt types.KQLType = types.TypeLong, types.TypeLong
+	if expr != nil {
+		lt, rt = inferExprType(expr.Left, schema), inferExprType(expr.Right, schema)
+	}
+	lts, rts := lt == types.TypeTimespan, rt == types.TypeTimespan
+
+	// timespan / timespan → real
+	if op == parser.OpDiv && lts && rts && lk == 1 && rk == 1 {
+		r := types.ToFloat64(right)
+		if r == 0 {
+			return nil, true, nil
+		}
+		return types.ToFloat64(left) / r, true, nil
+	}
+	if lk == 2 || rk == 2 {
+		lf, rf := types.ToFloat64(left), types.ToFloat64(right)
+		// timespan scaled by a real stays a timespan (ticks)
+		if (op == parser.OpMul && (lts && rk == 2 || rts && lk == 2)) || (op == parser.OpDiv && lts && rk == 2) {
+			if op == parser.OpDiv {
+				if rf == 0 {
+					return nil, true, nil
+				}
+				return int64(lf / rf), true, nil
+			}
+			return int64(lf * rf), true, nil
+		}
+		switch op {
+		case parser.OpEQ:
+			return lf == rf, true, nil
+		case parser.OpNEQ:
+			return lf != rf, true, nil
+		case parser.OpLT:
+			return lf < rf, true, nil
+		case parser.OpLTE:
+			return lf <= rf, true, nil
+		case parser.OpGT:
+			return lf > rf, true, nil
+		case parser.OpGTE:
+			return lf >= rf, true, nil
+		case parser.OpAdd:
+			return lf + rf, true, nil
+		case parser.OpSub:
+			return lf - rf, true, nil
+		case parser.OpMul:
+			return lf * rf, true, nil
+		case parser.OpDiv:
+			if rf == 0 {
+				return nil, true, nil
+			}
+			return lf / rf, true, nil
+		case parser.OpMod:
+			if rf == 0 {
+				return nil, true, nil
+			}
+			return math.Mod(lf, rf), true, nil
+		}
+		return nil, false, nil
+	}
+	if l32 || r32 {
+		v, err := evalBinaryOp(types.ToInt64(left), op, types.ToInt64(right), schema, expr)
+		return v, true, err
+	}
+	return nil, false, nil
 }

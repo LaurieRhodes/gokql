@@ -582,6 +582,9 @@ type Aggregation struct {
 	Name     string // Output column name (auto-generated if empty)
 	Function string // count, sum, avg, min, max, dcount, countif, arg_max, arg_min
 	Args     []Expr // Arguments to the function
+	// AutoNamed is true when Name was generated rather than written
+	// (percentiles() gives a written name to its first column only).
+	AutoNamed bool
 }
 
 // JoinOp: join kind=X (subquery) on col1[, col2]

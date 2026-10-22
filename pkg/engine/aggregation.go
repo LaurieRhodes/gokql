@@ -578,60 +578,27 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		}
 		return nil, nil
 
-	case "percentile", "percentiles":
-		// percentile(expr, percent) — e.g. percentile(Duration, 95).
-		// "percentiles" (plural) is real ADX's own separate, genuine
-		// function accepting MULTIPLE percentile values in one call,
-		// producing one output column per value — NOT implemented
-		// here as its own, distinct multi-value feature (a separate,
-		// bigger gap than this fix's own scope). Aliased to the exact
-		// same single-value code as "percentile" ONLY for the
-		// single-percentile-argument case (len(agg.Args) == 2, same
-		// requirement as "percentile" already has), which is both the
-		// literal call shape real ADX's own docs use in practice
-		// (e.g. the invoke operator's own clipped_average worked
-		// example: `percentiles(x, upPercentile)`, one percentile
-		// value) and functionally identical to "percentile" when
-		// exactly one value is requested — real ADX's own plural/
-		// singular distinction only actually matters for N>1 values,
-		// which this alias doesn't claim to support; a 3+-argument
-		// "percentiles(...)" call still falls through to this same
-		// "requires 2 arguments" error rather than silently only
-		// using the first value. Found and fixed 2026-08-15 while
-		// verifying invoke against that exact worked example.
-		if len(agg.Args) != 2 {
-			return nil, fmt.Errorf("%s requires 2 arguments (expr, percent) — multi-value percentiles(...) is not implemented", agg.Function)
+	case "percentile", "percentiles", "percentilew", "percentilesw":
+		// One percentile; percentiles(x, p1, p2, ...) with several is
+		// expanded to one column each by applySummarize.
+		want := 2
+		if agg.Function == "percentilew" || agg.Function == "percentilesw" {
+			want = 3
 		}
-		// The percent argument is a literal
-		pctVal, err := evalExpr(agg.Args[1], schema, types.Row{})
+		if len(agg.Args) != want {
+			return nil, fmt.Errorf("%s: expected %d arguments, got %d", agg.Function, want, len(agg.Args))
+		}
+		pctVal, err := evalExpr(agg.Args[want-1], schema, types.Row{})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", agg.Function, err)
 		}
-		pct := types.ToFloat64(pctVal) / 100.0
+		vals, err := computePercentileValues(agg, []float64{types.ToFloat64(pctVal)}, rows, schema)
+		if err != nil {
+			return nil, err
+		}
+		return vals[0], nil
 
-		var values []float64
-		for _, row := range rows {
-			val, err := evalExpr(agg.Args[0], schema, row)
-			if err != nil || val == nil {
-				continue
-			}
-			values = append(values, types.ToFloat64(val))
-		}
-		if len(values) == 0 {
-			return nil, nil
-		}
-		sort.Float64s(values)
-		idx := pct * float64(len(values)-1)
-		lower := int(math.Floor(idx))
-		upper := int(math.Ceil(idx))
-		if lower == upper || upper >= len(values) {
-			return values[lower], nil
-		}
-		// Linear interpolation
-		frac := idx - float64(lower)
-		return values[lower] + frac*(values[upper]-values[lower]), nil
-
-	case "percentiles_array":
+	case "percentiles_array", "percentilesw_array":
 		// percentiles_array(expr, p1, p2, ..., pN) OR
 		// percentiles_array(expr, dynamic([p1, p2, ..., pN])) — verified
 		// against real ADX's own docs before implementing: unlike
@@ -662,8 +629,12 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			return nil, fmt.Errorf("percentiles_array requires at least 2 arguments")
 		}
 		var pcts []float64
-		if len(agg.Args) == 2 {
-			arrVal, err := evalExpr(agg.Args[1], schema, types.Row{})
+		first := 1
+		if agg.Function == "percentilesw_array" {
+			first = 2
+		}
+		if len(agg.Args) == first+1 {
+			arrVal, err := evalExpr(agg.Args[first], schema, types.Row{})
 			if err == nil {
 				if arr, ok := parseJSONArray(arrVal); ok {
 					for _, item := range arr {
@@ -673,7 +644,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 			}
 		}
 		if pcts == nil {
-			for _, pArg := range agg.Args[1:] {
+			for _, pArg := range agg.Args[first:] {
 				pVal, err := evalExpr(pArg, schema, types.Row{})
 				if err != nil {
 					return nil, fmt.Errorf("percentiles_array: %w", err)
@@ -681,9 +652,14 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 				pcts = append(pcts, types.ToFloat64(pVal))
 			}
 		}
-		results, err := computePercentiles(agg, pcts, rows, schema)
+		results, err := computePercentileValues(agg, pcts, rows, schema)
 		if err != nil {
 			return nil, err
+		}
+		for i, v := range results {
+			if v == nil {
+				results[i] = nil
+			}
 		}
 		b, _ := json.Marshal(results)
 		return string(b), nil
@@ -1199,7 +1175,9 @@ func inferAggType(funcName string, args []parser.Expr, schema *types.Schema) typ
 			}
 		}
 		return types.TypeReal
-	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "percentile", "percentiles", "covariance", "covariancep", "covarianceif", "covariancepif":
+	case "percentile", "percentiles", "percentilew", "percentilesw":
+		return percentileResultType(args, schema)
+	case "avg", "avgif", "stdev", "stdevif", "stdevp", "variance", "variancep", "varianceif", "variancepif", "covariance", "covariancep", "covarianceif", "covariancepif":
 		return types.TypeReal
 	case "min", "max", "minif", "maxif":
 		if len(args) > 0 {
@@ -1301,39 +1279,83 @@ func mergeDynamicIntoBag(bag map[string]interface{}, val interface{}) {
 	}
 }
 
-// computePercentiles computes multiple percentile values from a single expression.
-func computePercentiles(agg parser.Aggregation, pcts []float64, rows []types.Row, schema *types.Schema) ([]float64, error) {
-	if len(agg.Args) < 1 {
-		return nil, fmt.Errorf("percentiles requires at least 2 arguments")
+// computePercentileValues computes nearest-rank percentiles of
+// agg.Args[0] (weighted by agg.Args[1] for the ...w forms): the P-th
+// percentile is the smallest value with at least P% of the population
+// (by weight) less than or equal to it; P = 0 is the minimum. This is
+// ADX's documented definition; ADX estimates it with T-Digest, which
+// is exact for small populations. Results keep the value's type (int
+// widens to long); an empty population gives nulls.
+func computePercentileValues(agg parser.Aggregation, pcts []float64, rows []types.Row, schema *types.Schema) ([]types.Value, error) {
+	if len(agg.Args) < 2 {
+		return nil, fmt.Errorf("%s requires at least 2 arguments", agg.Function)
 	}
-	var values []float64
+	weighted := strings.HasPrefix(agg.Function, "percentilew") || strings.HasPrefix(agg.Function, "percentilesw")
+	type item struct {
+		key float64
+		val types.Value
+		w   int64
+	}
+	var items []item
+	var total int64
 	for _, row := range rows {
 		val, err := evalExpr(agg.Args[0], schema, row)
 		if err != nil || val == nil {
 			continue
 		}
-		values = append(values, types.ToFloat64(val))
+		w := int64(1)
+		if weighted {
+			wv, err := evalExpr(agg.Args[1], schema, row)
+			if err != nil || wv == nil {
+				continue
+			}
+			w = int64(types.ToFloat64(wv))
+			if w <= 0 {
+				continue
+			}
+		}
+		if x, ok := val.(int32); ok {
+			val = int64(x)
+		}
+		items = append(items, item{types.ToFloat64(val), val, w})
+		total += w
 	}
-	if len(values) == 0 {
-		result := make([]float64, len(pcts))
-		return result, nil
+	out := make([]types.Value, len(pcts))
+	if len(items) == 0 {
+		return out, nil
 	}
-	sort.Float64s(values)
-
-	result := make([]float64, len(pcts))
-	for i, pct := range pcts {
-		p := pct / 100.0
-		idx := p * float64(len(values)-1)
-		lower := int(math.Floor(idx))
-		upper := int(math.Ceil(idx))
-		if lower == upper || upper >= len(values) {
-			result[i] = values[lower]
-		} else {
-			frac := idx - float64(lower)
-			result[i] = values[lower]*(1-frac) + values[upper]*frac
+	sort.SliceStable(items, func(i, j int) bool { return items[i].key < items[j].key })
+	for i, p := range pcts {
+		rank := int64(math.Ceil(p / 100 * float64(total)))
+		if rank < 1 {
+			rank = 1
+		}
+		var cum int64
+		out[i] = items[len(items)-1].val
+		for _, it := range items {
+			cum += it.w
+			if cum >= rank {
+				out[i] = it.val
+				break
+			}
 		}
 	}
-	return result, nil
+	return out, nil
+}
+
+// percentileResultType is the type of a percentile of expr: the
+// expression's own type (int widens to long).
+func percentileResultType(args []parser.Expr, schema *types.Schema) types.KQLType {
+	if len(args) == 0 {
+		return types.TypeReal
+	}
+	switch t := inferExprType(args[0], schema); t {
+	case types.TypeInt, types.TypeLong:
+		return types.TypeLong
+	case types.TypeDatetime, types.TypeTimespan, types.TypeReal:
+		return t
+	}
+	return types.TypeReal
 }
 
 // --- Covariance family helpers (added 2026-08-17) ---

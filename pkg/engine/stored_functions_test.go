@@ -691,11 +691,7 @@ func TestPercentilesPluralAliasesToSingleValuePercentile(t *testing.T) {
 	if result.RowCount() != 1 {
 		t.Fatalf("expected 1 row, got %d", result.RowCount())
 	}
-	got, ok := result.Rows[0][0].(float64)
-	if !ok {
-		t.Fatalf("expected float64, got %T: %v", result.Rows[0][0], result.Rows[0][0])
-	}
-	if got < 5 || got > 6 {
-		t.Errorf("median of 1..10 = %v, expected between 5 and 6", got)
+	if got := result.Rows[0][0]; got != int64(5) {
+		t.Errorf("nearest-rank median of 1..10 = %v (%T), want int64 5", got, got)
 	}
 }

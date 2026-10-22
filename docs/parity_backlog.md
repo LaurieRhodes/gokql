@@ -56,6 +56,8 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| Arithmetic and comparison on mixed numeric types: `2 * 1.5` gave 2, `x + 0.5` and `x < 1.5` truncated the real to the long's integer, `int` operands failed (`unsupported operation: int32 + int32`), `1h * 1.5` truncated the factor, `90m / 1h` divided as integers; `2 * 1h` was typed long. Present since before this backlog | `evalMixedNumeric` and `numericPromote` (eval.go); result types follow Kusto.Language (int arithmetic widens to long; timespan times or divided by a number is a timespan; timespan / timespan is real) |
+| `percentile`/`percentiles`/`percentiles_array` interpolated (median of 1..10 was 5.5) and were always real; columns were named `percentile_x` | nearest-rank as ADX documents (median 5), result keeps the input type (int widens to long; datetime and timespan work), columns `percentile_x_50`, `percentile_x_99_5`, `percentile__50` for a non-column expression; a written name applies to the first column, `(a, b) = percentiles(...)` names each. `percentilew`, `percentilesw`, `percentilesw_array` added (weight = repetitions). ADX's T-Digest estimate can differ from the exact rank on large populations |
 | `tostring`/`strcat`/`strcat_delim` of datetime and timespan returned the raw integer (`1577836800000000000`) | now `2020-01-01T00:00:00Z` (seven fractional digits when not a whole second) and `[-][d.]hh:mm:ss[.fffffff]`; the static type picks the format (`kql_tostring.go`). The whole-second datetime form is the one ADX shows; not pinned by a reference example |
 | Bracket-quoted identifiers `['name']` / `["name"]` in expressions (with `.p`/`['k']` access after them), assignment names, `project`, `project-away/-rename/-reorder/-keep`, datatable and column-definition schemas; previously a parse error or a column literally named `['x']` | `unquoteIdent` in the parser |
 | `evaluate pivot` (default `count()`, any aggregate, explicit or default identifier columns, `: OutputSchema`) and `evaluate narrow` | `plugin_pivot.go`; the five pivot reference examples' shapes on a small table. Pivot columns in first-appearance order; an empty cell is 0 for count/dcount/sum, `[]`/`{}` for make_list/make_set/make_bag, otherwise null. An empty pivot value names its column `Column1` (unverified) |
@@ -80,8 +82,7 @@ and ASIM parsers, which is this engine's main query population.
 ## P3 — carried over
 
 Decimal type (`todecimal`, `parse_version`), `hash_combine`/
-`hash_many`, punycode, `percentilew`/`percentilesw`/
-`percentilesw_array`, `buildschema`, `series_stats` and multi-column
+`hash_many`, punycode, `buildschema`, `series_stats` and multi-column
 assignment, series curve fitting and signal processing,
 `datetime_list_timezones`, `reduce`. Details in the existing backlog
 documents.

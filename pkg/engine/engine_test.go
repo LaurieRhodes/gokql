@@ -1067,9 +1067,10 @@ func TestSummarizeArgMaxStarAgainstRealTablePlannerBug(t *testing.T) {
 func TestSummarizePercentile(t *testing.T) {
 	tbl := queryResult(t, `datatable (V: long) [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] | summarize percentile(V, 50)`)
 	expectRows(t, tbl, 1)
-	v := cellVal(t, tbl, 0, 0).(float64)
-	if v < 5.0 || v > 6.0 {
-		t.Errorf("median of 1..10 should be ~5.5, got %f", v)
+	// ADX's percentile is nearest-rank and keeps the input type: the
+	// median of 1..10 is 5 (long), not the interpolated 5.5.
+	if v := cellVal(t, tbl, 0, 0); v != int64(5) || tbl.Schema.Columns[0].Name != "percentile_V_50" {
+		t.Errorf("percentile(V, 50) of 1..10: %s = %v (%T), want percentile_V_50 = int64 5", tbl.Schema.Columns[0].Name, v, v)
 	}
 }
 
@@ -1077,6 +1078,14 @@ func TestSummarizePercentiles(t *testing.T) {
 	tbl := queryResult(t, `datatable (V: long) [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] | summarize percentiles(V, 25, 50, 75)`)
 	expectRows(t, tbl, 1)
 	expectCols(t, tbl, 3)
+	for i, w := range []struct {
+		name string
+		v    int64
+	}{{"percentile_V_25", 3}, {"percentile_V_50", 5}, {"percentile_V_75", 8}} {
+		if tbl.Schema.Columns[i].Name != w.name || tbl.Rows[0][i] != w.v {
+			t.Errorf("column %d: %s = %v, want %s = %d", i, tbl.Schema.Columns[i].Name, tbl.Rows[0][i], w.name, w.v)
+		}
+	}
 }
 
 func TestSummarizeStdev(t *testing.T) {

@@ -2988,6 +2988,13 @@ func parseAggregation(s string) (*Aggregation, error) {
 	// projecting the "obvious" column name would silently get nothing
 	// (a column that doesn't exist) rather than the intended value.
 	if agg.Name == "" {
+		agg.AutoNamed = true
+	}
+	if agg.Name == "" && IsPercentileAgg(agg.Function) {
+		agg.Name = PercentileAutoName(agg, 0)
+		return agg, nil
+	}
+	if agg.Name == "" {
 		nameSourceIdx := 0
 		if (agg.Function == "arg_max" || agg.Function == "arg_min") && len(agg.Args) >= 2 {
 			nameSourceIdx = 1
@@ -3024,7 +3031,7 @@ func parseAggregation(s string) (*Aggregation, error) {
 		// convention for this whole family is independent of each
 		// function's own exact literal name.
 		namePrefix := agg.Function
-		if agg.Function == "percentiles_array" {
+		if agg.Function == "percentiles_array" || agg.Function == "percentilesw_array" {
 			namePrefix = "percentiles"
 		}
 		if len(agg.Args) > nameSourceIdx {
@@ -3864,4 +3871,40 @@ func parseFindStatement(s string, remaining []string) (Statement, error) {
 		query.Operators = append(query.Operators, subOp)
 	}
 	return query, nil
+}
+
+// IsPercentileAgg reports whether f is percentile, percentiles,
+// percentilew or percentilesw (not the _array forms), which name each
+// output column percentile_<Column>_<P>.
+func IsPercentileAgg(f string) bool {
+	return f == "percentile" || f == "percentiles" || f == "percentilew" || f == "percentilesw"
+}
+
+// PercentileAutoName is the generated name of the i-th percentile
+// column of agg: percentile_<Column>_<P>, the column empty when the
+// value is not a plain column reference, and "." in P written "_"
+// (percentile(x, 99.5) is percentile_x_99_5).
+func PercentileAutoName(agg *Aggregation, i int) string {
+	col := ""
+	if len(agg.Args) > 0 {
+		if ref, ok := agg.Args[0].(*ColumnRef); ok {
+			col = ref.Name
+		}
+	}
+	first := 1
+	if agg.Function == "percentilew" || agg.Function == "percentilesw" {
+		first = 2
+	}
+	pct := ""
+	if first+i < len(agg.Args) {
+		if lit, ok := agg.Args[first+i].(*Literal); ok {
+			switch v := lit.Value.(type) {
+			case int64:
+				pct = strconv.FormatInt(v, 10)
+			case float64:
+				pct = strings.ReplaceAll(strconv.FormatFloat(v, 'f', -1, 64), ".", "_")
+			}
+		}
+	}
+	return "percentile_" + col + "_" + pct
 }

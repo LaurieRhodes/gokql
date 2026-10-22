@@ -450,22 +450,29 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				continue
 			}
 		}
-		if agg.Function == "percentiles" && len(agg.Args) >= 3 {
-			// percentiles(expr, p1, p2, ..., pN) → N columns
+		if first := percentileFirstPct(agg.Function); first > 0 && len(agg.Args) > first+1 {
+			// percentiles(expr, p1, ..., pN) / percentilesw(expr, w, p1, ..., pN)
+			// → N columns; a written name applies to the first only.
 			var pctVals []float64
 			var indices []int
-			exprName := aggExprName(agg.Args[0])
-			for _, pArg := range agg.Args[1:] {
+			colType := percentileResultType(agg.Args, &input.Schema)
+			var written []string // (a, b) = percentiles(...) names each column
+			if !agg.AutoNamed && strings.HasPrefix(agg.Name, "(") && strings.HasSuffix(agg.Name, ")") {
+				for _, n := range strings.Split(agg.Name[1:len(agg.Name)-1], ",") {
+					written = append(written, strings.TrimSpace(n))
+				}
+			} else if !agg.AutoNamed && agg.Name != "" {
+				written = []string{agg.Name}
+			}
+			for i, pArg := range agg.Args[first:] {
 				pVal, _ := evalExpr(pArg, &input.Schema, types.Row{})
-				p := types.ToFloat64(pVal)
-				pctVals = append(pctVals, p)
-				colName := fmt.Sprintf("percentile_%s_%g", exprName, p)
-				if agg.Name != "" && len(agg.Args) == 3 {
-					// Single percentile with alias: use the alias
-					colName = fmt.Sprintf("percentile_%s_%g", exprName, p)
+				pctVals = append(pctVals, types.ToFloat64(pVal))
+				colName := parser.PercentileAutoName(&agg, i)
+				if i < len(written) && written[i] != "" {
+					colName = written[i]
 				}
 				indices = append(indices, len(outSchema.Columns))
-				outSchema.Columns = append(outSchema.Columns, types.Column{Name: colName, Type: types.TypeReal})
+				outSchema.Columns = append(outSchema.Columns, types.Column{Name: colName, Type: colType})
 			}
 			slots = append(slots, aggSlot{agg: agg, pctValues: pctVals, colIndices: indices})
 		} else {
@@ -544,7 +551,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 				}
 			} else if slot.pctValues != nil {
 				// percentiles() — compute all requested percentiles
-				vals, err := computePercentiles(slot.agg, slot.pctValues, g.rows, &input.Schema)
+				vals, err := computePercentileValues(slot.agg, slot.pctValues, g.rows, &input.Schema)
 				if err != nil {
 					return nil, fmt.Errorf("summarize percentiles: %w", err)
 				}
@@ -577,6 +584,18 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 
 // applyUnion stacks rows from additional sources onto the input table.
 // Schema is the superset of all input schemas — missing columns filled with nil.
+// percentileFirstPct is the index of the first percentile argument of
+// a multi-valued percentiles call, 0 for any other aggregate.
+func percentileFirstPct(f string) int {
+	switch f {
+	case "percentiles":
+		return 1
+	case "percentilesw":
+		return 2
+	}
+	return 0
+}
+
 // aggExprName extracts a name for an expression (for auto-naming percentile columns).
 func aggExprName(expr parser.Expr) string {
 	switch e := expr.(type) {
