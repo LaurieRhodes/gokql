@@ -564,72 +564,253 @@ func randInt(n int) int {
 	return rand.Intn(n)
 }
 
+// unionLeg is one input of a union with the name withsource reports.
+type unionLeg struct {
+	name  string
+	table *types.Table
+}
+
+// applyUnion implements union. input is nil for the standalone form,
+// where every leg is in op.Sources.
+//
+// Leg names (the withsource value) are the table or let name; a
+// parenthesised subquery reports the name of the table it reads; the
+// piped input reports its own table name.
+//
+// isfuzzy=true drops a leg whose source cannot be resolved (an unknown
+// table or let name, or a wildcard matching nothing) and fails only if
+// no leg resolves. As documented for ADX, it covers resolution only:
+// a leg that resolves and then fails during execution still fails the
+// query.
 func (e *Engine) applyUnion(input *types.Table, op *parser.UnionOp) (*types.Table, error) {
-	// Collect all tables: input + each union source
-	tables := []*types.Table{input}
+	var legs []unionLeg
+	if input != nil {
+		legs = append(legs, unionLeg{name: input.Name, table: input})
+	}
+	resolved := input != nil
 
 	for _, src := range op.Sources {
-		// Check let-bound tables first — LookupTable walks the parent
-		// chain, not just e.letContext's own local map.
-		if len(src.Operators) == 0 {
-			if letTable, ok := e.letContext.LookupTable(src.Source); ok {
-				tables = append(tables, letTable)
-				continue
+		// Wildcard: union T*, matching catalog tables and view lambdas.
+		if len(src.Operators) == 0 && strings.Contains(src.Source, "*") {
+			names := e.unionWildcardNames(src.Source)
+			if len(names) == 0 {
+				if op.IsFuzzy {
+					continue
+				}
+				return nil, fmt.Errorf("union: no tables match %q", src.Source)
 			}
+			for _, n := range names {
+				t, err := e.executeQuery(&parser.Query{Source: n})
+				if err != nil {
+					return nil, fmt.Errorf("union source %q: %w", n, err)
+				}
+				legs = append(legs, unionLeg{name: n, table: t})
+				resolved = true
+			}
+			continue
 		}
-		// Execute the source query
-		result, err := e.executeQuery(src)
-		if err != nil {
-			return nil, fmt.Errorf("union source %q: %w", src.Source, err)
+		if op.IsFuzzy && !e.unionSourceResolvable(src) {
+			continue
 		}
-		tables = append(tables, result)
+		var t *types.Table
+		if letTable, ok := e.letContext.LookupTable(src.Source); ok && len(src.Operators) == 0 {
+			t = letTable
+		} else {
+			r, err := e.executeQuery(src)
+			if err != nil {
+				return nil, fmt.Errorf("union source %q: %w", src.Source, err)
+			}
+			t = r
+		}
+		name := src.Source
+		if name == "" {
+			name = t.Name
+		}
+		legs = append(legs, unionLeg{name: name, table: t})
+		resolved = true
+	}
+	if !resolved {
+		return nil, fmt.Errorf("union: none of the sources could be resolved")
 	}
 
-	// Build merged schema: superset of all columns preserving order
-	mergedSchema := buildUnionSchema(tables)
+	tables := make([]*types.Table, len(legs))
+	for i, l := range legs {
+		tables[i] = l.table
+	}
+	schema, colMaps := buildUnionSchema(tables, op.Kind)
+	if op.WithSource != "" {
+		schema.Columns = append([]types.Column{{Name: op.WithSource, Type: types.TypeString}}, schema.Columns...)
+	}
 
-	// Create output table and map rows from each input
-	output := types.NewTable(input.Name, mergedSchema)
-
-	for _, tbl := range tables {
-		// Build column index mapping: merged col index → source col index (-1 if missing)
-		colMap := make([]int, len(mergedSchema.Columns))
-		for i, mc := range mergedSchema.Columns {
-			colMap[i] = tbl.Schema.ColumnIndex(mc.Name)
-		}
-
-		for _, row := range tbl.Rows {
-			newRow := make(types.Row, len(mergedSchema.Columns))
+	outName := ""
+	if input != nil {
+		outName = input.Name
+	}
+	output := types.NewTable(outName, schema)
+	offset := 0
+	if op.WithSource != "" {
+		offset = 1
+	}
+	for li, l := range legs {
+		colMap := colMaps[li]
+		for _, row := range l.table.Rows {
+			newRow := make(types.Row, len(schema.Columns))
+			if offset == 1 {
+				newRow[0] = l.name
+			}
 			for i, srcIdx := range colMap {
 				if srcIdx >= 0 && srcIdx < len(row) {
-					newRow[i] = row[srcIdx]
+					newRow[i+offset] = row[srcIdx]
 				}
-				// else nil (missing column)
 			}
 			output.AddRow(newRow)
 		}
 	}
-
 	return output, nil
 }
 
-// buildUnionSchema merges schemas from multiple tables.
-// Columns appear in first-seen order; if a column appears in multiple tables
-// with different types, the first type wins.
-func buildUnionSchema(tables []*types.Table) types.Schema {
-	seen := make(map[string]bool)
-	var columns []types.Column
+// unionSourceResolvable reports whether a union leg's source exists:
+// a let-bound table, a catalog table, a UDF/stored-function call, a
+// table-valued function, a federated table, or a source-less leg
+// (print, datatable, range).
+func (e *Engine) unionSourceResolvable(src *parser.Query) bool {
+	if src.Source == "" || src.SourceFunc != nil || src.SourceDB != nil || src.SourceFuncCall != nil {
+		return true
+	}
+	if _, ok := e.letContext.LookupTable(src.Source); ok {
+		return true
+	}
+	return e.Catalog != nil && e.Catalog.GetTable(src.Source) != nil
+}
 
-	for _, tbl := range tables {
-		for _, col := range tbl.Schema.Columns {
-			if !seen[col.Name] {
-				seen[col.Name] = true
-				columns = append(columns, col)
+// unionWildcardNames expands a "*" pattern over catalog tables and
+// view lambdas (plain tabular lets are not in scope, as in ADX).
+func (e *Engine) unionWildcardNames(pattern string) []string {
+	var cands []string
+	if e.Catalog != nil {
+		cands = append(cands, e.Catalog.ListTables()...)
+	}
+	cands = append(cands, e.letContext.ViewNames()...)
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range cands {
+		if !seen[n] && wildcardMatch(pattern, n) {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// wildcardMatch matches name against a pattern in which "*" stands
+// for any run of characters (case-sensitive, like table names).
+func wildcardMatch(pattern, name string) bool {
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == name
+	}
+	if !strings.HasPrefix(name, parts[0]) {
+		return false
+	}
+	pos := len(parts[0])
+	for _, mid := range parts[1 : len(parts)-1] {
+		i := strings.Index(name[pos:], mid)
+		if i < 0 {
+			return false
+		}
+		pos += i + len(mid)
+	}
+	last := parts[len(parts)-1]
+	return len(name)-pos >= len(last) && strings.HasSuffix(name, last)
+}
+
+// buildUnionSchema merges leg schemas and returns, per leg, the source
+// column index for each output column (-1 where the leg lacks it).
+//
+// kind=outer: every distinct (name, type) pair, in first-seen order. A
+// name that occurs with more than one type yields one column per type,
+// named name_type; a suffixed name that collides with a genuine column
+// name gets a numeric suffix (x_long1), as in the ADX reference
+// examples.
+//
+// kind=inner: only (name, type) pairs present in every leg, in the
+// first leg's order.
+func buildUnionSchema(tables []*types.Table, kind string) (types.Schema, [][]int) {
+	type key struct {
+		name string
+		typ  types.KQLType
+	}
+	var order []key
+	seen := map[key]bool{}
+	typesByName := map[string]map[types.KQLType]bool{}
+	count := map[key]int{}
+	for _, t := range tables {
+		local := map[key]bool{}
+		for _, c := range t.Schema.Columns {
+			k := key{c.Name, c.Type}
+			if !seen[k] {
+				seen[k] = true
+				order = append(order, k)
+			}
+			if typesByName[c.Name] == nil {
+				typesByName[c.Name] = map[types.KQLType]bool{}
+			}
+			typesByName[c.Name][c.Type] = true
+			if !local[k] {
+				local[k] = true
+				count[k]++
 			}
 		}
 	}
+	if kind == "inner" {
+		var kept []key
+		for _, k := range order {
+			if count[k] == len(tables) {
+				kept = append(kept, k)
+			}
+		}
+		order = kept
+	}
 
-	return types.Schema{Columns: columns}
+	genuine := map[string]bool{}
+	for _, k := range order {
+		if len(typesByName[k.name]) == 1 {
+			genuine[k.name] = true
+		}
+	}
+	used := map[string]bool{}
+	for n := range genuine {
+		used[n] = true
+	}
+	cols := make([]types.Column, len(order))
+	for i, k := range order {
+		name := k.name
+		if len(typesByName[k.name]) > 1 {
+			base := k.name + "_" + k.typ.String()
+			name = base
+			for n := 1; used[name]; n++ {
+				name = fmt.Sprintf("%s%d", base, n)
+			}
+			used[name] = true
+		}
+		cols[i] = types.Column{Name: name, Type: k.typ}
+	}
+
+	maps := make([][]int, len(tables))
+	for ti, t := range tables {
+		m := make([]int, len(order))
+		for i, k := range order {
+			m[i] = -1
+			for ci, c := range t.Schema.Columns {
+				if c.Name == k.name && c.Type == k.typ {
+					m[i] = ci
+					break
+				}
+			}
+		}
+		maps[ti] = m
+	}
+	return types.Schema{Columns: cols}, maps
 }
 
 // applyMvExpand flattens array-valued columns into separate rows.

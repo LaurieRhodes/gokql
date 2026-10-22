@@ -146,6 +146,27 @@ func parseLetStatement(input string) (*LetStatement, error) {
 		return nil, fmt.Errorf("expected value after '=' in let statement")
 	}
 
+	// view lambda: let V = view () { T | ... }. A parameterless view
+	// binds like a tabular let and is additionally visible to union
+	// wildcards; a view with parameters is an ordinary function.
+	if body, params, ok := splitViewLambda(valueStr); ok {
+		if strings.TrimSpace(params) == "" {
+			query, err := parseQuery(body)
+			if err != nil {
+				return nil, fmt.Errorf("let %s: view: %w", name, err)
+			}
+			return &LetStatement{Name: name, Value: query, IsView: true}, nil
+		}
+		fn, ok, err := tryParseFunctionDef("(" + params + ") {" + body + "}")
+		if !ok || err != nil {
+			if err == nil {
+				err = fmt.Errorf("malformed view")
+			}
+			return nil, fmt.Errorf("let %s: view: %w", name, err)
+		}
+		return &LetStatement{Name: name, Value: fn, IsView: true}, nil
+	}
+
 	// User-defined function: let f = (x: long) { x * 2 }
 	if fn, ok, err := tryParseFunctionDef(valueStr); ok {
 		if err != nil {
@@ -173,6 +194,74 @@ func parseLetStatement(input string) (*LetStatement, error) {
 		return nil, fmt.Errorf("let %s: %w", name, err)
 	}
 	return &LetStatement{Name: name, Value: &ScalarExpr{Expr: expr}}, nil
+}
+
+// splitViewLambda recognises "view (params) { body }" and returns the
+// body and the parameter text.
+func splitViewLambda(s string) (body, params string, ok bool) {
+	lower := strings.ToLower(s)
+	if !strings.HasPrefix(lower, "view") || len(s) == 4 || isIdentChar(s[4]) {
+		return "", "", false
+	}
+	rest := strings.TrimSpace(s[4:])
+	if !strings.HasPrefix(rest, "(") {
+		return "", "", false
+	}
+	closeP := matchingClose(rest, 0, '(', ')')
+	if closeP < 0 {
+		return "", "", false
+	}
+	params = rest[1:closeP]
+	tail := strings.TrimSpace(rest[closeP+1:])
+	if !strings.HasPrefix(tail, "{") {
+		return "", "", false
+	}
+	closeB := matchingClose(tail, 0, '{', '}')
+	if closeB != len(tail)-1 {
+		return "", "", false
+	}
+	return strings.TrimSpace(tail[1:closeB]), params, true
+}
+
+// matchingClose returns the index of the bracket closing the one at
+// s[open], skipping quoted strings, or -1.
+func matchingClose(s string, open int, l, r byte) int {
+	depth := 0
+	var quote byte
+	for i := open; i < len(s); i++ {
+		ch := s[i]
+		if quote != 0 {
+			if ch == quote && !precededByOddBackslashes(s, i) {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case l:
+			depth++
+		case r:
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// isIdentifier reports whether s is a plain KQL identifier.
+func isIdentifier(s string) bool {
+	if s == "" || !isIdentStart(s[0]) {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if !isIdentChar(s[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // isTabularExpression checks if a string looks like a tabular query (has pipes at depth 0).
@@ -1555,59 +1644,97 @@ func parseOperator(seg string) (Operator, error) {
 	return nil, fmt.Errorf("unknown operator: %q", seg)
 }
 
-// parseUnion parses the union operator arguments: table names and subqueries.
-// Formats: "T2, T3" or "(T2 | where ...), T3"
+// parseUnion parses the piped form, "| union [params] T2, (T3 | ...)".
 func parseUnion(s string) (*UnionOp, error) {
-	sources, err := parseUnionSources(s)
+	op, rest, err := parseUnionParams(s)
+	if err != nil {
+		return nil, fmt.Errorf("union: %w", err)
+	}
+	sources, err := parseUnionSources(rest)
 	if err != nil {
 		return nil, fmt.Errorf("union: %w", err)
 	}
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("union: no tables specified")
 	}
-	return &UnionOp{Sources: sources}, nil
+	op.Sources = sources
+	return op, nil
 }
 
-// parseStandaloneUnion handles "union T1, T2, T3 | where ..."
-// Rewrites as Query{Source: T1, Operators: [UnionOp{T2, T3}, remaining...]}
+// parseUnionParams consumes the leading Name=Value parameters of a
+// union (kind, withsource, isfuzzy, and the hint.concurrency/
+// hint.spread execution hints, which have no effect on a single node)
+// and returns the operator with them set plus the remaining text.
+func parseUnionParams(s string) (*UnionOp, string, error) {
+	op := &UnionOp{Kind: "outer"}
+	rest := strings.TrimSpace(s)
+	for {
+		eq := strings.Index(rest, "=")
+		if eq <= 0 {
+			return op, rest, nil
+		}
+		key := strings.ToLower(strings.TrimSpace(rest[:eq]))
+		if strings.ContainsAny(key, " \t\r\n,()") {
+			return op, rest, nil
+		}
+		after := strings.TrimLeft(rest[eq+1:], " \t\r\n")
+		end := strings.IndexAny(after, " \t\r\n")
+		if end < 0 {
+			return nil, "", fmt.Errorf("parameter %q has no tables after it", key)
+		}
+		val := after[:end]
+		switch key {
+		case "kind":
+			v := strings.ToLower(val)
+			if v != "inner" && v != "outer" {
+				return nil, "", fmt.Errorf("kind must be inner or outer, got %q", val)
+			}
+			op.Kind = v
+		case "withsource":
+			if !isIdentifier(val) {
+				return nil, "", fmt.Errorf("withsource: invalid column name %q", val)
+			}
+			op.WithSource = val
+		case "isfuzzy":
+			switch strings.ToLower(val) {
+			case "true":
+				op.IsFuzzy = true
+			case "false":
+				op.IsFuzzy = false
+			default:
+				return nil, "", fmt.Errorf("isfuzzy must be true or false, got %q", val)
+			}
+		case "hint.concurrency", "hint.spread":
+			// Distributed-execution hints; accepted and ignored.
+		default:
+			return op, rest, nil
+		}
+		rest = strings.TrimSpace(after[end:])
+	}
+}
+
+// parseStandaloneUnion handles "union [params] T1, T2 | ...". Every leg,
+// including the first, goes into the UnionOp so that withsource can
+// label it and isfuzzy can drop it.
 func parseStandaloneUnion(sourcesPart string, remainingSegments []string) (Statement, error) {
-	sources, err := parseUnionSources(strings.TrimSpace(sourcesPart))
+	op, err := parseUnion(sourcesPart)
 	if err != nil {
-		return nil, fmt.Errorf("union: %w", err)
+		return nil, err
 	}
-	if len(sources) == 0 {
-		return nil, fmt.Errorf("union: no tables specified")
-	}
-
-	// First source becomes the query source
-	firstSource := sources[0]
-	if len(firstSource.Operators) > 0 {
-		return nil, fmt.Errorf("union: first source in standalone union cannot have operators (use pipe form)")
-	}
-
-	var operators []Operator
-	// If more than one source, prepend a union op for the rest
-	if len(sources) > 1 {
-		operators = append(operators, &UnionOp{Sources: sources[1:]})
-	}
-
-	// Parse remaining pipe operators
+	op.Standalone = true
+	operators := []Operator{op}
 	for i, seg := range remainingSegments {
 		seg = strings.TrimSpace(seg)
 		if seg == "" {
 			continue
 		}
-		op, err := parseOperator(seg)
+		next, err := parseOperator(seg)
 		if err != nil {
 			return nil, fmt.Errorf("operator %d: %w", i+1, err)
 		}
-		operators = append(operators, op)
+		operators = append(operators, next)
 	}
-
-	return &Query{
-		Source:    firstSource.Source,
-		Operators: operators,
-	}, nil
+	return &Query{Source: "", Operators: operators}, nil
 }
 
 // parseUnionSources parses comma-separated table names and subqueries.

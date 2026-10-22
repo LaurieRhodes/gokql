@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -29,6 +30,7 @@ type LetContext struct {
 	ScalarTypes map[string]types.KQLType       // Scalar let bindings: name → KQL type, populated alongside Scalars (see executeCompound's own ScalarExpr case) — added 2026-08-18 to fix inferExprType's own inability to resolve a let-bound scalar's type (see LookupScalarType's own doc comment for the full story).
 	Functions   map[string]*parser.FunctionDef // UDF let bindings: name → definition
 	Tables      map[string]*types.Table        // Tabular let bindings: name → result table
+	Views       map[string]bool                // Names bound by a view lambda; in scope for union wildcards
 
 	// Parent is the enclosing scope's own LetContext, if any — nil for
 	// a top-level context. Added 2026-08-17 to fix a real, live
@@ -105,6 +107,23 @@ func (ctx *LetContext) LookupTable(name string) (*types.Table, bool) {
 		return t, true
 	}
 	return ctx.Parent.LookupTable(name)
+}
+
+// ViewNames returns every view-lambda name visible from ctx, inner
+// scopes first, without duplicates.
+func (ctx *LetContext) ViewNames() []string {
+	var out []string
+	seen := map[string]bool{}
+	for c := ctx; c != nil; c = c.Parent {
+		for name := range c.Views {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // LookupFunction is LookupScalar's own UDF-let counterpart.
@@ -509,6 +528,12 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 		default:
 			return nil, fmt.Errorf("let %s: unsupported value type %T", let.Name, let.Value)
 		}
+		if let.IsView {
+			if ctx.Views == nil {
+				ctx.Views = map[string]bool{}
+			}
+			ctx.Views[let.Name] = true
+		}
 	}
 
 	// Execute final statement with full context
@@ -684,6 +709,13 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 			}
 			if so, ok := q.Operators[0].(*parser.SearchOp); ok {
 				result, err := e.applySearch(so)
+				if err != nil {
+					return nil, err
+				}
+				return e.applyPipeline(result, q.Operators[1:])
+			}
+			if uo, ok := q.Operators[0].(*parser.UnionOp); ok && uo.Standalone {
+				result, err := e.applyUnion(nil, uo)
 				if err != nil {
 					return nil, err
 				}

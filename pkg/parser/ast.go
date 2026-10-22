@@ -687,6 +687,19 @@ type MvExpandColumn struct {
 // Each source can be a plain table or a subquery with operators.
 type UnionOp struct {
 	Sources []*Query // Additional table sources to union
+
+	// Kind is "outer" (default: every column of every leg) or "inner"
+	// (only the columns common to all legs).
+	Kind string
+	// WithSource, when set, names a leading string column holding the
+	// name of the leg each row came from.
+	WithSource string
+	// IsFuzzy drops legs whose source cannot be resolved instead of
+	// failing; the union fails only if no leg resolves.
+	IsFuzzy bool
+	// Standalone is set for "union T1, T2" with no piped input: every
+	// leg is in Sources and the operator produces the table itself.
+	Standalone bool
 }
 
 func (*UnionOp) operatorNode() {}
@@ -1041,6 +1054,10 @@ func (op BinaryOp) String() string {
 type LetStatement struct {
 	Name  string
 	Value Statement // *Query for tabular, ScalarExpr for scalar
+	// IsView marks a `view` lambda (let V = view () { ... }). A view is
+	// in scope for union wildcards (union V*); a plain tabular let is
+	// not.
+	IsView bool
 }
 
 func (*LetStatement) statementNode() {}

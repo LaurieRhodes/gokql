@@ -19,7 +19,6 @@ and ASIM parsers, which is this engine's main query population.
 
 | Item | Observed |
 |---|---|
-| `union isfuzzy=true`, `union withsource=Col`, `union kind=` | option parsed as a table name |
 | `mv-expand` options: `kind=`, `bagexpansion=`, `with_itemindex=`, `to typeof(T)`, `limit N` | each rejected by the parser |
 | `mv-apply ... = <expression>` (only a bare column works) | "column not found" |
 | `lookup` with a parenthesised subquery on the right (`join` accepts it) | right side resolved as a table name |
@@ -32,15 +31,17 @@ and ASIM parsers, which is this engine's main query population.
 | `make_list`/`make_set` optional `MaxSize` argument | "requires 1 argument" |
 | Tabular parameter with wildcard schema, `(T:(*))` | "unknown KQL type" |
 | Default parameter values, `(x:long = 2)` | "unknown KQL type" |
-| `view` lambdas, `let f = view () { ... }` | parse error |
 | `materialize()` | parse error |
 | `bag_pack(...)` typed as string by `inferExprType`, so a following `evaluate bag_unpack` rejects it | type inference bug |
+| `sum`/`sumif` of a `long` column returns `real`; ADX returns `long` (row and columnar aggregation paths) | type parity bug |
 | Literals: hex `0x1F`, `guid(...)`, `real(+inf)`/`real(-inf)`/`real(nan)`, obfuscated `h"..."`, adjacent string-literal concatenation `'a' 'b'` | parse errors |
 
 ## Closed
 
 | Item | Commit notes |
 |---|---|
+| `union kind=inner/outer`, `withsource=`, `isfuzzy=`, `hint.concurrency`/`hint.spread`, wildcard legs (`T*`), per-type column suffixing (`x_long`, `x_int`, `x_long1`) | `applyUnion`/`buildUnionSchema`; all four union-operator reference examples exact. Standalone `union` now keeps every leg in the operator, so the first leg can carry operators and be labelled or dropped |
+| `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
 ## P2 — real but less frequent
