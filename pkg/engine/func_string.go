@@ -56,13 +56,11 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 	case "strcat":
 		var sb strings.Builder
 		for _, arg := range fc.Args {
-			val, err := evalExpr(arg, schema, row)
+			str, _, err := exprToString(arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
-			if val != nil {
-				sb.WriteString(fmt.Sprintf("%v", val))
-			}
+			sb.WriteString(str)
 		}
 		return sb.String(), true, nil
 
@@ -957,15 +955,12 @@ func evalStringFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (t
 		delim := fmt.Sprintf("%v", delimVal)
 		var parts []string
 		for _, arg := range fc.Args[1:] {
-			val, err := evalExpr(arg, schema, row)
+			s, notNull, err := exprToString(arg, schema, row)
 			if err != nil {
 				return nil, true, err
 			}
-			if val != nil {
-				s := fmt.Sprintf("%v", val)
-				if s != "" {
-					parts = append(parts, s)
-				}
+			if notNull && s != "" {
+				parts = append(parts, s)
 			}
 		}
 		return strings.Join(parts, delim), true, nil

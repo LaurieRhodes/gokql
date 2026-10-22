@@ -717,6 +717,25 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 		return p.parseIdentOrFunc()
 	}
 
+	// Quoted identifier: ['name'] or ["name"], for names that are not
+	// valid bare identifiers (spaces, keywords).
+	if ch == '[' {
+		save := p.pos
+		p.pos++
+		p.skipWhitespace()
+		if p.pos < len(p.input) && (p.input[p.pos] == '\'' || p.input[p.pos] == '"') {
+			lit, err := p.parseString()
+			if err == nil {
+				p.skipWhitespace()
+				if l, ok := lit.(*Literal); ok && p.pos < len(p.input) && p.input[p.pos] == ']' {
+					p.pos++
+					return p.parsePostfixAccess(&ColumnRef{Name: fmt.Sprintf("%v", l.Value)})
+				}
+			}
+		}
+		p.pos = save
+	}
+
 	return nil, fmt.Errorf("unexpected character: %c", ch)
 }
 

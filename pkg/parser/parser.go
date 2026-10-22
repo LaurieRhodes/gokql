@@ -1349,12 +1349,12 @@ func parseColumnDefs(s string) (*types.Schema, error) {
 			continue
 		}
 
-		colonIdx := strings.Index(part, ":")
+		colonIdx := strings.LastIndex(part, ":") // type names have no colon; a quoted name may
 		if colonIdx < 0 {
 			return nil, fmt.Errorf("expected 'name: type' in column definition, got %q", part)
 		}
 
-		name := strings.TrimSpace(part[:colonIdx])
+		name := unquoteIdent(part[:colonIdx])
 		typStr := strings.TrimSpace(part[colonIdx+1:])
 
 		typ, err := types.ParseType(typStr)
@@ -1697,7 +1697,7 @@ func parseOperator(seg string) (Operator, error) {
 		if len(cols) == 0 {
 			return nil, fmt.Errorf("project-away: no columns specified")
 		}
-		return &ProjectAwayOp{Columns: cols}, nil
+		return &ProjectAwayOp{Columns: unquoteIdents(cols)}, nil
 	}
 
 	// | project-rename NewName = OldName, ...
@@ -1715,8 +1715,8 @@ func parseOperator(seg string) (Operator, error) {
 			if eqIdx < 0 {
 				return nil, fmt.Errorf("project-rename: expected 'NewName = OldName', got %q", part)
 			}
-			newName := strings.TrimSpace(part[:eqIdx])
-			oldName := strings.TrimSpace(part[eqIdx+1:])
+			newName := unquoteIdent(part[:eqIdx])
+			oldName := unquoteIdent(part[eqIdx+1:])
 			renames = append(renames, RenameSpec{NewName: newName, OldName: oldName})
 		}
 		return &ProjectRenameOp{Renames: renames}, nil
@@ -1734,7 +1734,7 @@ func parseOperator(seg string) (Operator, error) {
 		if len(cols) == 0 {
 			return nil, fmt.Errorf("project-reorder: no columns specified")
 		}
-		return &ProjectReorderOp{Columns: cols}, nil
+		return &ProjectReorderOp{Columns: unquoteIdents(cols)}, nil
 	}
 
 	// | project-keep col1, col2, ... (supports wildcards like col*)
@@ -1749,7 +1749,7 @@ func parseOperator(seg string) (Operator, error) {
 		if len(patterns) == 0 {
 			return nil, fmt.Errorf("project-keep: no columns specified")
 		}
-		return &ProjectKeepOp{Patterns: patterns}, nil
+		return &ProjectKeepOp{Patterns: unquoteIdents(patterns)}, nil
 	}
 
 	// | project-by-names ColumnSpecifier[, ...]
@@ -2354,12 +2354,12 @@ func parseDataTableStatement(source string, remaining []string) (Statement, erro
 		if colDef == "" {
 			continue
 		}
-		parts := strings.SplitN(colDef, ":", 2)
-		if len(parts) != 2 {
+		ci := strings.LastIndex(colDef, ":") // type names have no colon; a quoted name may
+		if ci < 0 {
 			return nil, fmt.Errorf("datatable: expected 'ColName: type', got %q", colDef)
 		}
-		name := strings.TrimSpace(parts[0])
-		typeName := strings.TrimSpace(parts[1])
+		name := unquoteIdent(colDef[:ci])
+		typeName := strings.TrimSpace(colDef[ci+1:])
 		kt, err := types.ParseType(typeName)
 		if err != nil {
 			return nil, fmt.Errorf("datatable: unknown type %q for column %q", typeName, name)
@@ -3144,11 +3144,15 @@ func parseAssignments(s string) ([]Assignment, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", part, err)
 			}
-			result = append(result, Assignment{Name: part, Expr: expr})
+			name := part
+			if ref, ok := expr.(*ColumnRef); ok && strings.HasPrefix(part, "[") {
+				name = ref.Name
+			}
+			result = append(result, Assignment{Name: name, Expr: expr})
 			continue
 		}
 
-		name := strings.TrimSpace(part[:eqIdx])
+		name := unquoteIdent(part[:eqIdx])
 		exprStr := strings.TrimSpace(part[eqIdx+1:])
 		expr, err := ParseExpr(exprStr)
 		if err != nil {
@@ -3353,6 +3357,10 @@ func parseProjectItems(colStr string) ([]ProjectItem, error) {
 				items = append(items, ProjectItem{Name: part})
 				continue
 			}
+			if u := unquoteIdent(part); u != part {
+				items = append(items, ProjectItem{Name: u})
+				continue
+			}
 			expr, err := ParseExpr(part)
 			if err != nil {
 				return nil, fmt.Errorf("%q: %w", part, err)
@@ -3360,7 +3368,7 @@ func parseProjectItems(colStr string) ([]ProjectItem, error) {
 			items = append(items, ProjectItem{Name: part, Expr: expr})
 			continue
 		}
-		name := strings.TrimSpace(part[:eqIdx])
+		name := unquoteIdent(part[:eqIdx])
 		exprStr := strings.TrimSpace(part[eqIdx+1:])
 		if name == "" || exprStr == "" {
 			return nil, fmt.Errorf("expected 'Name = expr', got %q", part)

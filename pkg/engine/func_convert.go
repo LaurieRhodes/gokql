@@ -3,7 +3,6 @@ package engine
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -135,29 +134,11 @@ func evalConvertFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("tostring requires 1 argument")
 		}
-		val, err := evalExpr(fc.Args[0], schema, row)
+		str, _, err := exprToString(fc.Args[0], schema, row)
 		if err != nil {
 			return nil, true, err
 		}
-		if val == nil {
-			return "", true, nil
-		}
-		switch v := val.(type) {
-		case float64:
-			if v == float64(int64(v)) {
-				return strconv.FormatInt(int64(v), 10), true, nil
-			}
-			return strconv.FormatFloat(v, 'f', -1, 64), true, nil
-		case int64:
-			return strconv.FormatInt(v, 10), true, nil
-		case bool:
-			if v {
-				return "true", true, nil
-			}
-			return "false", true, nil
-		default:
-			return fmt.Sprintf("%v", val), true, nil
-		}
+		return str, true, nil
 
 	// --- Conditional Functions ---
 

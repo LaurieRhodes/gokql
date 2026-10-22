@@ -360,6 +360,37 @@ func ParseFunctionParams(paramText string) ([]FunctionParam, error) {
 	return params, nil
 }
 
+// unquoteIdent returns the name inside a quoted identifier, ['name'] or
+// ["name"] (KQL's form for names that are not bare identifiers), and s
+// trimmed otherwise.
+func unquoteIdent(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 4 || s[0] != '[' || s[len(s)-1] != ']' {
+		return s
+	}
+	inner := strings.TrimSpace(s[1 : len(s)-1])
+	if len(inner) < 2 || (inner[0] != '\'' && inner[0] != '"') || inner[len(inner)-1] != inner[0] {
+		return s
+	}
+	ex, err := ParseExpr(inner)
+	if err != nil {
+		return s
+	}
+	if lit, ok := ex.(*Literal); ok {
+		if v, ok := lit.Value.(string); ok {
+			return v
+		}
+	}
+	return s
+}
+
+func unquoteIdents(names []string) []string {
+	for i, n := range names {
+		names[i] = unquoteIdent(n)
+	}
+	return names
+}
+
 // isValidIdentifier reports whether s is a bare identifier — letter or
 // underscore, then letters/digits/underscores. Shared by the stored-
 // function-call recognizer above and (implicitly, by the same shape)
