@@ -12,11 +12,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -415,6 +417,7 @@ func (st *replState) runCommand(input string) error {
 		return fmt.Errorf("parse: %w", err)
 	}
 
+	defer st.interruptible()()
 	results, err := st.eng.ExecuteAll(stmt)
 	if err != nil {
 		return err
@@ -631,6 +634,38 @@ func (st *replState) handleRead(input string) {
 		if err := st.dispatch(line); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
+	}
+}
+
+// interruptible makes Ctrl-C during one command cancel the engine's
+// context, which long bulk operations (.embed-into) check between
+// commits, so they stop with their committed work reported instead of
+// the process dying mid-batch. The first Ctrl-C also restores the
+// default handler, so a second one terminates as before: a command
+// that never checks the context stays interruptible. The returned
+// func ends the command's scope.
+func (st *replState) interruptible() func() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	prev := st.eng.Ctx
+	st.eng.Ctx = ctx
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			select {
+			case <-done:
+				return // the command ended; stop() cancelled ctx
+			default:
+			}
+			stop()
+			fmt.Fprintln(os.Stderr, "\ninterrupt: cancelling; press Ctrl-C again to quit")
+		case <-done:
+		}
+	}()
+	return func() {
+		close(done)
+		stop()
+		st.eng.Ctx = prev
 	}
 }
 

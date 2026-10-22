@@ -173,6 +173,13 @@ func (e *Engine) applyEmbedInto(cmd *parser.EmbedIntoCmd) (*types.Table, error) 
 		}
 
 		vecs, err := embedAllRows(ctx, em, texts, src, chunk, modelIdx)
+		if err != nil && ctx.Err() != nil {
+			// Cancelled mid-chunk: the chunk in flight is discarded,
+			// so report it the same way as between chunks.
+			return nil, fmt.Errorf(".embed-into: cancelled after %d of %d rows "+
+				"(already-written rows are durable; re-run to resume): %w",
+				written, len(pending), ctx.Err())
+		}
 		if err != nil {
 			return nil, fmt.Errorf(".embed-into: rows %d-%d of %d (%d already written and durable; "+
 				"re-run to resume): %w", start, end, len(pending), written, err)
