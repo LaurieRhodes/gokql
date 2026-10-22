@@ -56,6 +56,7 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| `evaluate sliding_window_counts`, `rolling_percentile`, `schema_merge` | `plugin_rolling.go`, `plugin_schema_merge.go`; every reference example exact (sliding_window_counts 1, rolling_percentile 2, schema_merge 3). Output schemas from Kusto.Language (`Count`/`Dcount`). Unpinned: bins whose window is empty are not reported; Bin strings week/month/year unsupported; schema_merge's type-reduction rules beyond int/long/real and its mismatch message |
 | Arithmetic and comparison on mixed numeric types: `2 * 1.5` gave 2, `x + 0.5` and `x < 1.5` truncated the real to the long's integer, `int` operands failed (`unsupported operation: int32 + int32`), `1h * 1.5` truncated the factor, `90m / 1h` divided as integers; `2 * 1h` was typed long. Present since before this backlog | `evalMixedNumeric` and `numericPromote` (eval.go); result types follow Kusto.Language (int arithmetic widens to long; timespan times or divided by a number is a timespan; timespan / timespan is real) |
 | `percentile`/`percentiles`/`percentiles_array` interpolated (median of 1..10 was 5.5) and were always real; columns were named `percentile_x` | nearest-rank as ADX documents (median 5), result keeps the input type (int widens to long; datetime and timespan work), columns `percentile_x_50`, `percentile_x_99_5`, `percentile__50` for a non-column expression; a written name applies to the first column, `(a, b) = percentiles(...)` names each. `percentilew`, `percentilesw`, `percentilesw_array` added (weight = repetitions). ADX's T-Digest estimate can differ from the exact rank on large populations |
 | `tostring`/`strcat`/`strcat_delim` of datetime and timespan returned the raw integer (`1577836800000000000`) | now `2020-01-01T00:00:00Z` (seven fractional digits when not a whole second) and `[-][d.]hh:mm:ss[.fffffff]`; the static type picks the format (`kql_tostring.go`). The whole-second datetime form is the one ADX shows; not pinned by a reference example |
@@ -69,15 +70,34 @@ and ASIM parsers, which is this engine's main query population.
 - Operators previously labelled out of scope that have no cluster
   dependency: `fork`, `facet`.
 - `evaluate` plugins. `bag_unpack`, `ipv4_lookup`, `ipv6_lookup`,
-  `pivot` and `narrow` exist. Deterministic, documented-output
-  plugins: `schema_merge`, `sequence_detect`,
-  `rolling_percentile`, `sliding_window_counts`,
+  `pivot`, `narrow`, `schema_merge`, `rolling_percentile` and
+  `sliding_window_counts` exist. Deterministic, documented-output
+  plugins: `sequence_detect`,
   `active_users_count`, `activity_counts_metrics`,
   `activity_engagement`, `new_activity_metrics`, `session_count`,
   `funnel_sequence`, `funnel_sequence_completion`,
   `dcount_intersect`. Pattern-mining plugins (`autocluster`,
   `basket`, `diffpatterns`) have the same specification problem as
   `reduce` and need their algorithm pinned before work starts.
+
+### Remaining plugin output schemas (Kusto.Language 12.4.1)
+
+Input `datatable(Id:string, Ts:datetime, D:string, v:long, s:string)`;
+use these names and types, since the reference pages often disagree
+with their own examples.
+
+| Plugin call | Output columns |
+|---|---|
+| `activity_counts_metrics(Id, Ts, start, end, 1d, D)` | `Ts:datetime, D, count:long, dcount:long, new_dcount:long, aggregated_dcount:long` |
+| `activity_engagement(Id, Ts, [start, end,] 1d, 30d [, D])` | `Ts:datetime, [D,] dcount_activities_inner:long, dcount_activities_outer:long, activity_ratio:real` |
+| `active_users_count(Id, Ts, start, end, 7d, 1d, 2, 7d, D)` | `Ts:datetime, D, dcount:long` |
+| `new_activity_metrics(Id, Ts, start, end, 1d, dynamic(null), D)` | `from_Ts:datetime, to_Ts:datetime, D, dcount_new_values:long, dcount_retained_values:long, dcount_churn_values:long, retention_rate:real, churn_rate:real` |
+| `activity_metrics(Id, Ts, start, end, 1d, D)` | `Ts:datetime, D, dcount_values:long, dcount_newvalues:long, retention_rate:real, churn_rate:real` |
+| `funnel_sequence(Id, Ts, start, end, 10m, 1d, s, dynamic([...]))` | `Ts:datetime, prev:string, next:string, dcount:long, samples:dynamic` |
+| `funnel_sequence_completion(Id, Ts, start, end, 1d, s, dynamic([...]), dynamic([1h, 1d]))` | `Ts:datetime, s:string, Period:timespan, dcount:long` |
+| `dcount_intersect(v, s)` (hll arguments) | input columns plus `s0:long, s1:long, ...` |
+| `sequence_detect(Ts, 5h, 8h, s == 'a', s == 'b', Id)` | `Id, _Ts:datetime (per step), Duration:timespan` |
+| `session_count(Id, Ts, start, end, 1d, 1d, D)` | `Ts:datetime, D, count_sessions:long` |
 
 ## P3 — carried over
 
