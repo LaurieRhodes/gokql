@@ -344,3 +344,11 @@ func (e *Engine) context() context.Context {
 	}
 	return context.Background()
 }
+
+// ResolveEmbedderForDiagnostics exposes the configured backend to the
+// CLI's -embed-check, without opening the package-level resolution
+// machinery to general use. Diagnostics are the one legitimate caller
+// that needs the backend without executing a statement.
+func ResolveEmbedderForDiagnostics(e *Engine) embed.Embedder {
+	return e.resolveEmbedder()
+}

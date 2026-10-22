@@ -98,7 +98,25 @@ func main() {
 	serveFlag := flag.Bool("serve", false, "Network mode: serve -db over HTTP, speaking Kustainer's REST protocol (POST /v1/rest/query, /v1/rest/mgmt). Single database, no auth — see server.go's file-level doc comment before exposing beyond a trusted network.")
 	serveAddr := flag.String("addr", ":8080", "Address to listen on in -serve mode")
 	dbNameFlag := flag.String("dbname", "", "Database name clients must send in -serve mode (defaults to -db's final path component)")
+	embedCheck := flag.Bool("embed-check", false, "Probe the configured embedding backend and report whether it is ready, then exit")
+	embedSetup := flag.Bool("embed-setup", false, "Write a setup script for a local embedding backend, then exit. Writes only; gokql never downloads or runs anything itself")
+	embedSetupPath := flag.String("embed-setup-path", "setup-embeddings.sh", "Where -embed-setup writes its script")
+	embedEval := flag.String("embed-eval", "", "Run a retrieval-quality eval set (JSON) against -db and report recall@K, then exit")
+	embedEvalTable := flag.String("embed-eval-table", "E", "Embeddings table used by -embed-eval")
+	embedEvalChunks := flag.String("embed-eval-chunks", "Chunks | project Id, Text", "Subquery supplying Id and Text for -embed-eval's relevance matching")
+	embedEvalMin := flag.Float64("embed-eval-min", 0.8, "Minimum recall@K for -embed-eval to exit 0")
 	flag.Parse()
+
+	// Operational embedding commands run before any database is
+	// opened: a user with no backend has nothing to query yet, and
+	// requiring -db just to diagnose one would be a poor first
+	// experience.
+	if *embedCheck {
+		os.Exit(runEmbedCheck())
+	}
+	if *embedSetup {
+		os.Exit(runEmbedSetup(*embedSetupPath))
+	}
 
 	if *showVersion {
 		fmt.Printf("gokql v%s\n", version)
@@ -183,6 +201,12 @@ func main() {
 
 	eng := engine.New(cat)
 	eng.Verbose = *verbose
+
+	// -embed-eval needs a database, so unlike -embed-check it runs
+	// after the catalog is open rather than before.
+	if *embedEval != "" {
+		os.Exit(runEmbedEval(eng, *embedEval, *embedEvalTable, *embedEvalChunks, *embedEvalMin))
+	}
 
 	// Wait for any materialized-view maintenance this process's own
 	// writes triggered before actually exiting via a normal return —

@@ -259,7 +259,16 @@ func (o *OpenAI) embedOnce(ctx context.Context, body []byte) (vecs [][]float64, 
 		return nil, false, fmt.Errorf("embedding server: %s", parsed.Error.Message)
 	}
 	if len(parsed.Data) == 0 {
-		return nil, true, fmt.Errorf("embedding server returned no data")
+		// A 200 carrying a well-formed body with zero embeddings is a
+		// protocol violation, not a transient fault, so retrying it
+		// only delays the error. This is the THIRD place the naive
+		// "anything that isn't a clean success might be transient"
+		// rule cost real time (after the 501 and the oversized-input
+		// 500). The retry policy exists for one specific observed
+		// failure -- Ollama's runner dropping connections under
+		// sustained load -- and should be narrow enough to say so.
+		return nil, false, fmt.Errorf("embedding server returned a 200 with no embeddings "+
+			"(is %s really an embeddings endpoint?)%s", o.Endpoint, hint(http.StatusOK, raw))
 	}
 
 	// The response carries an explicit index per object and the spec

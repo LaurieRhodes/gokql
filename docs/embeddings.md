@@ -189,10 +189,41 @@ query-time value that callers routinely inspect, and it is now
 computed once per statement rather than once per row, so its encoding
 is not a performance concern.
 
-## No evaluation set exists
+## Measuring retrieval quality
 
-There is currently no way to tell whether a model or backend change
-made retrieval *worse*. It produces no error, just quietly worse
-answers. Before changing either, build a small labelled set of
-query-to-expected-chunk pairs and measure recall@5. This is the
-largest unmanaged risk in this extension.
+```
+gokql -db mydb -embed-eval testdata/embed-eval.json \
+  -embed-eval-chunks 'Chunks | extend Id = strcat(Provenance, ":", Id) | project Id, Text'
+```
+
+Reports recall@1, recall@3, recall@K and MRR, lists every miss with
+the top hit it got instead, and exits non-zero when recall@K falls
+below `-embed-eval-min` (default 0.8). That exit code is the point: it
+gates a model, pooling, chunking or backend change in CI.
+
+Relevance is matched on TEXT SUBSTRINGS, not chunk Ids. Ids shift
+whenever a document is edited or re-chunked, so an Id-keyed eval set
+rots on the first doc change and then gets deleted for being noisy.
+
+**Baseline on this repo's own source and docs** (1,896 chunks,
+nomic-embed-text-v1.5, mean pooling, 12 hand-labelled cases):
+
+| | recall@1 | recall@3 | recall@5 | MRR |
+|---|---|---|---|---|
+| `--pooling mean` (correct) | 0.583 | 0.917 | **1.000** | 0.771 |
+| `--pooling cls` (wrong) | 0.417 | 0.500 | **0.750** | 0.521 |
+
+**`-embed-check` does NOT catch a subtly wrong pooling.** Run with
+`cls` against a mean-trained model, it reports PASS with separation
+0.749 vs 0.437, well clear of its warn threshold. The vectors are
+still somewhat semantic, just worse. Only the eval set saw the damage:
+recall@3 nearly halved. Treat `-embed-check` as necessary and not
+sufficient.
+
+### Maintaining the set
+
+`testdata/embed-eval.json` is a starting point over this repo. Replace
+the cases with queries against YOUR corpus; the harness does not care
+what the content is. Write the expectations by reading the source, not
+by running a search and recording what came back, or the set measures
+the current behaviour rather than the desired behaviour.

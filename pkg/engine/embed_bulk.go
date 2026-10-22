@@ -316,7 +316,7 @@ func buildEmbedRows(src *types.Table, chunk []int, vecs [][]float64,
 		}
 		encoded, err := encodeVector(vecs[i])
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("row %d (Id=%v): %w", ri, row[idIdx], err)
 		}
 
 		out := make(types.Row, len(tableDef.Schema.Columns))
