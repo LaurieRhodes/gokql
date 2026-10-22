@@ -672,6 +672,15 @@ func (*LookupOp) operatorNode() {}
 // Supports: | mv-expand Col or | mv-expand NewName = Col
 type MvExpandOp struct {
 	Columns []MvExpandColumn
+	// BagMode is "bag" (default: a property bag expands to single-entry
+	// bags) or "array" (to [key, value] pairs). Set by kind= or
+	// bagexpansion=.
+	BagMode string
+	// IndexColumn, set by with_itemindex=, names an added long column
+	// holding each element's 0-based position in its collection.
+	IndexColumn string
+	// Limit caps the rows produced per input row; 0 means no cap.
+	Limit int64
 }
 
 func (*MvExpandOp) operatorNode() {}
@@ -680,6 +689,10 @@ func (*MvExpandOp) operatorNode() {}
 type MvExpandColumn struct {
 	Name   string // Output column name (may differ from source if aliased)
 	Source Expr   // Source expression (typically a ColumnRef)
+	// Type is the output column type: dynamic unless "to typeof(T)"
+	// was given, in which case elements are cast (not parsed) to T and
+	// non-conforming elements become null.
+	Type types.KQLType
 }
 
 // UnionOp stacks rows from additional tables onto the input.

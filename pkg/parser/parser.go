@@ -1626,10 +1626,14 @@ func parseOperator(seg string) (Operator, error) {
 		var rest string
 		if strings.HasPrefix(lower, "mv-expand ") {
 			rest = seg[len("mv-expand "):]
-		} else {
-			rest = seg[len("mvexpand "):]
+			return parseMvExpand(rest)
 		}
-		return parseMvExpand(rest)
+		// Legacy mvexpand: same operator, default row limit 128.
+		op, err := parseMvExpand(seg[len("mvexpand "):])
+		if err == nil && op.Limit == 0 {
+			op.Limit = 128
+		}
+		return op, err
 	}
 
 	// | union T2, T3 or | union (T2 | where ...), (T3 | where ...)
@@ -1775,48 +1779,95 @@ func parseUnionSources(s string) ([]*Query, error) {
 	return sources, nil
 }
 
-// parseMvExpand parses mv-expand column specifications.
-// Formats: "Col", "NewName = Col", "Col1, Col2", "NewName = Expr"
+// parseMvExpand parses
+//
+//	[kind=bag|array] [bagexpansion=bag|array] [with_itemindex=Name]
+//	[Name =] Expr [to typeof(T)] [, ...] [limit N]
 func parseMvExpand(s string) (*MvExpandOp, error) {
-	parts := splitRespectingParens(s, ',')
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("mv-expand: no columns specified")
+	op := &MvExpandOp{BagMode: "bag"}
+	rest := strings.TrimSpace(s)
+	for {
+		eq := strings.Index(rest, "=")
+		if eq <= 0 {
+			break
+		}
+		key := strings.ToLower(strings.TrimSpace(rest[:eq]))
+		if key != "kind" && key != "bagexpansion" && key != "with_itemindex" {
+			break
+		}
+		after := strings.TrimLeft(rest[eq+1:], " \t\r\n")
+		end := strings.IndexAny(after, " \t\r\n")
+		if end < 0 {
+			return nil, fmt.Errorf("mv-expand: %s= has no column after it", key)
+		}
+		val := after[:end]
+		switch key {
+		case "kind", "bagexpansion":
+			v := strings.ToLower(val)
+			if v != "bag" && v != "array" {
+				return nil, fmt.Errorf("mv-expand: %s must be bag or array, got %q", key, val)
+			}
+			op.BagMode = v
+		case "with_itemindex":
+			if !isIdentifier(val) {
+				return nil, fmt.Errorf("mv-expand: with_itemindex: invalid column name %q", val)
+			}
+			op.IndexColumn = val
+		}
+		rest = strings.TrimSpace(after[end:])
 	}
 
-	var columns []MvExpandColumn
-	for _, part := range parts {
+	if i := findKeyword(rest, " limit "); i >= 0 {
+		n, err := strconv.ParseInt(strings.TrimSpace(rest[i+len(" limit "):]), 10, 64)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("mv-expand: limit must be a non-negative integer, got %q", strings.TrimSpace(rest[i+len(" limit "):]))
+		}
+		op.Limit = n
+		rest = strings.TrimSpace(rest[:i])
+	}
+
+	for _, part := range splitRespectingParens(rest, ',') {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-
-		// Check for "Name = Expr" form
-		eqIdx := strings.Index(part, "=")
-		if eqIdx > 0 && (eqIdx+1 >= len(part) || part[eqIdx+1] != '=') {
-			// Ensure it's not == comparison
-			name := strings.TrimSpace(part[:eqIdx])
-			exprStr := strings.TrimSpace(part[eqIdx+1:])
-			expr, err := ParseExpr(exprStr)
+		col := MvExpandColumn{Type: types.TypeDynamic}
+		if i := findKeyword(part, " to "); i >= 0 {
+			typePart := strings.TrimSpace(part[i+len(" to "):])
+			lower := strings.ToLower(typePart)
+			if !strings.HasPrefix(lower, "typeof(") || !strings.HasSuffix(typePart, ")") {
+				return nil, fmt.Errorf("mv-expand: expected 'to typeof(type)', got %q", typePart)
+			}
+			t, err := types.ParseType(strings.TrimSpace(typePart[len("typeof(") : len(typePart)-1]))
 			if err != nil {
-				return nil, fmt.Errorf("mv-expand %q: %w", name, err)
+				return nil, fmt.Errorf("mv-expand: %w", err)
 			}
-			columns = append(columns, MvExpandColumn{Name: name, Source: expr})
-		} else {
-			// Plain column name
-			expr, err := ParseExpr(part)
-			if err != nil {
-				return nil, fmt.Errorf("mv-expand %q: %w", part, err)
-			}
-			// Derive name from expression
-			name := part
-			if ref, ok := expr.(*ColumnRef); ok {
-				name = ref.Name
-			}
-			columns = append(columns, MvExpandColumn{Name: name, Source: expr})
+			col.Type = t
+			part = strings.TrimSpace(part[:i])
 		}
+		exprStr := part
+		if eq := assignmentEqIndex(part); eq > 0 {
+			col.Name = strings.TrimSpace(part[:eq])
+			exprStr = strings.TrimSpace(part[eq+1:])
+		}
+		expr, err := ParseExpr(exprStr)
+		if err != nil {
+			return nil, fmt.Errorf("mv-expand %q: %w", part, err)
+		}
+		col.Source = expr
+		if col.Name == "" {
+			ref, ok := expr.(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("mv-expand: expression %q needs a name (Name = expression)", exprStr)
+			}
+			col.Name = ref.Name
+		}
+		op.Columns = append(op.Columns, col)
 	}
-
-	return &MvExpandOp{Columns: columns}, nil
+	if len(op.Columns) == 0 {
+		return nil, fmt.Errorf("mv-expand: no columns specified")
+	}
+	return op, nil
 }
 
 // parseMvApply parses: [Name =] ArrayCol [to typeof(T)] on ( op1 | op2 | ... )

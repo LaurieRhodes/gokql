@@ -813,119 +813,6 @@ func buildUnionSchema(tables []*types.Table, kind string) (types.Schema, [][]int
 	return types.Schema{Columns: cols}, maps
 }
 
-// applyMvExpand flattens array-valued columns into separate rows.
-// For each row, the array column is parsed as JSON array, and one output row
-// is emitted per element with all other columns duplicated.
-// If the value is not an array, the row passes through unchanged.
-// If the array is empty, the row is omitted.
-func (e *Engine) applyMvExpand(input *types.Table, op *parser.MvExpandOp) (*types.Table, error) {
-	// Build output schema — same as input but expanded columns may change type
-	outSchema := input.Schema
-	// Find column indices for expansion
-	type expandSpec struct {
-		outColIdx int    // Index in output schema
-		srcColIdx int    // Index in input schema (-1 if expression)
-		name      string // Output column name
-		source    parser.Expr
-	}
-	var specs []expandSpec
-
-	for _, col := range op.Columns {
-		idx := input.Schema.ColumnIndex(col.Name)
-		if idx < 0 {
-			// Column doesn't exist yet — check if source refers to existing column
-			if ref, ok := col.Source.(*parser.ColumnRef); ok {
-				srcIdx := input.Schema.ColumnIndex(ref.Name)
-				if srcIdx < 0 {
-					return nil, fmt.Errorf("mv-expand: column %q not found", ref.Name)
-				}
-				// Aliased: NewName = ExistingCol — add new column
-				outSchema.Columns = append(outSchema.Columns, types.Column{
-					Name: col.Name,
-					Type: types.TypeDynamic,
-				})
-				specs = append(specs, expandSpec{
-					outColIdx: len(outSchema.Columns) - 1,
-					srcColIdx: srcIdx,
-					name:      col.Name,
-					source:    col.Source,
-				})
-			} else {
-				return nil, fmt.Errorf("mv-expand: column %q not found", col.Name)
-			}
-		} else {
-			// Expanding in-place
-			specs = append(specs, expandSpec{
-				outColIdx: idx,
-				srcColIdx: idx,
-				name:      col.Name,
-				source:    col.Source,
-			})
-		}
-	}
-
-	output := types.NewTable(input.Name, outSchema)
-
-	for _, row := range input.Rows {
-		// Get array values for each expand column
-		var arrays [][]interface{}
-		maxLen := 0
-
-		for _, spec := range specs {
-			val, err := evalExpr(spec.source, &input.Schema, row)
-			if err != nil || val == nil {
-				arrays = append(arrays, nil)
-				continue
-			}
-
-			// Parse the value as a JSON array
-			elements, _ := parseJSONArray(val)
-			arrays = append(arrays, elements)
-			if len(elements) > maxLen {
-				maxLen = len(elements)
-			}
-		}
-
-		if maxLen == 0 {
-			// No array elements — skip this row (KQL behavior)
-			// Unless none of the values are arrays, pass through
-			allNil := true
-			for _, arr := range arrays {
-				if arr != nil {
-					allNil = false
-					break
-				}
-			}
-			if allNil {
-				// Non-array value — pass through as single row
-				newRow := make(types.Row, len(outSchema.Columns))
-				copy(newRow, row)
-				output.AddRow(newRow)
-			}
-			continue
-		}
-
-		// Emit one row per element
-		for i := 0; i < maxLen; i++ {
-			newRow := make(types.Row, len(outSchema.Columns))
-			// Copy base row
-			copy(newRow, row)
-
-			// Replace expanded columns with element values
-			for specIdx, spec := range specs {
-				if specIdx < len(arrays) && arrays[specIdx] != nil && i < len(arrays[specIdx]) {
-					newRow[spec.outColIdx] = jsonToKQLValue(arrays[specIdx][i])
-				} else {
-					newRow[spec.outColIdx] = nil
-				}
-			}
-			output.AddRow(newRow)
-		}
-	}
-
-	return output, nil
-}
-
 // parseJSONArray attempts to parse a value as a JSON array.
 
 // applyProjectAway removes specified columns from the output.
@@ -961,11 +848,10 @@ func (e *Engine) applyMvApply(input *types.Table, op *parser.MvApplyOp) (*types.
 		// Expand the array cell into a per-row subtable
 		sub := types.NewTable(input.Name, subSchema)
 		if row[srcIdx] != nil {
-			elements, _ := parseJSONArray(row[srcIdx])
-			for _, elem := range elements {
+			for _, elem := range expandCollection(row[srcIdx], false, input.Schema.Columns[srcIdx].Type == types.TypeDynamic) {
 				subRow := make(types.Row, len(subSchema.Columns))
 				copy(subRow, row)
-				subRow[elemIdx] = jsonToKQLValue(elem)
+				subRow[elemIdx] = castElement(elem, op.ElementType)
 				sub.AddRow(subRow)
 			}
 		}

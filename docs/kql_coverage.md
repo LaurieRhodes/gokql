@@ -35,7 +35,7 @@ This rewrite corrects a significant amount of drift in the previous version (dat
 | summarize              | ✅      | 34 aggregation functions, by-clause, expressions                                                                    |
 | join                   | ✅      | 8 kinds (inner, leftouter, leftanti, leftsemi, rightouter, rightanti, rightsemi, fullouter), subquery, $left/$right |
 | union                  | ✅      | Pipe + standalone forms; kind=inner/outer, withsource=, isfuzzy=, wildcard legs, per-type column suffixing (2026-10-22) |
-| mv-expand / mvexpand   | ✅      | JSON array flattening, alias support, multi-column                                                                  |
+| mv-expand / mvexpand   | ✅      | Arrays and property bags (kind=bag/array), with_itemindex=, to typeof(), limit, zipped multi-column (2026-10-22) |
 | serialize              | ✅      | Row ordering with optional computed columns, enables window functions                                              |
 | print                  | ✅      | Literal expression output; bare/unnamed expressions auto-name from their own text                                  |
 | parse                  | ✅      | Extract fields with patterns (kind=simple, relaxed, regex with named groups)                                       |
