@@ -56,6 +56,7 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| `beta_cdf`, `beta_inv`, `beta_pdf`, `welch_test` | `func_beta.go`; the reference examples to ADX's 15 displayed digits (the pdf example is the exact rational value), other points against SciPy to 1e-14. beta_inv follows its reference example where the page's prose contradicts it (p > 1 is null, alpha <= 0 NaN). welch_test is two-sided with Welch–Satterthwaite df: 0.021 on the reference data |
 | `extend a = x + 1, b = a * 2`: a later assignment can use a column an earlier one defines (in order, as Kusto.Language resolves it; project, print and summarize do not allow this). Previously `column "a" not found` | `extendSplitPoint` splits the extend and applies the parts in sequence |
 | `hll`, `hll_if`, `hll_merge` (aggregate and scalar), `dcount_hll`, `tdigest` (with weight), `tdigest_merge`/`merge_tdigest` (aggregate and scalar), `percentile_tdigest` (with `typeof(T)`), `percentiles_array_tdigest`, `percentrank_tdigest`, `rank_tdigest`; `evaluate dcount_intersect` | `func_sketch.go`. Exact sketches (the distinct set, the weighted sample) since dcount and percentiles here are exact; the dynamic values are this engine's own, not ADX's binary sketches. dcount_intersect reference example exact. Types and aggregate names (`merge_tdigests_t`) from Kusto.Language |
 | `evaluate sequence_detect` | `plugin_sequence_detect.go`; the reference output reproduces from an input reconstructed to contain its rows plus distractors. Every chain within the windows is reported, as the reference shows |
@@ -70,7 +71,6 @@ and ASIM parsers, which is this engine's main query population.
 
 ## P2 — real but less frequent
 
-- Scalars: `beta_cdf`, `beta_inv`, `beta_pdf`, `welch_test`.
 - Operators previously labelled out of scope that have no cluster
   dependency: `fork`, `facet`.
 - `evaluate` plugins. `bag_unpack`, `ipv4_lookup`, `ipv6_lookup`,
