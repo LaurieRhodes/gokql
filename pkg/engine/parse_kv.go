@@ -300,4 +300,3 @@ func stripKVDataQuotes(s string, quotes []string) string {
 	}
 	return s
 }
-

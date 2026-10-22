@@ -55,9 +55,16 @@ func TestEmbedIntoBatchesCorrectly(t *testing.T) {
 	// length isn't directly checkable via array_length (always 3 here);
 	// verify via the encoded first element instead.
 	_ = row
+	// Vectors are stored in the compact encoding (vector_codec.go), so
+	// assert on the DECODED value rather than a literal string. The
+	// storage form is an implementation detail; the vector is not.
 	first := diskQuery(t, eng, `DocEmbeddings | where Id == "c" | project Embedding`)
-	if first.Rows[0][0] != `[5,0,0]` {
-		t.Errorf("embedding misaligned for row c: got %v, want [5,0,0] (len(\"three\")=5)", first.Rows[0][0])
+	decoded, ok := parseFloatArray(first.Rows[0][0])
+	if !ok {
+		t.Fatalf("could not decode stored embedding: %v", first.Rows[0][0])
+	}
+	if len(decoded) != 3 || decoded[0] != 5 || decoded[1] != 0 || decoded[2] != 0 {
+		t.Errorf("embedding misaligned for row c: got %v, want [5 0 0] (len(\"three\")=5)", decoded)
 	}
 }
 

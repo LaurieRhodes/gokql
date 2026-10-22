@@ -109,8 +109,8 @@ type serverDatabase struct {
 // deliberately small and flat, matching this codebase's existing
 // preference for plain, explicit config over layered abstraction.
 type serverConfig struct {
-	dbPath        string // filesystem path to the PRIMARY scope this server serves
-	dbName        string // the name clients send in "db" for the primary database
+	dbPath        string            // filesystem path to the PRIMARY scope this server serves
+	dbName        string            // the name clients send in "db" for the primary database
 	databases     map[string]string // additional dbName -> path, all fully read-write (see serverDatabase's doc comment)
 	forceDiscover bool
 	verbose       bool

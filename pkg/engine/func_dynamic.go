@@ -1183,6 +1183,23 @@ func evalDynamicFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (
 
 func parseJSONArray(val types.Value) ([]interface{}, bool) {
 	s := fmt.Sprintf("%v", val)
+	// A compactly-encoded embedding vector (see vector_codec.go) is a
+	// dynamic array like any other as far as KQL is concerned, so
+	// array_length, array_slice and the rest must see through the
+	// encoding. Without this, storing vectors compactly would silently
+	// break every generic dynamic function on an Embedding column --
+	// a storage optimisation is not allowed to change the language.
+	//
+	// The boxing cost here is real but irrelevant: the hot path
+	// (parseFloatArray, used by series_cosine_similarity) decodes
+	// directly to []float64 and never comes through this function.
+	if vec, ok := decodeCompactVector(s); ok {
+		out := make([]interface{}, len(vec))
+		for i, f := range vec {
+			out[i] = f
+		}
+		return out, true
+	}
 	var arr []interface{}
 	if err := json.Unmarshal([]byte(s), &arr); err != nil {
 		return nil, false

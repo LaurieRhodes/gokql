@@ -17,13 +17,25 @@ import (
 // padding region) would only show up intermittently, not necessarily
 // on the first call.
 func TestPagePoolStress(t *testing.T) {
+	// The skip guard below checks for the TABLE, not for a successful
+	// Open. catalog.Open calls MkdirAll and therefore never errors on
+	// a missing path -- it creates it -- so the previous
+	// "if err != nil { t.Skipf(...) }" form was unreachable and this
+	// test failed on any machine without the local benchmark
+	// databases, while also creating the empty directories it was
+	// checking for. These are hand-built perf fixtures, not fixtures
+	// any CI or fresh clone has.
 	smallCat, err := catalog.Open("/tmp/cmpdb")
 	if err != nil {
-		t.Skipf("benchmark db not present: %v", err)
+		t.Skipf("benchmark db unavailable: %v", err)
 	}
 	bigCat, err := catalog.Open("/tmp/bigdb")
 	if err != nil {
-		t.Skipf("benchmark db not present: %v", err)
+		t.Skipf("benchmark db unavailable: %v", err)
+	}
+	if smallCat.GetTable("Events") == nil || bigCat.GetTable("Events") == nil {
+		t.Skip("benchmark databases /tmp/cmpdb and /tmp/bigdb not populated; " +
+			"this test needs the hand-built perf fixtures")
 	}
 	smallEng := New(smallCat)
 	bigEng := New(bigCat)
@@ -71,4 +83,3 @@ func TestPagePoolStress(t *testing.T) {
 		}
 	}
 }
-

@@ -43,4 +43,3 @@ func parseProjectByNames(s string) (Operator, error) {
 	}
 	return &ProjectByNamesOp{Specifiers: specs}, nil
 }
-

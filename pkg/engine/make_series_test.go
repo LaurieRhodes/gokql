@@ -264,4 +264,3 @@ func TestMakeSeriesRealAxis(t *testing.T) {
 		}
 	}
 }
-

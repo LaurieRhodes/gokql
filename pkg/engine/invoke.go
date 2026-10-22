@@ -54,4 +54,3 @@ func (e *Engine) applyInvoke(input *types.Table, op *parser.InvokeOp) (*types.Ta
 	call := &parser.StoredFunctionCall{Name: op.Call.Name, ArgTexts: argTexts}
 	return e.resolveStoredFunction(call)
 }
-

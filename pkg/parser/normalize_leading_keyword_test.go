@@ -38,4 +38,3 @@ func TestNormalizeLeadingKeywordWhitespace(t *testing.T) {
 		})
 	}
 }
-

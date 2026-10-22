@@ -75,4 +75,3 @@ func TestDynamicBareArrayLiteralStillWorks(t *testing.T) {
 		t.Errorf("dynamic([1,2,3]) = %v, want [1,2,3]", result.Rows[0][0])
 	}
 }
-

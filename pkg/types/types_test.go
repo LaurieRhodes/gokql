@@ -46,9 +46,9 @@ func TestParseTypeError(t *testing.T) {
 
 func TestParseValue(t *testing.T) {
 	tests := []struct {
-		input    string
-		typ      KQLType
-		checkFn  func(Value) bool
+		input   string
+		typ     KQLType
+		checkFn func(Value) bool
 	}{
 		{"42", TypeLong, func(v Value) bool { return v.(int64) == 42 }},
 		{"3.14", TypeReal, func(v Value) bool { return math.Abs(v.(float64)-3.14) < 0.001 }},

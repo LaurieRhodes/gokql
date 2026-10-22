@@ -121,7 +121,7 @@ func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*
 		// silently skipping the tick->nanosecond conversion below and
 		// producing a step 100x too small. Found live: the real ADX
 		// avg(metric) worked example produced 14m24s-spaced bins
-        // instead of 1-day-spaced ones -- exactly a missing *100.
+		// instead of 1-day-spaced ones -- exactly a missing *100.
 		// Keying off axisType instead is also more semantically
 		// correct, not just a workaround: real ADX's own grammar
 		// requires step's DIMENSION to match the axis (a timespan step
@@ -393,4 +393,3 @@ func formatDatetimeISO7(nanos int64) string {
 	t := time.Unix(0, nanos).UTC()
 	return t.Format("2006-01-02T15:04:05.0000000Z")
 }
-

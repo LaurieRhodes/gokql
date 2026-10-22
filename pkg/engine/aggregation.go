@@ -479,7 +479,7 @@ func computeAgg(agg parser.Aggregation, rows []types.Row, schema *types.Schema) 
 		// separate function this engine invented) — found live, not
 		// hypothetical: this engine had only ever registered the
 		// deprecated name, never the modern, recommended one, until a
-        // review of the full aggregation-functions reference caught it.
+		// review of the full aggregation-functions reference caught it.
 		if len(agg.Args) != 1 {
 			return nil, fmt.Errorf("%s requires 1 argument", agg.Function)
 		}

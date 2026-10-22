@@ -9,10 +9,11 @@ import (
 
 // aggEngine builds a disk table exercising every supported column kind:
 // 300 rows over 2 extents.
-//   Id:    0..299 (long)
-//   Small: Id % 100 (int)
-//   Score: Id * 0.5 (real)
-//   Host:  host{Id % 5} (string)
+//
+//	Id:    0..299 (long)
+//	Small: Id % 100 (int)
+//	Score: Id * 0.5 (real)
+//	Host:  host{Id % 5} (string)
 func aggEngine(t *testing.T) *Engine {
 	t.Helper()
 	eng := diskEngineEmpty(t)

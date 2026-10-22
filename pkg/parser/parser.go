@@ -683,7 +683,9 @@ func parseCommand(input string) (Statement, error) {
 }
 
 // parseCreateMaterializedView parses:
-//   [with (docstring = "...", folder = "...")] Name on table SourceTable { Query }
+//
+//	[with (docstring = "...", folder = "...")] Name on table SourceTable { Query }
+//
 // Verified against real ADX's own .create materialized-view syntax
 // before adopting this shape. Query-shape validation (single
 // summarize, last operator, only supported aggregate functions) is

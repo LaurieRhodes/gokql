@@ -85,4 +85,3 @@ func TestDataTableDoubledBackslash(t *testing.T) {
 		t.Fatalf("y = %v, want int64(5)", result.Rows[0][yIdx])
 	}
 }
-
