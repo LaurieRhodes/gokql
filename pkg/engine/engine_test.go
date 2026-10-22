@@ -1386,16 +1386,16 @@ func TestMvApplySummarizePerRow(t *testing.T) {
 	tbl := queryResult(t, `datatable (Id: long, Arr: string) [1, "[1,2,3]", 2, "[10,20]"] `+
 		`| mv-apply Element = Arr to typeof(long) on ( summarize Total = sum(Element) by Id )`)
 	expectRows(t, tbl, 2)
-	expectCell(t, tbl, 0, 0, "6")
-	expectCell(t, tbl, 1, 0, "30")
+	expectCell(t, tbl, 0, 1, "6") // Id first, as in ADX
+	expectCell(t, tbl, 1, 1, "30")
 }
 
 func TestMvApplyFilterPipeline(t *testing.T) {
 	tbl := queryResult(t, `datatable (Id: long, Arr: string) [1, "[1,2,3,4]", 2, "[10,20]"] `+
 		`| mv-apply Element = Arr to typeof(long) on ( where Element > 2 | summarize Cnt = count() by Id )`)
 	expectRows(t, tbl, 2)
-	expectCell(t, tbl, 0, 0, "2")
-	expectCell(t, tbl, 1, 0, "2")
+	expectCell(t, tbl, 0, 1, "2")
+	expectCell(t, tbl, 1, 1, "2")
 }
 
 func TestMvApplyTopPerRow(t *testing.T) {
@@ -1790,7 +1790,7 @@ func TestPipelineSummarizeByOrderTop(t *testing.T) {
 	| take 2`
 	tbl := queryResult(t, q)
 	expectRows(t, tbl, 2)
-	expectCell(t, tbl, 0, 1, "10.0.1.5") // 3 hits
+	expectCell(t, tbl, 0, 0, "10.0.1.5") // 3 hits; IP first, as in ADX
 }
 
 func TestPipelineExtendWhere(t *testing.T) {

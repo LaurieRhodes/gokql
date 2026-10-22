@@ -96,7 +96,8 @@ func TestColumnarAggregateValues(t *testing.T) {
 	// 300 rows, 5 hosts → 60 each.
 	tbl := diskQuery(t, eng, `A | summarize C = count() by Host | sort by Host asc`)
 	expectRows(t, tbl, 5)
-	expectCell(t, tbl, 0, 0, "60")
+	expectCell(t, tbl, 0, 0, "host0") // group-by columns first, as in ADX
+	expectCell(t, tbl, 0, 1, "60")
 
 	// Ids 201..299 → 99 rows.
 	tbl = diskQuery(t, eng, `A | where Id > 200 | summarize C = count()`)
@@ -127,7 +128,8 @@ func TestColumnarAggregatePlanGate(t *testing.T) {
 	// bin() by-expression → row path.
 	tbl = diskQuery(t, eng, `A | summarize C = count() by B = bin(Id, 100) | sort by B asc`)
 	expectRows(t, tbl, 3)
-	expectCell(t, tbl, 0, 0, "100")
+	expectCell(t, tbl, 0, 0, "0")
+	expectCell(t, tbl, 0, 1, "100")
 
 	// float literal against a long column → row path (exactness).
 	tbl = diskQuery(t, eng, `A | where Id > 199.5 | summarize C = count()`)

@@ -166,7 +166,7 @@ func TestDiscoveryConcurrentIngest(t *testing.T) {
 	expectCell(t, res, 0, 0, itoa(writers*batches*10))
 	res = diskQuery(t, reopened, `C | summarize N = count() by W | sort by W asc`)
 	expectRows(t, res, writers)
-	expectCell(t, res, 0, 0, itoa(batches*10))
+	expectCell(t, res, 0, 1, itoa(batches*10))
 }
 
 // TestDiscoveryMergeGuard verifies .merge fails cleanly without a
@@ -275,7 +275,7 @@ func TestDiscoveryConcurrentIngestStress(t *testing.T) {
 	perWriter := diskQuery(t, reopened, `S | summarize c = count() by W | sort by W asc`)
 	expectRows(t, perWriter, writers)
 	for _, row := range perWriter.Rows {
-		if row[0].(int64) != int64(batches*rowsPerBatch) {
+		if row[1].(int64) != int64(batches*rowsPerBatch) {
 			t.Errorf("writer row count mismatch: %+v", row)
 		}
 	}

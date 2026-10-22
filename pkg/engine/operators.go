@@ -341,6 +341,29 @@ func (e *Engine) applyTop(input *types.Table, op *parser.TopOp) (*types.Table, e
 	}, op.Count)
 }
 
+// byColumnsFirst moves the trailing nBy group-by columns of a
+// summarize result to the front, giving ADX's output order: group-by
+// columns, then aggregates. Both summarize paths build aggregates
+// first internally; this is the single place the order is fixed.
+func byColumnsFirst(t *types.Table, nBy int) *types.Table {
+	n := len(t.Schema.Columns)
+	if nBy == 0 || nBy >= n {
+		return t
+	}
+	split := n - nBy
+	cols := make([]types.Column, 0, n)
+	cols = append(cols, t.Schema.Columns[split:]...)
+	cols = append(cols, t.Schema.Columns[:split]...)
+	t.Schema.Columns = cols
+	for i, row := range t.Rows {
+		r := make(types.Row, 0, len(row))
+		r = append(r, row[split:]...)
+		r = append(r, row[:split]...)
+		t.Rows[i] = r
+	}
+	return t
+}
+
 func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*types.Table, error) {
 	// Build output schema: aggregation columns + group-by columns.
 	// percentiles() is special — one call expands to N output columns.
@@ -375,20 +398,13 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		if (agg.Function == "arg_max" || agg.Function == "arg_min") &&
 			len(agg.Args) == 2 {
 			if _, isStar := agg.Args[1].(*parser.StarExpr); isStar {
-				// Column order here follows THIS engine's existing,
-				// already-established summarize convention
-				// (aggregation columns before group-by columns) rather
-				// than real ADX's own column order for this specific
-				// case (group-by columns first) -- a known, separate,
-				// purely cosmetic divergence noted but not fixed here,
-				// since column resolution throughout this engine is
-				// always by name, never by position, so it doesn't
-				// affect correctness. Within the aggregation-columns
-				// block itself, source order is preserved (expr's own
-				// column first if it's a bare ColumnRef, matching real
-				// ADX, then remaining source columns in their original
-				// order), just not interleaved with the by-columns the
-				// same way real ADX does.
+				// Aggregation columns are built before group-by
+				// columns here; byColumnsFirst moves the group-by
+				// block to the front at the end, giving ADX's order
+				// (Fruit, Version, Color for arg_max(Version, *) by
+				// Fruit). Within the aggregation block, source order
+				// is preserved: expr's own column first if it is a
+				// bare ColumnRef, then remaining source columns.
 				included := make(map[string]bool, len(input.Schema.Columns))
 				for name := range byNames {
 					included[name] = true
@@ -543,7 +559,7 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		result.AddRow(outRow)
 	}
 
-	return result, nil
+	return byColumnsFirst(result, len(op.ByExprs)), nil
 }
 
 // --- Aggregation ---

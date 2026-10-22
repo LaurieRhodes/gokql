@@ -57,10 +57,10 @@ func TestCompactDatabaseIncludesDictionaries(t *testing.T) {
 	// Data correctness after compacting the table _Dictionaries backs.
 	got := diskQuery(t, eng, `A | summarize c=count() by Status | sort by Status asc`)
 	expectRows(t, got, 2)
-	expectCell(t, got, 0, 0, "1")
-	expectCell(t, got, 0, 1, "blocked")
-	expectCell(t, got, 1, 0, "6")
-	expectCell(t, got, 1, 1, "open")
+	expectCell(t, got, 0, 0, "blocked")
+	expectCell(t, got, 0, 1, "1")
+	expectCell(t, got, 1, 0, "open")
+	expectCell(t, got, 1, 1, "6")
 
 	// Re-running on an already-compact scope must report that, not
 	// error or redundantly rewrite anything.

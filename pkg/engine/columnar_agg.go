@@ -890,7 +890,7 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 		// one row with Count = 0.
 		result.AddRow(types.Row{int64(0)})
 	}
-	return result, nil
+	return byColumnsFirst(result, len(plan.summarize.ByExprs)), nil
 }
 
 func kqlToVortexOp(op parser.BinaryOp) vortex.CompareOp {

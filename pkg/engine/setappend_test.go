@@ -156,8 +156,8 @@ func TestSearchOperator(t *testing.T) {
 	// Real, further-pipeable table.
 	tbl = diskQuery(t, eng, `search "apricot" | summarize c = count() by TableName | sort by TableName asc`)
 	expectRows(t, tbl, 2)
-	expectCell(t, tbl, 0, 0, "1")
-	expectCell(t, tbl, 0, 1, "A")
+	expectCell(t, tbl, 0, 0, "A")
+	expectCell(t, tbl, 0, 1, "1")
 
 	// Long, numeric-only, and dynamic columns are excluded from the
 	// scan (only string/guid/dynamic columns are searched); confirms N

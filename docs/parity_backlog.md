@@ -19,7 +19,6 @@ and ASIM parsers, which is this engine's main query population.
 
 | Item | Observed |
 |---|---|
-| `summarize` column order: aggregates come first and group-by columns last; ADX puts the group-by columns first | pre-existing; visible in every grouped summarize |
 | `mv-apply ... = <expression>` (only a bare column works) | "column not found" |
 | Window functions in `extend`/`project` after `serialize` (only `serialize x = f()` works) | "only works inside serialize" |
 | `row_cumsum`, `row_rank_dense`, `row_rank_min`, `row_window_session` | unsupported |
@@ -32,6 +31,7 @@ and ASIM parsers, which is this engine's main query population.
 | `materialize()` | parse error |
 | `bag_pack(...)` typed as string by `inferExprType`, so a following `evaluate bag_unpack` rejects it | type inference bug |
 | `sum`/`sumif` of a `long` column returns `real`; ADX returns `long` (row and columnar aggregation paths) | type parity bug |
+| `datatable` rejects timespan literals (`2d`, `1h`) in a `timespan` column | "cannot parse as timespan" |
 | Literals: hex `0x1F`, `guid(...)`, `real(+inf)`/`real(-inf)`/`real(nan)`, obfuscated `h"..."`, adjacent string-literal concatenation `'a' 'b'` | parse errors |
 
 ## Closed
@@ -41,6 +41,7 @@ and ASIM parsers, which is this engine's main query population.
 | `union kind=inner/outer`, `withsource=`, `isfuzzy=`, `hint.concurrency`/`hint.spread`, wildcard legs (`T*`), per-type column suffixing (`x_long`, `x_int`, `x_long1`) | `applyUnion`/`buildUnionSchema`; all four union-operator reference examples exact. Standalone `union` now keeps every leg in the operator, so the first leg can carry operators and be labelled or dropped |
 | `mv-expand` `kind=`/`bagexpansion=`, `with_itemindex=`, per-column `to typeof(T)`, `limit N`, legacy `mvexpand` default limit 128 | `mv_expand.go`; all seven mv-expand reference examples exact. Two existing bugs fixed: property bags were not expanded at all, and a bag zipped with an array came out null. Typed expansion is cast-only (non-conforming elements are null); `mv-apply ... to typeof(T)` now casts too, where it previously only relabelled the column |
 | `lookup` with a subquery right side; `hint.*` on `summarize`, `join` and `lookup` | right side bracket-matched so an inner `on` is not taken for the lookup's; hints stripped by one shared helper |
+| `summarize` output order: group-by columns, then aggregates | `byColumnsFirst`, applied to the row and columnar paths; seven tests that asserted the old positional order updated |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
