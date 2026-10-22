@@ -85,6 +85,9 @@ func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 	if v, ok, err := evalDynamicFunc(fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalPackAll(fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalBinaryFunc(fc, schema, row); ok {
 		return v, err
 	}

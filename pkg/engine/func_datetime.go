@@ -84,36 +84,8 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 		}
 		return parsed, true, nil
 
-	case "bin", "floor":
-		if len(fc.Args) != 2 {
-			return nil, true, fmt.Errorf("bin requires 2 arguments")
-		}
-		val, err := evalExpr(fc.Args[0], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		roundTo, err := evalExpr(fc.Args[1], schema, row)
-		if err != nil {
-			return nil, true, err
-		}
-		if val == nil || roundTo == nil {
-			return nil, true, nil
-		}
-		vn := types.ToInt64(val)
-		rn := types.ToInt64(roundTo)
-		if rn == 0 {
-			return nil, true, nil
-		}
-		valType := inferExprType(fc.Args[0], schema)
-		roundType := inferExprType(fc.Args[1], schema)
-		if valType == types.TypeDatetime && roundType == types.TypeTimespan {
-			roundNanos := rn * 100
-			if roundNanos == 0 {
-				return nil, true, nil
-			}
-			return (vn / roundNanos) * roundNanos, true, nil
-		}
-		return (vn / rn) * rn, true, nil
+	case "bin", "floor", "bin_at":
+		return evalBin(fc, schema, row)
 
 	case "datetime_diff":
 		if len(fc.Args) != 3 {
@@ -610,10 +582,11 @@ func evalDatetimeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) 
 			return nil, true, fmt.Errorf("%s: unknown part %q", fc.Name, fmt.Sprintf("%v", partVal))
 		}
 
-	case "totimespan":
-		// totimespan(value) — convert string or number to timespan (ticks)
+	case "totimespan", "totime", "time":
+		// totimespan(value) — convert string or number to timespan
+		// (ticks). time(...) is the timespan literal form, time(1h).
 		if len(fc.Args) != 1 {
-			return nil, true, fmt.Errorf("totimespan requires 1 argument")
+			return nil, true, fmt.Errorf("%s requires 1 argument", fc.Name)
 		}
 		val, err := evalExpr(fc.Args[0], schema, row)
 		if err != nil {

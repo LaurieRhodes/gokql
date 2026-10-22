@@ -1304,6 +1304,17 @@ func (e *Engine) applyDataTable(op *parser.DataTableOp) (*types.Table, error) {
 //     values that overflow int32) than the two silent-corruption bugs
 //     above, fixed here as a side effect of removing the duplication
 //     rather than patched in isolation.
+//
+// isQuotedLiteral reports whether raw is a string literal token,
+// optionally @- (verbatim) or h- (obfuscated) prefixed.
+func isQuotedLiteral(raw string) bool {
+	r := raw
+	if len(r) > 0 && (r[0] == '@' || r[0] == 'h' || r[0] == 'H') {
+		r = r[1:]
+	}
+	return len(r) >= 2 && (r[0] == '"' || r[0] == '\'') && r[len(r)-1] == r[0]
+}
+
 func convertDataTableValue(raw string, kt types.KQLType) (interface{}, error) {
 	// Try ParseExpr + evalExpr first for a function-call-shaped literal
 	// -- datetime(...), timespan(...), dynamic({...}), ago(1h), and
@@ -1334,6 +1345,22 @@ func convertDataTableValue(raw string, kt types.KQLType) (interface{}, error) {
 	// raw-string path below, handing types.ParseValue the literal,
 	// still-wrapped text "datetime(2016-12-31T06:00)" -- not a valid
 	// datetime string on its own -- instead of evaluating it first.
+	// A string token in any of KQL's literal forms ('...', "...",
+	// @'...', @"...", h'...'): unquote it with the expression parser's
+	// own literal rules, then use it as is for a string column or
+	// coerce it below for any other type.
+	if isQuotedLiteral(raw) {
+		if expr, err := parser.ParseExpr(raw); err == nil {
+			if lit, ok := expr.(*parser.Literal); ok {
+				if str, ok := lit.Value.(string); ok {
+					if kt == types.TypeString {
+						return str, nil
+					}
+					return types.ParseValue(str, kt)
+				}
+			}
+		}
+	}
 	looksLikeQuotedString := len(raw) > 0 && (raw[0] == '"' || raw[0] == '\'')
 	looksLikeFuncCall := strings.Contains(raw, "(")
 	if kt == types.TypeDynamic || (!looksLikeQuotedString && looksLikeFuncCall) {

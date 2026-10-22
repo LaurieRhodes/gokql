@@ -2442,14 +2442,28 @@ func splitDataTableValues(s string) []string {
 	// value separator, which bracket kind is nesting doesn't matter,
 	// only whether nesting is happening at all — the identical
 	// reasoning already applied to splitStatements' own fix.
+	// Quotes: both '...' and "..." delimit strings, and an @-prefixed
+	// (verbatim) string takes no backslash escapes. A comma inside
+	// either kind of string is part of the value.
 	var values []string
 	var current strings.Builder
 	inStr := false
+	var quote byte
+	verbatim := false
 	bracketDepth := 0
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
-		if ch == '"' && !precededByOddBackslashes(s, i) {
-			inStr = !inStr
+		if inStr {
+			current.WriteByte(ch)
+			if ch == quote && (verbatim || !precededByOddBackslashes(s, i)) {
+				inStr = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inStr = true
+			quote = ch
+			verbatim = i > 0 && (s[i-1] == '@')
 			current.WriteByte(ch)
 			continue
 		}

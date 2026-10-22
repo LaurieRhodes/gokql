@@ -28,8 +28,6 @@ and ASIM parsers, which is this engine's main query population.
 | Window functions in `extend`/`project` after `serialize` (only `serialize x = f()` works) | "only works inside serialize" |
 | `row_cumsum`, `row_rank_dense`, `row_rank_min`, `row_window_session` | unsupported |
 | `column_ifexists`, `column_names_of` | unsupported; schema-aware evaluation needed |
-| `pack_all()` | unsupported |
-| `bin_at()` as a scalar (make-series has its own path) | unsupported |
 | Tabular parameter with wildcard schema, `(T:(*))` | "unknown KQL type" |
 | Default parameter values, `(x:long = 2)` | "unknown KQL type" |
 | `materialize()` | parse error |
@@ -47,6 +45,8 @@ and ASIM parsers, which is this engine's main query population.
 | `datatable`/ingest timespan literals (`2d`, `1.5h`, `100ms`, `1tick`) | `types.ParseValue` |
 | Static return types: 271 functions take their declared type from `Kusto.Language` (`func_signatures.go`, generated); about 100 implemented functions previously inferred as `string` (pow, sqrt, log, cos, datetime_add, totimespan, tobool, parse_csv, zip, strcmp, ipv4_compare, series_*, bag_pack, ...). `evalFunc` coerces numeric results to the declared representation, so int-typed functions (getyear, datetime_part, dayofmonth, hourofday, week_of_year, ...) now yield int and rand(N) real, as declared | probe: every fixed-return function over an empty datatable vs the declared type; remaining differences are the documented exclusions (jaccard_index, graph-match, decimal) |
 | `make_list`, `make_set`, `make_bag` and `_if`/`_with_nulls` forms: optional `maxSize` (default and cap 1048576) | `aggMaxSize` |
+| `datatable` string literals: single-quoted, `@'...'` verbatim and escaped forms are unquoted with the expression parser's literal rules (previously only `"..."`; single-quoted values were stored with their quotes, and a comma inside one split the row) | `convertDataTableValue`, `splitDataTableValues`. Existing scope data written through this path still holds quoted values; see the scope audit |
+| `pack_all([ignore_null_empty])`; scalar `bin_at`; `bin`/`floor` rewritten on floor semantics (real sizes, negative values, pre-1970 datetimes, non-positive size gives null, Widest typing); `time(...)` | reference examples exact: pack_all, bin x3, bin_at x5 including summarize |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 

@@ -704,12 +704,10 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			"unixtime_microseconds_todatetime", "unixtime_nanoseconds_todatetime",
 			"datetime_local_to_utc", "datetime_utc_to_local", "ingestion_time":
 			return types.TypeDatetime
-		case "bin", "floor":
-			// bin returns the same type as its first argument
-			if len(e.Args) > 0 {
-				return inferExprType(e.Args[0], schema)
-			}
-			return types.TypeLong
+		case "bin", "floor", "bin_at":
+			return binResultType(e.Args, schema)
+		case "time", "totime":
+			return types.TypeTimespan
 		case "dayofweek":
 			return types.TypeTimespan
 		case "datetime_diff", "dayofmonth", "getmonth", "getyear",
