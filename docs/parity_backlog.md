@@ -56,16 +56,16 @@ and ASIM parsers, which is this engine's main query population.
 | `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
+| `evaluate ipv4_lookup` / `ipv6_lookup`: lookup table as any tabular expression, extra key columns, `return_unmatched` (named or positional); every matching prefix is returned, in lookup-table order. `as hint.materialized=true T` parses | `plugin_ip_lookup.go`; the three ipv4_lookup reference examples exact (`external_data` replaced by an equivalent datatable) |
 
 ## P2 — real but less frequent
 
 - Scalars: `beta_cdf`, `beta_inv`, `beta_pdf`, `welch_test`.
-- `as hint.materialized=true`.
 - Operators previously labelled out of scope that have no cluster
   dependency: `fork`, `facet`.
-- `evaluate` plugins. Only `bag_unpack` exists. Deterministic,
-  documented-output plugins: `pivot`, `narrow`, `ipv4_lookup`,
-  `ipv6_lookup`, `schema_merge`, `sequence_detect`,
+- `evaluate` plugins. `bag_unpack`, `ipv4_lookup` and `ipv6_lookup`
+  exist. Deterministic, documented-output plugins: `pivot`, `narrow`,
+  `schema_merge`, `sequence_detect`,
   `rolling_percentile`, `sliding_window_counts`,
   `active_users_count`, `activity_counts_metrics`,
   `activity_engagement`, `new_activity_metrics`, `session_count`,

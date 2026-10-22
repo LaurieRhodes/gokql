@@ -1566,7 +1566,9 @@ func parseOperator(seg string) (Operator, error) {
 
 	// | as Name — binds a name to the input tabular expression
 	if strings.HasPrefix(lower, "as ") {
-		name := strings.TrimSpace(seg[3:])
+		// hint.materialized=true caches the bound result; a binding is
+		// already evaluated once here, so the hint has no effect.
+		name := stripHints(seg[3:])
 		if name == "" || !isValidIdentifier(name) {
 			return nil, fmt.Errorf("as: expected a valid name, got %q", name)
 		}
