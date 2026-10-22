@@ -53,15 +53,13 @@ and ASIM parsers, which is this engine's main query population.
 | Named arguments in function calls (`f(len=3, s)`); user function names are case sensitive (a scalar let function named with capitals, e.g. `checkLength`, could not be called) | `FuncCall.ArgNames`, `FuncCall.RawName` |
 | Bracket access with any expression: computed and negative indexes (`r[array_length(r) - 1]`, `r[-1]`) and keys from columns (`d[key]`) | `AccessKey.Expr`; every expression walker visits it, including projection pushdown |
 | `top-nested`: levels with N or all values, named or `aggregated_<Expr>` columns, `asc`/`desc`, `with others` (deeper levels under the others row are null; undocumented) | reference example 4 exact; example 1 shape |
+| `convert_angle`, `_energy`, `_force`, `_length`, `_mass`, `_speed`, `_temperature`, `_volume`: all 221 documented units (factors generated from unitsnet-js by `tools/gen-units/gen.js`; `Tilt` is the sine of the angle) | the eight reference examples exact to ADX's 15 displayed digits. AcreFoot overridden to the rounded factor ADX's output shows. Other units carry current UnitsNet factors and could differ in late digits where ADX's UnitsNet version rounded differently |
 | `view` lambdas | parameterless views bind as tabular lets and are in scope for union wildcards; views with parameters bind as functions |
 | Scalar bitwise: `binary_and`, `binary_or`, `binary_xor`, `binary_not`, `binary_shift_left`, `binary_shift_right`, `bitset_count_ones` | `func_binary.go`; all eight reference-page examples, shift modulo 64, negative shift gives null, arithmetic right shift |
 
 ## P2 — real but less frequent
 
 - Scalars: `beta_cdf`, `beta_inv`, `beta_pdf`, `welch_test`.
-- Units conversion family, not in any earlier list: `convert_angle`,
-  `convert_energy`, `convert_force`, `convert_length`, `convert_mass`,
-  `convert_speed`, `convert_temperature`, `convert_volume`.
 - `as hint.materialized=true`.
 - Operators previously labelled out of scope that have no cluster
   dependency: `fork`, `facet`.

@@ -84,6 +84,9 @@ func evalFuncRaw(fc *parser.FuncCall, schema *types.Schema, row types.Row) (type
 	if v, ok, err := evalDynamicFunc(fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalConvertUnitsFunc(fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalMathExtraFunc(fc, schema, row); ok {
 		return v, err
 	}
