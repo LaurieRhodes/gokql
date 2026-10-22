@@ -392,7 +392,7 @@ found, just not yet reached).
 `welch_test` — statistical distribution functions; real, but a narrow
 slice of real-world KQL usage for this project's own use cases.
 
-### Bitwise / binary (aggregation-level `binary_all_*` already exist; these are the scalar, single-value forms)
+### Bitwise / binary (aggregation-level `binary_all_*` already exist; these are the scalar, single-value forms) — CLOSED 2026-10-22, see `parity_backlog.md`
 `binary_and`, `binary_or`, `binary_not`, `binary_xor`,
 `binary_shift_left`, `binary_shift_right`, `bitset_count_ones`
 

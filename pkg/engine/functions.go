@@ -36,6 +36,9 @@ func evalFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.V
 	if v, ok, err := evalDynamicFunc(fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalBinaryFunc(fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalVectorFunc(fc, schema, row); ok {
 		return v, err
 	}

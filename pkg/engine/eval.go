@@ -746,7 +746,9 @@ func inferExprType(expr parser.Expr, schema *types.Schema) types.KQLType {
 			return types.TypeString
 		case "toguid":
 			return types.TypeGUID
-		case "indexof", "indexof_regex", "countof", "parse_ipv4", "array_length", "array_index_of", "has_any_index", "hash", "hash_xxhash64":
+		case "indexof", "indexof_regex", "countof", "parse_ipv4", "array_length", "array_index_of", "has_any_index", "hash", "hash_xxhash64",
+			"binary_and", "binary_or", "binary_xor", "binary_not",
+			"binary_shift_left", "binary_shift_right", "bitset_count_ones":
 			return types.TypeLong
 		case "array_concat", "array_reverse", "array_slice",
 			"array_sort_asc", "array_sort_desc", "bag_keys",
