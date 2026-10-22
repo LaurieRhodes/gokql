@@ -511,8 +511,8 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 	e.setLetContext(ctx)
 	defer e.setLetContext(prevCtx)
 
-	// Evaluate each let binding
-	for _, let := range cs.Lets {
+	// bindLet evaluates one let binding into ctx.
+	bindLet := func(let *parser.LetStatement) error {
 		switch v := let.Value.(type) {
 		case *parser.CompoundStatement:
 			// A tabular let bound to a value that ITSELF has its own
@@ -532,7 +532,7 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			// (let.Value's evaluation was simply skipped).
 			result, err := e.Execute(v)
 			if err != nil {
-				return nil, fmt.Errorf("let %s: %w", let.Name, err)
+				return fmt.Errorf("let %s: %w", let.Name, err)
 			}
 			ctx.Tables[let.Name] = result
 
@@ -540,7 +540,7 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			// Tabular let: execute the query and store result
 			result, err := e.executeQuery(v)
 			if err != nil {
-				return nil, fmt.Errorf("let %s: %w", let.Name, err)
+				return fmt.Errorf("let %s: %w", let.Name, err)
 			}
 			ctx.Tables[let.Name] = result
 
@@ -564,11 +564,11 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			// Use a dummy single-row table for evaluation context
 			rewritten, err := substituteToScalars(e, v.Expr)
 			if err != nil {
-				return nil, fmt.Errorf("let %s: %w", let.Name, err)
+				return fmt.Errorf("let %s: %w", let.Name, err)
 			}
 			val, err := evalExpr(e, rewritten, &types.Schema{}, types.Row{})
 			if err != nil {
-				return nil, fmt.Errorf("let %s: %w", let.Name, err)
+				return fmt.Errorf("let %s: %w", let.Name, err)
 			}
 			ctx.Scalars[let.Name] = val
 			// ScalarTypes captures the KQL type via the same
@@ -586,13 +586,63 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			ctx.Functions[let.Name] = v
 
 		default:
-			return nil, fmt.Errorf("let %s: unsupported value type %T", let.Name, let.Value)
+			return fmt.Errorf("let %s: unsupported value type %T", let.Name, let.Value)
 		}
 		if let.IsView {
 			if ctx.Views == nil {
 				ctx.Views = map[string]bool{}
 			}
 			ctx.Views[let.Name] = true
+		}
+		return nil
+	}
+
+	// A batch runs its tabular statements in order, each seeing the
+	// lets written before it and the names earlier statements bound
+	// with `as`. The first statement's result is the primary one; the
+	// rest (and any fork/facet tables) follow it in ExecuteAll.
+	if len(cs.Batch) > 0 {
+		var results []*types.Table
+		saved := e.extraResults
+		li := 0
+		run := func(st parser.Statement, letsBefore int) error {
+			for ; li < letsBefore && li < len(cs.Lets); li++ {
+				if err := bindLet(cs.Lets[li]); err != nil {
+					return err
+				}
+			}
+			e.extraResults = nil
+			t, err := e.Execute(st)
+			if err != nil {
+				return err
+			}
+			if t != nil && !isNoResult(t) {
+				results = append(results, t)
+			}
+			results = append(results, e.extraResults...)
+			return nil
+		}
+		for k, st := range cs.Batch {
+			if err := run(st, cs.BatchLetsBefore[k]); err != nil {
+				e.extraResults = saved
+				return nil, err
+			}
+		}
+		if err := run(cs.Final, len(cs.Lets)); err != nil {
+			e.extraResults = saved
+			return nil, err
+		}
+		e.extraResults = saved
+		if len(results) == 0 {
+			return nil, nil
+		}
+		e.extraResults = append(e.extraResults, results[1:]...)
+		return results[0], nil
+	}
+
+	for _, let := range cs.Lets {
+		if err := bindLet(let); err != nil {
+			return nil, err
 		}
 	}
 

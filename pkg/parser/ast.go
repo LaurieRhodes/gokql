@@ -361,18 +361,11 @@ func (*GetSchemaOp) operatorNode() {}
 // "Binds a name to the operator's input tabular expression. This
 // operator allows the query to reference the value of the tabular
 // expression multiple times without breaking the query and binding a
-// name through the let statement." Scoped here to same-query,
-// downstream reference only (a later join/union subquery within the
-// SAME pipeline's own execution referencing Name as a source) — see
-// applyAs's own doc comment (pkg/engine/operators.go) for exactly why
-// cross-statement (semicolon-separated) reference isn't supported:
-// this engine's CompoundStatement shape is "a list of let bindings
-// then one final statement", not a general list of arbitrary
-// statements, so there's no later top-level statement for a name bound
-// here to be visible to in the first place. Real ADX's own
-// withsource=/source_/$table column-naming integration (union, find,
-// search) is also NOT implemented — a purely additive, separate piece
-// of real ADX's own `as` behavior, out of scope here.
+// name through the let statement." The name is visible downstream in
+// the same pipeline (join/union subqueries) and to the later statements
+// of a query batch (`T | as X; X | count`, CompoundStatement.Batch).
+// Real ADX's own withsource=/source_/$table column-naming integration
+// (union, find, search) is NOT implemented.
 type AsOp struct {
 	Name string
 }
@@ -1208,6 +1201,11 @@ type TabularColumn struct {
 type CompoundStatement struct {
 	Lets  []*LetStatement
 	Final Statement // The query or command that produces output
+	// Batch holds the tabular statements before Final in a query
+	// batch (`T1 | ...; T2 | ...`), which each produce a result table.
+	// BatchLetsBefore[k] counts the lets written before Batch[k].
+	Batch           []Statement
+	BatchLetsBefore []int
 }
 
 func (*CompoundStatement) statementNode() {}
@@ -1316,6 +1314,7 @@ func (*MergeExtentsCmd) statementNode() {}
 //
 //	Edges | make-graph Source --> Target [with_node_id=Name]
 //	      [with Nodes1 on Id1 [, Nodes2 on Id2 ...]]
+//	      [partitioned-by Col ( GraphOperators )]
 //
 // The result flowing down the pipeline is a graph, not a table; only
 // graph operators (graph-to-table, graph-match) may follow it.
@@ -1327,6 +1326,11 @@ type MakeGraphOp struct {
 	// (with_node_id=Name). "" = none: nodes derived from edges then
 	// expose their id as NodeId.
 	WithNodeId string
+	// PartitionBy (partitioned-by Col (ops)) builds one graph per value
+	// of Col — taken from the edges and every node table — runs
+	// PartitionOps on each and unions the tabular results.
+	PartitionBy  string
+	PartitionOps []Operator
 }
 
 // GraphNodeTable is one "with Table on IdColumn" node source.
@@ -1339,17 +1343,37 @@ func (*MakeGraphOp) operatorNode() {}
 
 // GraphToTableOp materializes a graph back into tabular form:
 //
-//	... | graph-to-table edges   (default when omitted)
-//	... | graph-to-table nodes
+//	... | graph-to-table nodes [as N] [with_node_id=C]
+//	... | graph-to-table edges [as E] [with_source_id=C] [with_target_id=C]
+//	... | graph-to-table nodes as N [...], edges as E [...]
 //
-// edges: the original edge rows (edge schema preserved).
-// nodes: node-table rows when a node table was supplied (edge-only nodes get
-// nulls for property columns); otherwise a single NodeId column.
+// edges: the original edge rows; nodes: the node properties. The
+// with_*_id options prepend long columns holding hash(node id). With an
+// alias the result is bound under that name for the statements that
+// follow in the batch; with both outputs the operator itself returns
+// no table.
 type GraphToTableOp struct {
-	Output string // "edges" or "nodes"
+	Nodes, Edges     bool
+	NodesAs, EdgesAs string
+	NodeIdColumn     string // with_node_id
+	SourceIdColumn   string // with_source_id
+	TargetIdColumn   string // with_target_id
 }
 
 func (*GraphToTableOp) operatorNode() {}
+
+// GraphMarkComponentsOp marks every node with its connected component:
+//
+//	... | graph-mark-components [kind=weak|strong] [with_component_id=Name]
+//
+// The result is a graph whose nodes carry a zero-based component index
+// in the Name property (default ComponentId).
+type GraphMarkComponentsOp struct {
+	Kind        string // "weak" (default) or "strong"
+	ComponentId string
+}
+
+func (*GraphMarkComponentsOp) operatorNode() {}
 
 // GraphMatchOp matches a graph pattern against a graph:
 //
@@ -1372,9 +1396,12 @@ type GraphMatchOp struct {
 	// Cycles: "unique_edges" (default: a graph edge is used at most once
 	// per match), "none" (additionally, no graph node is visited twice)
 	// or "all" (no restriction beyond the hop ranges).
-	Cycles  string
-	Where   Expr       // optional filter over pattern variables (nil = none)
-	Project *ProjectOp // required output projection
+	Cycles string
+	// Shortest is set for graph-shortest-paths: "any" (one shortest
+	// path per source/target pair) or "all" (every shortest path).
+	Shortest string
+	Where    Expr       // optional filter over pattern variables (nil = none)
+	Project  *ProjectOp // required output projection
 }
 
 // GraphMatchSequence is one path sequence of a graph-match pattern.

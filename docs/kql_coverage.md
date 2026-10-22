@@ -44,10 +44,11 @@ This rewrite corrects a significant amount of drift in the previous version (dat
 | lookup                  | ✅      | Dimension enrichment join by table name; kinds leftouter (default) and inner                                        |
 | render                  | ✅      | Parsed as metadata (visualization + with-properties), pass-through in engine                                       |
 | mv-apply                | ✅      | Per-row array expansion + subquery pipeline; optional rename and to typeof(T)                                       |
-| make-graph              | ⚠️      | Src --> Dst [with_node_id=Name] [with N1 on Id1 [, N2 on Id2]] (properties merged by id); isolated + edge-only nodes. Not yet: partitioned-by |
+| make-graph              | ✅      | Src --> Dst [with_node_id=Name] [with N1 on Id1 [, N2 on Id2]] (properties merged by id) [partitioned-by Col (graph ops)]; isolated + edge-only nodes |
 | graph-match             | ✅      | Comma-separated sequences sharing node variables, repeated variables, named/anonymous elements (`()`, `-->`, `<--`, `--`), `*min..max` incl. `*0..n`, cycles=none/all/unique_edges, map/all/any/inner_nodes, where over dotted vars, required project; all ADX doc examples pass (graph_compliance_test.go) |
-| graph-to-table          | ⚠️      | edges (default) or nodes. Not yet: with_node_id/with_source_id/with_target_id, both outputs in one call      |
-| graph-shortest-paths, graph-mark-components | ❌ | Not yet implemented                                                                  |
+| graph-shortest-paths    | ✅      | output=any/all; one sequence with a variable-length edge; shortest per (first node, last node) pair. The search does not revisit nodes, so no path returns to its start |
+| graph-mark-components   | ✅      | kind=weak/strong, with_component_id= (default ComponentId); ids numbered in first-node order |
+| graph-to-table          | ✅      | nodes / edges, with_node_id/with_source_id/with_target_id (long hash(NodeId), exact), `as` aliases, `nodes as N, edges as E` binding both for the rest of the batch. Bare `graph-to-table` means edges (ADX requires an output) |
 | graph(), graph models, labels() | ❌ | Persistent graph models not yet implemented                                                         |
 | range                   | ✅      | Table-generating source: int/long/real/datetime/timespan, let-bound and standalone forms                            |
 | evaluate                | ✅      | General plugin-dispatch mechanism (a registry, not a single hard-coded case); bag_unpack is the first plugin        |

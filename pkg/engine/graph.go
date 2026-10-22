@@ -37,6 +37,9 @@ type Graph struct {
 	NodeIdName string
 	// withNodeIdIdx is the with_node_id column in NodeSchema (-1 = none).
 	withNodeIdIdx int
+	// coercedIds: node-table id types disagreed with the edges, so
+	// every id was formatted as a string.
+	coercedIds bool
 
 	radjOnce sync.Once
 	radj     map[string][]int // node key → incoming edge indices (lazy)
@@ -87,6 +90,14 @@ func (g *Graph) derivedNodeIdValue(id types.Value) types.Value {
 		return nil
 	}
 	return fmt.Sprintf("%v", id)
+}
+
+// nodeIdType is the type node ids are hashed and compared as.
+func (g *Graph) nodeIdType() types.KQLType {
+	if g.coercedIds {
+		return types.TypeString
+	}
+	return g.derivedNodeIdType()
 }
 
 // nodeElemSchema is the property schema of a single node: the node
@@ -174,6 +185,13 @@ func (e *Engine) applyOperatorState(st pipeState, op parser.Operator) (pipeState
 		if st.graph != nil {
 			return st, fmt.Errorf("make-graph: input is already a graph")
 		}
+		if o.PartitionBy != "" {
+			t, err := e.applyMakeGraphPartitioned(st.table, o)
+			if err != nil {
+				return st, err
+			}
+			return pipeState{table: t}, nil
+		}
 		g, err := e.applyMakeGraph(st.table, o)
 		if err != nil {
 			return st, err
@@ -184,11 +202,18 @@ func (e *Engine) applyOperatorState(st pipeState, op parser.Operator) (pipeState
 		if st.graph == nil {
 			return st, fmt.Errorf("graph-to-table: input is not a graph (make-graph must precede it)")
 		}
-		t, err := applyGraphToTable(st.graph, o)
+		t, err := e.applyGraphToTable(st.graph, o)
 		if err != nil {
 			return st, err
 		}
 		return pipeState{table: t}, nil
+
+	case *parser.GraphMarkComponentsOp:
+		if st.graph == nil {
+			return st, fmt.Errorf("graph-mark-components: input is not a graph (make-graph must precede it)")
+		}
+		markComponents(st.graph, o)
+		return st, nil
 
 	case *parser.GraphMatchOp:
 		if st.graph == nil {
@@ -220,6 +245,124 @@ func (e *Engine) applyOperatorState(st pipeState, op parser.Operator) (pipeState
 // resolution against let bindings and the catalog happens inside
 // executeQuery, as with lookup.
 func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Graph, error) {
+	nodeTables, err := e.loadGraphNodeTables(op)
+	if err != nil {
+		return nil, err
+	}
+	return buildGraph(edges, op, nodeTables)
+}
+
+// loadGraphNodeTables evaluates make-graph's node tables.
+func (e *Engine) loadGraphNodeTables(op *parser.MakeGraphOp) ([]*types.Table, error) {
+	var out []*types.Table
+	for _, nt := range op.NodeTables {
+		t, err := e.executeQuery(&parser.Query{Source: nt.Table})
+		if err != nil {
+			return nil, fmt.Errorf("make-graph nodes: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// applyMakeGraphPartitioned is make-graph ... partitioned-by Col (ops):
+// one graph per distinct Col value (edges and node tables split alike),
+// ops run on each, results unioned in first-seen partition order.
+func (e *Engine) applyMakeGraphPartitioned(edges *types.Table, op *parser.MakeGraphOp) (*types.Table, error) {
+	nodeTables, err := e.loadGraphNodeTables(op)
+	if err != nil {
+		return nil, err
+	}
+	col := edges.Schema.ColumnIndex(op.PartitionBy)
+	if col < 0 {
+		return nil, fmt.Errorf("make-graph partitioned-by: column %q not found in the edges", op.PartitionBy)
+	}
+	nodeCols := make([]int, len(nodeTables))
+	for i, t := range nodeTables {
+		nodeCols[i] = t.Schema.ColumnIndex(op.PartitionBy)
+		if nodeCols[i] < 0 {
+			return nil, fmt.Errorf("make-graph partitioned-by: column %q not found in node table %s", op.PartitionBy, op.NodeTables[i].Table)
+		}
+	}
+
+	var keys []string
+	parts := make(map[string]*types.Table)
+	for _, row := range edges.Rows {
+		k := typedKey(row[col])
+		t := parts[k]
+		if t == nil {
+			t = types.NewTable(edges.Name, edges.Schema)
+			parts[k] = t
+			keys = append(keys, k)
+		}
+		t.AddRow(row)
+	}
+	partNodes := make([]map[string]*types.Table, len(nodeTables))
+	for i, nt := range nodeTables {
+		partNodes[i] = make(map[string]*types.Table)
+		for _, row := range nt.Rows {
+			k := typedKey(row[nodeCols[i]])
+			t := partNodes[i][k]
+			if t == nil {
+				t = types.NewTable(nt.Name, nt.Schema)
+				partNodes[i][k] = t
+			}
+			t.AddRow(row)
+			if parts[k] == nil { // a partition holding only nodes
+				parts[k] = types.NewTable(edges.Name, edges.Schema)
+				keys = append(keys, k)
+			}
+		}
+	}
+
+	run := func(edgePart *types.Table, key string, empty bool) (*types.Table, error) {
+		nts := make([]*types.Table, len(nodeTables))
+		for i, nt := range nodeTables {
+			if t := partNodes[i][key]; t != nil && !empty {
+				nts[i] = t
+			} else {
+				nts[i] = types.NewTable(nt.Name, nt.Schema)
+			}
+		}
+		g, err := buildGraph(edgePart, op, nts)
+		if err != nil {
+			return nil, err
+		}
+		st := pipeState{graph: g}
+		for _, sub := range op.PartitionOps {
+			if st, err = e.applyOperatorState(st, sub); err != nil {
+				return nil, err
+			}
+		}
+		if st.graph != nil {
+			return nil, fmt.Errorf("make-graph partitioned-by: the graph operator must produce a table (end it with graph-match or graph-to-table)")
+		}
+		return st.table, nil
+	}
+
+	if len(keys) == 0 {
+		// No partitions: run once on an empty graph for the schema.
+		return run(types.NewTable(edges.Name, edges.Schema), "", true)
+	}
+	var out *types.Table
+	for _, k := range keys {
+		t, err := run(parts[k], k, false)
+		if err != nil {
+			return nil, err
+		}
+		if out == nil {
+			out = types.NewTable(t.Name, t.Schema)
+		} else if len(t.Schema.Columns) != len(out.Schema.Columns) {
+			return nil, fmt.Errorf("make-graph partitioned-by: partitions produced different schemas")
+		}
+		out.Rows = append(out.Rows, t.Rows...)
+	}
+	return out, nil
+}
+
+// buildGraph builds the Graph from the edge table and the evaluated
+// node tables (parallel to op.NodeTables).
+func buildGraph(edges *types.Table, op *parser.MakeGraphOp, nodeTables []*types.Table) (*Graph, error) {
 	srcIdx := edges.Schema.ColumnIndex(op.SourceColumn)
 	if srcIdx < 0 {
 		return nil, fmt.Errorf("make-graph: source column %q not found", op.SourceColumn)
@@ -254,11 +397,8 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 		colMap []int // table column → NodeSchema column
 	}
 	var sources []nodeSource
-	for _, nt := range op.NodeTables {
-		t, err := e.executeQuery(&parser.Query{Source: nt.Table})
-		if err != nil {
-			return nil, fmt.Errorf("make-graph nodes: %w", err)
-		}
+	for i, nt := range op.NodeTables {
+		t := nodeTables[i]
 		idIdx := t.Schema.ColumnIndex(nt.IdColumn)
 		if idIdx < 0 {
 			return nil, fmt.Errorf("make-graph: node id column %q not found in %s", nt.IdColumn, nt.Table)
@@ -290,6 +430,7 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 			coerceIdentity = true
 		}
 	}
+	g.coercedIds = coerceIdentity
 	identity := func(id types.Value) types.Value {
 		if coerceIdentity && id != nil {
 			return fmt.Sprintf("%v", id)
@@ -331,6 +472,7 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 	}
 
 	width := len(g.NodeSchema.Columns)
+	var tableOrder []types.Value
 	for _, src := range sources {
 		for _, row := range src.table.Rows {
 			id := identity(row[src.idIdx])
@@ -342,6 +484,7 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 			if merged == nil {
 				merged = make(types.Row, width)
 				g.NodeRows[key] = merged
+				tableOrder = append(tableOrder, id)
 			}
 			for c, v := range row {
 				if u := src.colMap[c]; merged[u] == nil {
@@ -354,32 +497,105 @@ func (e *Engine) applyMakeGraph(edges *types.Table, op *parser.MakeGraphOp) (*Gr
 		}
 	}
 
+	// Node order, as ADX lists nodes: node-table rows first, then the
+	// nodes known only from edges, each in first-seen order.
+	if g.hasNodeTable {
+		order := tableOrder
+		for _, id := range g.NodeIDs {
+			if g.NodeRows[graphKey(id)] == nil {
+				order = append(order, id)
+			}
+		}
+		g.NodeIDs = order
+	}
+
 	return g, nil
 }
 
+// noResultName marks a statement that produces no result table (a
+// graph-to-table binding both outputs to names). It is an empty table,
+// harmless wherever a table is expected, and is dropped from a batch's
+// results.
+const noResultName = "\x00no-result"
+
+func noResultTable() *types.Table { return types.NewTable(noResultName, types.Schema{}) }
+
+func isNoResult(t *types.Table) bool { return t != nil && t.Name == noResultName }
+
 // applyGraphToTable materializes the graph as rows.
 //   - edges: original edge rows under the edge schema
-//   - nodes with a node table: node-table rows in first-seen node order;
-//     edge-only nodes emit their id with nulls for property columns
-//   - nodes without a node table: a single NodeId column typed from the
-//     edge source column
-func applyGraphToTable(g *Graph, op *parser.GraphToTableOp) (*types.Table, error) {
-	switch op.Output {
-	case "edges":
-		result := types.NewTable("", g.EdgeSchema)
-		for _, edge := range g.Edges {
-			result.AddRow(edge.Row)
+//   - nodes: node properties (node-table rows, then nodes known only
+//     from edges, which carry just their id); without a node table, a
+//     single id column (NodeId, or the with_node_id property)
+//
+// with_node_id / with_source_id / with_target_id prepend long columns of
+// hash(node id). An aliased output is bound for the rest of the batch;
+// with both outputs nothing is returned.
+func (e *Engine) applyGraphToTable(g *Graph, op *parser.GraphToTableOp) (*types.Table, error) {
+	hashCol := func(name string) types.Column { return types.Column{Name: name, Type: types.TypeLong} }
+	idHash := func(id types.Value) types.Value {
+		if id == nil {
+			return nil
 		}
-		return result, nil
-
-	case "nodes":
-		result := types.NewTable("", g.nodeElemSchema())
-		for _, id := range g.NodeIDs {
-			result.AddRow(g.nodeElemRow(id))
-		}
-		return result, nil
-
-	default:
-		return nil, fmt.Errorf("graph-to-table: unknown output %q", op.Output)
+		return int64(kqlHash64(id, g.nodeIdType()))
 	}
+
+	var nodes, edges *types.Table
+	if op.Nodes {
+		schema := g.nodeElemSchema()
+		if op.NodeIdColumn != "" {
+			schema.Columns = append([]types.Column{hashCol(op.NodeIdColumn)}, schema.Columns...)
+		}
+		nodes = types.NewTable(op.NodesAs, schema)
+		for _, id := range g.NodeIDs {
+			row := g.nodeElemRow(id)
+			if op.NodeIdColumn != "" {
+				row = append(types.Row{idHash(id)}, row...)
+			}
+			nodes.AddRow(row)
+		}
+	}
+	if op.Edges {
+		var schema types.Schema
+		if op.SourceIdColumn != "" {
+			schema.Columns = append(schema.Columns, hashCol(op.SourceIdColumn))
+		}
+		if op.TargetIdColumn != "" {
+			schema.Columns = append(schema.Columns, hashCol(op.TargetIdColumn))
+		}
+		prefix := len(schema.Columns)
+		schema.Columns = append(schema.Columns, g.EdgeSchema.Columns...)
+		edges = types.NewTable(op.EdgesAs, schema)
+		for _, edge := range g.Edges {
+			row := edge.Row
+			if prefix > 0 {
+				row = make(types.Row, 0, len(schema.Columns))
+				if op.SourceIdColumn != "" {
+					row = append(row, idHash(edge.Source))
+				}
+				if op.TargetIdColumn != "" {
+					row = append(row, idHash(edge.Target))
+				}
+				row = append(row, edge.Row...)
+			}
+			edges.AddRow(row)
+		}
+	}
+
+	bind := func(name string, t *types.Table) {
+		if name != "" {
+			e.applyAs(t, &parser.AsOp{Name: name}) //nolint:errcheck // never fails
+		}
+	}
+	if nodes != nil && edges != nil {
+		bind(op.NodesAs, nodes)
+		bind(op.EdgesAs, edges)
+		return noResultTable(), nil
+	}
+	if nodes != nil {
+		bind(op.NodesAs, nodes)
+		return nodes, nil
+	}
+	bind(op.EdgesAs, edges)
+	return edges, nil
 }

@@ -26,6 +26,26 @@ func parseMakeGraph(s string) (*MakeGraphOp, error) {
 	}
 	rest := strings.TrimSpace(s[arrowIdx+len("-->"):])
 
+	// Trailing partitioned-by Col ( operators ).
+	if idx := findKeyword(" "+rest, " partitioned-by "); idx >= 0 {
+		part := strings.TrimSpace(rest[idx+len(" partitioned-by")-1:])
+		rest = strings.TrimSpace(rest[:max(idx-1, 0)])
+		open := strings.IndexByte(part, '(')
+		if open < 0 {
+			return nil, fmt.Errorf("make-graph: expected 'partitioned-by Column ( graph operator )'")
+		}
+		op.PartitionBy = unquoteIdent(strings.TrimSpace(part[:open]))
+		closeIdx := matchingClose(part, open, '(', ')')
+		if op.PartitionBy == "" || closeIdx < 0 || strings.TrimSpace(part[closeIdx+1:]) != "" {
+			return nil, fmt.Errorf("make-graph: expected 'partitioned-by Column ( graph operator )'")
+		}
+		ops, err := parseSubPipeline("make-graph partitioned-by", part[open+1:closeIdx])
+		if err != nil {
+			return nil, err
+		}
+		op.PartitionOps = ops
+	}
+
 	// Target column: the first whitespace-delimited token.
 	end := strings.IndexAny(rest, " \t\n")
 	if end < 0 {
@@ -126,30 +146,53 @@ func splitTopLevelCommas(s string) []string {
 //
 //	[cycles=X] Pattern [, Pattern ...] [where <expr>] project <items>
 func parseGraphMatch(s string) (*GraphMatchOp, error) {
+	return parseGraphPatternOp(s, "graph-match")
+}
+
+// parseGraphShortestPaths parses (the prefix already stripped):
+//
+//	[output=any|all] Pattern [where <expr>] project <items>
+func parseGraphShortestPaths(s string) (*GraphMatchOp, error) {
+	return parseGraphPatternOp(s, "graph-shortest-paths")
+}
+
+func parseGraphPatternOp(s, opName string) (*GraphMatchOp, error) {
 	s = strings.TrimSpace(s)
 	op := &GraphMatchOp{Cycles: "unique_edges"}
+	if opName == "graph-shortest-paths" {
+		op.Shortest = "any"
+	}
 
-	// Leading operator properties.
+	// Leading operator properties: cycles= (graph-match) and output=
+	// (graph-shortest-paths).
 	for {
-		lower := strings.ToLower(s)
-		if !strings.HasPrefix(lower, "cycles") {
+		eq := strings.IndexByte(s, '=')
+		if eq < 0 {
 			break
 		}
-		r := strings.TrimSpace(s[len("cycles"):])
-		if !strings.HasPrefix(r, "=") {
+		key := strings.ToLower(strings.TrimSpace(s[:eq]))
+		if key != "cycles" && key != "output" {
 			break
 		}
-		r = strings.TrimSpace(r[1:])
+		r := strings.TrimSpace(s[eq+1:])
 		e := strings.IndexAny(r, " \t\n(")
 		if e < 0 {
 			e = len(r)
 		}
 		v := strings.ToLower(r[:e])
-		switch v {
-		case "none", "all", "unique_edges":
+		switch {
+		case key == "cycles" && opName == "graph-match":
+			if v != "none" && v != "all" && v != "unique_edges" {
+				return nil, fmt.Errorf("graph-match: cycles must be none, all or unique_edges, got %q", r[:e])
+			}
 			op.Cycles = v
+		case key == "output" && opName == "graph-shortest-paths":
+			if v != "any" && v != "all" {
+				return nil, fmt.Errorf("graph-shortest-paths: output must be any or all, got %q", r[:e])
+			}
+			op.Shortest = v
 		default:
-			return nil, fmt.Errorf("graph-match: cycles must be none, all or unique_edges, got %q", r[:e])
+			return nil, fmt.Errorf("%s: unknown property %q", opName, key)
 		}
 		s = strings.TrimSpace(r[e:])
 	}
@@ -157,7 +200,7 @@ func parseGraphMatch(s string) (*GraphMatchOp, error) {
 	// The project clause is required and terminates the operator.
 	projIdx := findKeyword(s, " project ")
 	if projIdx < 0 {
-		return nil, fmt.Errorf("graph-match: project clause is required")
+		return nil, fmt.Errorf("%s: project clause is required", opName)
 	}
 	projStr := strings.TrimSpace(s[projIdx+len(" project "):])
 	head := strings.TrimSpace(s[:projIdx])
@@ -166,7 +209,7 @@ func parseGraphMatch(s string) (*GraphMatchOp, error) {
 		whereStr := strings.TrimSpace(head[whereIdx+len(" where "):])
 		expr, err := ParseExpr(whereStr)
 		if err != nil {
-			return nil, fmt.Errorf("graph-match where: %w", err)
+			return nil, fmt.Errorf("%s where: %w", opName, err)
 		}
 		op.Where = expr
 		head = strings.TrimSpace(head[:whereIdx])
@@ -182,7 +225,7 @@ func parseGraphMatch(s string) (*GraphMatchOp, error) {
 
 	items, err := parseProjectItems(projStr)
 	if err != nil {
-		return nil, fmt.Errorf("graph-match project: %w", err)
+		return nil, fmt.Errorf("%s project: %w", opName, err)
 	}
 	op.Project = &ProjectOp{Items: items}
 	return op, nil
@@ -325,4 +368,106 @@ func parseGraphEdgeInner(inner string, edge *GraphMatchEdge) error {
 	edge.MinHops = minVal
 	edge.MaxHops = maxVal
 	return nil
+}
+
+// parseGraphToTable parses the operands of graph-to-table (prefix
+// stripped). A bare graph-to-table means edges (a lenient extension:
+// ADX requires the output to be named).
+func parseGraphToTable(s string) (*GraphToTableOp, error) {
+	op := &GraphToTableOp{}
+	if strings.TrimSpace(s) == "" {
+		op.Edges = true
+		return op, nil
+	}
+	parts := splitTopLevelCommas(s)
+	if len(parts) > 2 {
+		return nil, fmt.Errorf("graph-to-table: expected at most two outputs (nodes, edges)")
+	}
+	for _, part := range parts {
+		// Normalise "opt = value" to "opt=value" before tokenising.
+		fields := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(part, " =", "="), "= ", "="))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("graph-to-table: expected 'nodes' or 'edges'")
+		}
+		kind := strings.ToLower(fields[0])
+		var alias *string
+		switch kind {
+		case "nodes":
+			if op.Nodes {
+				return nil, fmt.Errorf("graph-to-table: nodes given twice")
+			}
+			op.Nodes, alias = true, &op.NodesAs
+		case "edges":
+			if op.Edges {
+				return nil, fmt.Errorf("graph-to-table: edges given twice")
+			}
+			op.Edges, alias = true, &op.EdgesAs
+		default:
+			return nil, fmt.Errorf("graph-to-table: expected 'nodes' or 'edges', got %q", fields[0])
+		}
+		for i := 1; i < len(fields); i++ {
+			f := fields[i]
+			lf := strings.ToLower(f)
+			if lf == "as" {
+				if i+1 >= len(fields) {
+					return nil, fmt.Errorf("graph-to-table: expected a name after 'as'")
+				}
+				*alias = unquoteIdent(fields[i+1])
+				i++
+				continue
+			}
+			eq := strings.IndexByte(f, '=')
+			if eq < 0 {
+				return nil, fmt.Errorf("graph-to-table: unexpected %q", f)
+			}
+			name := unquoteIdent(f[eq+1:])
+			if name == "" {
+				return nil, fmt.Errorf("graph-to-table: %s needs a column name", f[:eq])
+			}
+			switch opt := strings.ToLower(f[:eq]); {
+			case opt == "with_node_id" && kind == "nodes":
+				op.NodeIdColumn = name
+			case opt == "with_source_id" && kind == "edges":
+				op.SourceIdColumn = name
+			case opt == "with_target_id" && kind == "edges":
+				op.TargetIdColumn = name
+			default:
+				return nil, fmt.Errorf("graph-to-table %s: unknown option %q", kind, f[:eq])
+			}
+		}
+	}
+	if op.Nodes && op.Edges && (op.NodesAs == "" || op.EdgesAs == "") {
+		return nil, fmt.Errorf("graph-to-table: multiple graph outputs require aliases (nodes as N, edges as E)")
+	}
+	return op, nil
+}
+
+// parseGraphMarkComponents parses [kind=weak|strong] [with_component_id=Name]
+// (the prefix already stripped).
+func parseGraphMarkComponents(s string) (*GraphMarkComponentsOp, error) {
+	op := &GraphMarkComponentsOp{Kind: "weak", ComponentId: "ComponentId"}
+	fields := strings.Fields(strings.ReplaceAll(strings.ReplaceAll(s, " =", "="), "= ", "="))
+	for _, f := range fields {
+		eq := strings.IndexByte(f, '=')
+		if eq < 0 {
+			return nil, fmt.Errorf("graph-mark-components: unexpected %q", f)
+		}
+		key, val := strings.ToLower(f[:eq]), unquoteIdent(f[eq+1:])
+		switch key {
+		case "kind":
+			v := strings.ToLower(val)
+			if v != "weak" && v != "strong" {
+				return nil, fmt.Errorf("graph-mark-components: kind must be weak or strong, got %q", val)
+			}
+			op.Kind = v
+		case "with_component_id":
+			if val == "" {
+				return nil, fmt.Errorf("graph-mark-components: with_component_id needs a name")
+			}
+			op.ComponentId = val
+		default:
+			return nil, fmt.Errorf("graph-mark-components: unknown property %q", f[:eq])
+		}
+	}
+	return op, nil
 }

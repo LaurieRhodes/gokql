@@ -182,9 +182,13 @@ func Parse(input string) (Statement, error) {
 		return parseSingleStatement(stmts[0])
 	}
 
-	// Multi-statement: parse let bindings + final statement
+	// Multi-statement: let bindings and one or more statements. Several
+	// tabular statements form a query batch, each producing a result;
+	// with a control command among them, only the last statement runs
+	// (scripts of commands are not batches).
 	var lets []*LetStatement
-	var finalStr string
+	var finals []string
+	var letsBefore []int
 
 	for i, s := range stmts {
 		s = strings.TrimSpace(s)
@@ -199,26 +203,47 @@ func Parse(input string) (Statement, error) {
 			}
 			lets = append(lets, letStmt)
 		} else {
-			// This is the final (non-let) statement
-			finalStr = s
+			finals = append(finals, s)
+			letsBefore = append(letsBefore, len(lets))
 		}
 	}
 
-	if finalStr == "" {
+	if len(finals) == 0 {
 		// All statements are lets with no final query — error
 		return nil, fmt.Errorf("expected a query after let statement(s)")
 	}
-
-	finalStmt, err := parseSingleStatement(finalStr)
-	if err != nil {
-		return nil, fmt.Errorf("final statement: %w", err)
+	batch := len(finals) > 1
+	for _, f := range finals {
+		if strings.HasPrefix(f, ".") {
+			batch = false
+		}
+	}
+	if !batch {
+		finals = finals[len(finals)-1:]
+		letsBefore = letsBefore[len(letsBefore)-1:]
 	}
 
-	if len(lets) == 0 {
-		return finalStmt, nil
+	cs := &CompoundStatement{Lets: lets}
+	for k, f := range finals {
+		st, err := parseSingleStatement(f)
+		if err != nil {
+			if len(finals) == 1 {
+				return nil, fmt.Errorf("final statement: %w", err)
+			}
+			return nil, fmt.Errorf("statement %d: %w", k+1, err)
+		}
+		if k == len(finals)-1 {
+			cs.Final = st
+		} else {
+			cs.Batch = append(cs.Batch, st)
+			cs.BatchLetsBefore = append(cs.BatchLetsBefore, letsBefore[k])
+		}
 	}
 
-	return &CompoundStatement{Lets: lets, Final: finalStmt}, nil
+	if len(lets) == 0 && len(cs.Batch) == 0 {
+		return cs.Final, nil
+	}
+	return cs, nil
 }
 
 // parseSingleStatement parses a non-let statement.
@@ -1694,17 +1719,19 @@ func parseOperator(seg string) (Operator, error) {
 		return parseMakeGraph(seg[len("make-graph "):])
 	}
 
-	// | graph-to-table [nodes|edges]  (default: edges)
+	// | graph-to-table nodes|edges [as N] [with_*_id=C] [, ...]
 	if lower == "graph-to-table" || strings.HasPrefix(lower, "graph-to-table ") {
-		rest := strings.ToLower(strings.TrimSpace(seg[len("graph-to-table"):]))
-		switch rest {
-		case "", "edges":
-			return &GraphToTableOp{Output: "edges"}, nil
-		case "nodes":
-			return &GraphToTableOp{Output: "nodes"}, nil
-		default:
-			return nil, fmt.Errorf("graph-to-table: expected 'nodes' or 'edges', got %q", rest)
-		}
+		return parseGraphToTable(strings.TrimSpace(seg[len("graph-to-table"):]))
+	}
+
+	// | graph-shortest-paths [output=any|all] (a)-[e*1..5]->(b) [where <expr>] project <items>
+	if strings.HasPrefix(lower, "graph-shortest-paths ") {
+		return parseGraphShortestPaths(seg[len("graph-shortest-paths "):])
+	}
+
+	// | graph-mark-components [kind=weak|strong] [with_component_id=Name]
+	if lower == "graph-mark-components" || strings.HasPrefix(lower, "graph-mark-components ") {
+		return parseGraphMarkComponents(strings.TrimSpace(seg[len("graph-mark-components"):]))
 	}
 
 	// | graph-match (a)-[e]->(b) [where <expr>] project <items>

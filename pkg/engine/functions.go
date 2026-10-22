@@ -76,6 +76,11 @@ func evalFuncRaw(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 			return v, err
 		}
 	}
+	if strings.HasPrefix(fc.Name, "geo_") {
+		if v, ok, err := evalGeoFunc(eng, fc, schema, row); ok {
+			return v, err
+		}
+	}
 	if strings.HasPrefix(fc.Name, "__search_") {
 		if v, ok, err := evalSearchFunc(eng, fc, schema, row); ok {
 			return v, err

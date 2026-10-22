@@ -1381,23 +1381,7 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if val == nil {
 			return nil, true, nil
 		}
-		argType := inferExprType(eng, fc.Args[0], schema)
-		var data []byte
-		switch argType {
-		case types.TypeDatetime:
-			ticks := types.ToInt64(val)/100 + dotnetTicksAtUnixEpoch
-			data = make([]byte, 8)
-			binary.LittleEndian.PutUint64(data, uint64(ticks))
-		case types.TypeTimespan, types.TypeLong, types.TypeInt:
-			data = make([]byte, 8)
-			binary.LittleEndian.PutUint64(data, uint64(types.ToInt64(val)))
-		case types.TypeReal:
-			data = make([]byte, 8)
-			binary.LittleEndian.PutUint64(data, math.Float64bits(types.ToFloat64(val)))
-		default:
-			data = []byte(fmt.Sprintf("%v", val))
-		}
-		h := xxhash.Sum64(data)
+		h := kqlHash64(val, inferExprType(eng, fc.Args[0], schema))
 		if len(fc.Args) == 2 {
 			modVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
@@ -2438,4 +2422,26 @@ func canonicalIPv6String(b [16]byte) string {
 	return fmt.Sprintf("%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
 		b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
 		b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
+}
+
+// kqlHash64 is ADX's hash(): xxhash64 (seed 0) of the value's bytes —
+// UTF-8 for strings, the little-endian 8-byte value for numbers and
+// timespans, .NET ticks for datetimes, the string form otherwise.
+func kqlHash64(val types.Value, t types.KQLType) uint64 {
+	var data []byte
+	switch t {
+	case types.TypeDatetime:
+		ticks := types.ToInt64(val)/100 + dotnetTicksAtUnixEpoch
+		data = make([]byte, 8)
+		binary.LittleEndian.PutUint64(data, uint64(ticks))
+	case types.TypeTimespan, types.TypeLong, types.TypeInt:
+		data = make([]byte, 8)
+		binary.LittleEndian.PutUint64(data, uint64(types.ToInt64(val)))
+	case types.TypeReal:
+		data = make([]byte, 8)
+		binary.LittleEndian.PutUint64(data, math.Float64bits(types.ToFloat64(val)))
+	default:
+		data = []byte(fmt.Sprintf("%v", val))
+	}
+	return xxhash.Sum64(data)
 }

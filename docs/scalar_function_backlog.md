@@ -426,7 +426,11 @@ scope model; not a gap so much as a different architecture.
 ### Geo
 `geo_info_from_ip_address` — part of the much larger geo-function
 family (50+ functions) already explicitly out of scope in
-`kql_coverage.md`.
+`kql_coverage.md`. Exception: `geo_distance_2points` is implemented
+(`func_geo.go`; sphere of radius 6371010 m, which reproduces the
+reference value exactly, and WGS-84 via Vincenty for `use_spheroid`,
+which has no reference value to check against), since the make-graph
+`partitioned-by` reference example uses it.
 
 ### HLL / T-Digest sketch structures
 Already listed as low-priority/deferred in `kql_coverage.md`'s own

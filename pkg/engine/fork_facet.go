@@ -29,7 +29,7 @@ func (e *Engine) ExecuteAll(stmt parser.Statement) ([]*types.Table, error) {
 		return nil, err
 	}
 	var out []*types.Table
-	if t != nil {
+	if t != nil && !isNoResult(t) {
 		out = append(out, t)
 	}
 	return append(out, e.extraResults...), nil

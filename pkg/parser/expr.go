@@ -1306,7 +1306,7 @@ func (p *exprParser) parsePostfixAccess(expr Expr) (Expr, error) {
 // --- Helper Functions ---
 
 func (p *exprParser) skipWhitespace() {
-	for p.pos < len(p.input) && (p.input[p.pos] == ' ' || p.input[p.pos] == '\t') {
+	for p.pos < len(p.input) && (p.input[p.pos] == ' ' || p.input[p.pos] == '\t' || p.input[p.pos] == '\n' || p.input[p.pos] == '\r') {
 		p.pos++
 	}
 }

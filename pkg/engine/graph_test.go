@@ -35,18 +35,20 @@ func TestMakeGraphToTableNodesDerived(t *testing.T) {
 }
 
 func TestMakeGraphWithNodeTable(t *testing.T) {
-	// Node table attaches properties; edge-only node c gets null Kind;
-	// isolated node z (no edges) joins the node set.
+	// Node table attaches properties; isolated node z (no edges) joins
+	// the node set; edge-only node c gets null Kind. Node-table rows
+	// come first, then edge-only nodes (the ADX graph-to-table order).
 	tbl := queryResult(t, graphEdges+graphNodes+
 		`E | make-graph Src --> Dst with N on Id | graph-to-table nodes`)
 	expectRows(t, tbl, 4)
 	expectColNames(t, tbl, "Id", "Kind")
 	expectCell(t, tbl, 0, 1, "External") // a
 	expectCell(t, tbl, 1, 1, "Server")   // b
-	if v := cellVal(t, tbl, 2, 1); v != nil {
+	expectCell(t, tbl, 2, 0, "z")
+	expectCell(t, tbl, 3, 0, "c")
+	if v := cellVal(t, tbl, 3, 1); v != nil {
 		t.Fatalf("edge-only node c: expected null Kind, got %v", v)
 	}
-	expectCell(t, tbl, 3, 0, "z")
 }
 
 func TestMakeGraphNullEndpointsDropped(t *testing.T) {

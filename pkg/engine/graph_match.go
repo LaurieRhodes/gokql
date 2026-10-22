@@ -469,6 +469,10 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 	}
 	preds := plan.buildMatchPredicates(op.Where)
 
+	if op.Shortest != "" {
+		return e.applyGraphShortestPaths(g, op, plan, preds)
+	}
+
 	for i, el := range plan.elems {
 		if !el.spec.Distinct {
 			continue
@@ -481,10 +485,30 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 		return e.applyGraphMatchDistinctBFS(g, op, plan, preds)
 	}
 
-	uniqueEdges := op.Cycles != "all"
-	noCycles := op.Cycles == "none"
-
 	matches := types.NewTable("", plan.schema)
+	err = e.walkGraphMatch(g, plan, preds, op.Cycles, func(row types.Row, _ []string, _ int) error {
+		if len(matches.Rows) >= maxGraphMatches {
+			return fmt.Errorf("graph-match: result exceeds %d rows; narrow the pattern or where clause", maxGraphMatches)
+		}
+		out := make(types.Row, len(row))
+		copy(out, row)
+		matches.AddRow(out)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return e.applyProject(matches, op.Project)
+}
+
+// walkGraphMatch enumerates the bindings of plan that satisfy preds,
+// calling emit with the (reused) row buffer, the node keys bound to
+// each pattern variable and the match's total hop count.
+func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, cycles string,
+	emitFn func(row types.Row, bindKey []string, hops int) error) error {
+	uniqueEdges := cycles != "all"
+	noCycles := cycles == "none"
+
 	row := make(types.Row, len(plan.schema.Columns)) // reused buffer
 	usedEdges := make([]bool, len(g.Edges))
 	bindKey := make([]string, len(plan.vars))
@@ -535,16 +559,6 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 		return true, nil
 	}
 
-	emit := func() error {
-		if len(matches.Rows) >= maxGraphMatches {
-			return fmt.Errorf("graph-match: result exceeds %d rows; narrow the pattern or where clause", maxGraphMatches)
-		}
-		out := make(types.Row, len(row))
-		copy(out, row)
-		matches.AddRow(out)
-		return nil
-	}
-
 	// Reverse-reachability pruning (graph_reach.go): only for a single
 	// edge between two distinct variables whose end is pinned to a
 	// literal that is verified to be a REAL node — a false match would
@@ -565,7 +579,7 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 	var walk func(stepIdx int) error
 	walk = func(stepIdx int) error {
 		if stepIdx == len(plan.steps) {
-			return emit()
+			return emitFn(row, bindKey, len(collected))
 		}
 		st := plan.steps[stepIdx]
 		spec := plan.elems[st.elem].spec
@@ -660,7 +674,7 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 		plan.writeNode(g, row, 0, id)
 		keep, err := checkPreds(0)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !keep {
 			continue
@@ -673,10 +687,79 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 			visits[key]--
 		}
 		if err != nil {
-			return nil, err
+			return err
+		}
+	}
+	return nil
+}
+
+// applyGraphShortestPaths is graph-shortest-paths: per (first node,
+// last node) pair, the matches with the fewest hops — one of them for
+// output=any, every one for output=all. Enumeration does not revisit
+// nodes (a shortest path never needs to), which bounds the search.
+func (e *Engine) applyGraphShortestPaths(g *Graph, op *parser.GraphMatchOp, plan *gmPlan, preds []matchPredicate) (*types.Table, error) {
+	if len(op.Sequences) != 1 {
+		return nil, fmt.Errorf("graph-shortest-paths: the pattern can't contain multiple sequences")
+	}
+	hasVar := false
+	for _, el := range plan.elems {
+		hasVar = hasVar || el.spec.VarLength
+	}
+	if !hasVar {
+		return nil, fmt.Errorf("graph-shortest-paths: the pattern must include a variable length edge")
+	}
+	seq := op.Sequences[0]
+	first := 0
+	last := len(plan.vars) - 1
+	if n := seq.Nodes[len(seq.Nodes)-1]; n != "" {
+		for i, v := range plan.vars {
+			if v.name == n {
+				last = i
+			}
 		}
 	}
 
+	type best struct {
+		hops int
+		rows []types.Row
+	}
+	byPair := make(map[string]*best)
+	var order []string
+	all := op.Shortest == "all"
+	total := 0
+	err := e.walkGraphMatch(g, plan, preds, "none", func(row types.Row, bindKey []string, hops int) error {
+		pair := bindKey[first] + "\x00" + bindKey[last]
+		b := byPair[pair]
+		if b == nil {
+			b = &best{hops: hops}
+			byPair[pair] = b
+			order = append(order, pair)
+		}
+		switch {
+		case hops > b.hops, hops == b.hops && !all && len(b.rows) > 0:
+			return nil
+		case hops < b.hops:
+			total -= len(b.rows)
+			b.hops, b.rows = hops, b.rows[:0]
+		}
+		if total >= maxGraphMatches {
+			return fmt.Errorf("graph-shortest-paths: result exceeds %d rows; narrow the pattern or where clause", maxGraphMatches)
+		}
+		out := make(types.Row, len(row))
+		copy(out, row)
+		b.rows = append(b.rows, out)
+		total++
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	matches := types.NewTable("", plan.schema)
+	for _, pair := range order {
+		for _, r := range byPair[pair].rows {
+			matches.AddRow(r)
+		}
+	}
 	return e.applyProject(matches, op.Project)
 }
 
