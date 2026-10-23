@@ -3,9 +3,10 @@ package engine
 // agg_buildschema.go — buildschema(DynamicExpr): the minimal schema
 // admitting every value. A scalar is its type name (long, double,
 // string, bool); an object maps each key seen to its schema; an array
-// is {"`indexer`": item schema}. A place that held several kinds is
-// an array of them in order of first appearance, and keys keep their
-// order of first appearance — both as the reference example shows.
+// is {"`indexer`": item schema}. A place that held several kinds is an
+// array: its object and array shapes merged into one object first,
+// then the scalar types in order of first appearance (the emulator).
+// Keys keep their order of first appearance.
 // Nulls add nothing.
 
 import (
@@ -94,40 +95,62 @@ func (n *schemaNode) addJSON(dec *json.Decoder) error {
 }
 
 func (n *schemaNode) render(b *bytes.Buffer) {
-	if len(n.kinds) == 0 {
+	// As the emulator renders a place: its object and array shapes
+	// merged into one object ("`indexer`" holding the array items),
+	// first, then the scalar types in order of first appearance.
+	var complexKinds, prims []string
+	for _, k := range n.kinds {
+		if k == "obj" || k == "arr" {
+			complexKinds = append(complexKinds, k)
+		} else {
+			prims = append(prims, k)
+		}
+	}
+	entries := len(prims)
+	if len(complexKinds) > 0 {
+		entries++
+	}
+	if entries == 0 {
 		b.WriteString("null")
 		return
 	}
-	if len(n.kinds) > 1 {
+	if entries > 1 {
 		b.WriteByte('[')
 	}
-	for i, k := range n.kinds {
-		if i > 0 {
+	if len(complexKinds) > 0 {
+		b.WriteByte('{')
+		first := true
+		for _, k := range complexKinds {
+			if k == "obj" {
+				for _, key := range n.objKeys {
+					if !first {
+						b.WriteByte(',')
+					}
+					first = false
+					kb, _ := json.Marshal(key)
+					b.Write(kb)
+					b.WriteByte(':')
+					n.obj[key].render(b)
+				}
+				continue
+			}
+			if !first {
+				b.WriteByte(',')
+			}
+			first = false
+			b.WriteString("\"`indexer`\":")
+			n.arr.render(b)
+		}
+		b.WriteByte('}')
+	}
+	for i, k := range prims {
+		if i > 0 || len(complexKinds) > 0 {
 			b.WriteByte(',')
 		}
-		switch {
-		case strings.HasPrefix(k, "t:"):
-			kb, _ := json.Marshal(k[2:])
-			b.Write(kb)
-		case k == "obj":
-			b.WriteByte('{')
-			for j, key := range n.objKeys {
-				if j > 0 {
-					b.WriteByte(',')
-				}
-				kb, _ := json.Marshal(key)
-				b.Write(kb)
-				b.WriteByte(':')
-				n.obj[key].render(b)
-			}
-			b.WriteByte('}')
-		case k == "arr":
-			b.WriteString("{\"`indexer`\":")
-			n.arr.render(b)
-			b.WriteByte('}')
-		}
+		kb, _ := json.Marshal(k[2:])
+		b.Write(kb)
 	}
-	if len(n.kinds) > 1 {
+	if entries > 1 {
 		b.WriteByte(']')
 	}
 }

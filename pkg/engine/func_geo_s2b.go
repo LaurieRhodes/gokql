@@ -176,6 +176,9 @@ func densifyGeoJSON(v types.Value, tol float64) (string, bool) {
 		}
 		parts := make([]string, len(c))
 		for i, r := range c {
+			if typ == "Polygon" && i == 0 {
+				r = ccwShell(r)
+			}
 			parts[i] = rawCoordsJSON(densifyRing(r, tol))
 		}
 		coords = "[" + strings.Join(parts, ",") + "]"
@@ -188,6 +191,9 @@ func densifyGeoJSON(v types.Value, tol float64) (string, bool) {
 		for i, p := range c {
 			parts := make([]string, len(p))
 			for j, r := range p {
+				if j == 0 {
+					r = ccwShell(r)
+				}
 				parts[j] = rawCoordsJSON(densifyRing(r, tol))
 			}
 			polys[i] = "[" + strings.Join(parts, ",") + "]"
@@ -396,4 +402,29 @@ func (w *wktParser) geometry() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ccwShell returns a closed polygon shell counter-clockwise, as ADX
+// returns it (it holds polygons as S2 loops): a clockwise ring's
+// vertices are reversed.
+func ccwShell(r [][]float64) [][]float64 {
+	if len(r) < 4 {
+		return r
+	}
+	area := 0.0
+	for i := 0; i+1 < len(r); i++ {
+		if len(r[i]) < 2 || len(r[i+1]) < 2 {
+			return r
+		}
+		area += r[i][0]*r[i+1][1] - r[i+1][0]*r[i][1]
+	}
+	if area >= 0 {
+		return r
+	}
+	open := r[:len(r)-1]
+	out := make([][]float64, 0, len(r))
+	for i := len(open) - 1; i >= 0; i-- {
+		out = append(out, open[i])
+	}
+	return append(out, out[0])
 }

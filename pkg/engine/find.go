@@ -12,7 +12,6 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -91,12 +90,18 @@ func (e *Engine) applyFind(op *parser.FindOp) (*types.Table, error) {
 
 	var matched []findMatchedRow
 
-	for _, tableName := range tableNames {
-		tableDef := e.Catalog.GetTable(tableName)
-		if tableDef == nil {
+	for ti, tableName := range tableNames {
+		// A catalog table is reported by its name; a let-bound table
+		// as find_arg<position> (the emulator).
+		var schema types.Schema
+		label := tableName
+		if tableDef := e.Catalog.GetTable(tableName); tableDef != nil {
+			schema = tableDef.Schema
+		} else if t, ok := e.letContext.LookupTable(tableName); ok {
+			schema, label = t.Schema, fmt.Sprintf("find_arg%d", ti)
+		} else {
 			return nil, fmt.Errorf("find: table %q not found", tableName)
 		}
-		schema := tableDef.Schema
 
 		if predicateCols != nil {
 			// "Source tables that don't contain any column used by the
@@ -184,7 +189,7 @@ func (e *Engine) applyFind(op *parser.FindOp) (*types.Table, error) {
 					isMatch = b
 				}
 				if isMatch {
-					matched = append(matched, findMatchedRow{tableName: tableName, schema: &data.Schema, row: row})
+					matched = append(matched, findMatchedRow{tableName: label, schema: &data.Schema, row: row})
 				}
 			}
 		}
@@ -240,13 +245,17 @@ func buildFindProjectSmart(sourceCol string, matched []findMatchedRow) (*types.T
 	// real ADX's own wording is about tables that survived filtering,
 	// which in practice means tables that contributed at least one row).
 	tableSchemas := map[string]*types.Schema{}
+	var order []*types.Schema // tables in order of first match
 	for _, m := range matched {
+		if _, ok := tableSchemas[m.tableName]; !ok {
+			order = append(order, m.schema)
+		}
 		tableSchemas[m.tableName] = m.schema
 	}
 
 	commonCols := map[string]types.KQLType{}
 	first := true
-	for _, schema := range tableSchemas {
+	for _, schema := range order {
 		colTypes := map[string]types.KQLType{}
 		for _, c := range schema.Columns {
 			colTypes[c.Name] = c.Type
@@ -265,17 +274,30 @@ func buildFindProjectSmart(sourceCol string, matched []findMatchedRow) (*types.T
 		}
 	}
 
-	names := make([]string, 0, len(commonCols))
-	for n := range commonCols {
-		names = append(names, n)
+	// Common columns in the first table's order; pack_ only when some
+	// table has columns beyond them (the emulator).
+	var names []string
+	if len(order) > 0 {
+		for _, c := range order[0].Columns {
+			if _, ok := commonCols[c.Name]; ok {
+				names = append(names, c.Name)
+			}
+		}
 	}
-	sort.Strings(names)
+	needPack := false
+	for _, sc := range order {
+		if len(sc.Columns) > len(names) {
+			needPack = true
+		}
+	}
 
 	outCols := []types.Column{{Name: sourceCol, Type: types.TypeString}}
 	for _, n := range names {
 		outCols = append(outCols, types.Column{Name: n, Type: commonCols[n]})
 	}
-	outCols = append(outCols, types.Column{Name: "pack_", Type: types.TypeDynamic})
+	if needPack || len(order) == 0 {
+		outCols = append(outCols, types.Column{Name: "pack_", Type: types.TypeDynamic})
+	}
 	outSchema := types.Schema{Columns: outCols}
 	result := types.NewTable("", outSchema)
 
@@ -288,10 +310,12 @@ func buildFindProjectSmart(sourceCol string, matched []findMatchedRow) (*types.T
 				newRow[idx] = m.row[i]
 				continue
 			}
-			packed[c.Name] = jsonToKQLValue(m.row[i])
+			packed[c.Name] = valueForJSONArray(m.row[i], c.Type)
 		}
-		b, _ := json.Marshal(packed)
-		newRow[len(outCols)-1] = string(b)
+		if needPack {
+			b, _ := json.Marshal(packed)
+			newRow[len(outCols)-1] = string(b)
+		}
 		result.AddRow(newRow)
 	}
 	return result, nil
@@ -337,7 +361,7 @@ func buildFindProjectExplicit(sourceCol string, items []parser.FindProjectItem, 
 		if packAll {
 			packed := map[string]interface{}{}
 			for i, c := range m.schema.Columns {
-				packed[c.Name] = jsonToKQLValue(m.row[i])
+				packed[c.Name] = valueForJSONArray(m.row[i], c.Type)
 			}
 			b, _ := json.Marshal(packed)
 			newRow[len(outCols)-1] = string(b)

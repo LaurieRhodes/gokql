@@ -95,6 +95,14 @@ func TestSweep4EmulatorValues(t *testing.T) {
 		{`print v = series_iir(dynamic([1,2,3,4,5]), dynamic([0.5, 0.5]), dynamic([2]))`, "[0.25,0.75,1.25,1.75,2.25]"},
 		{`print v = isnull(series_iir(dynamic([1,"a"]), dynamic([1]), dynamic([1])))`, "true"},
 		{"range x from 1 to 5 step 1 | evaluate preview(2)", "1"},
+		// find over let tables; buildschema; beta_cdf edges; empty compress; densify orientation
+		{`let A = datatable(b:string, a:long, c:string)["x",1,"p"]; let B = datatable(a:long, d:string, b:string)[2,"q","x"]; find in (A, B) where b == "x" | where source_ == "find_arg0" | project v = pack_`, `{"c":"p"}`},
+		{`let A = datatable(b:string, a:long, c:string)["x",1,"p"]; find in (A) where b == "x" | project v = strcat(source_, c)`, "find_arg0p"},
+		{`datatable(v:dynamic)[dynamic({"a":1}), dynamic({"a":{"q":1}}), dynamic({"a":[1]})] | summarize v = buildschema(v)`, "{\"a\":[{\"q\":\"long\",\"`indexer`\":\"long\"},\"long\"]}"},
+		{`print v = beta_cdf(0.1, -1.0, 20.0)`, "1"},
+		{`print v = beta_cdf(0.1, 10.0, -1.0)`, "0"},
+		{`print v = zlib_compress_to_base64_string("")`, ""},
+		{`print v = tostring(geo_polygon_densify(dynamic({"type":"Polygon","coordinates":[[[-73.958244,40.800719],[-73.949146,40.79695],[-73.973093,40.764226],[-73.982062,40.768159],[-73.958244,40.800719]]]}))) | project v = substring(v, 0, 52)`, `{"type":"Polygon","coordinates":[[[-73.982062,40.768`},
 		// project-away wildcards
 		{`print Ignore0=1, a=2, Ignore1=3 | project-away Ignore* | project v = a`, "2"},
 	}

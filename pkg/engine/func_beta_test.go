@@ -29,7 +29,7 @@ func TestBetaWelchReference(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ expr, want string }{
-		{`beta_cdf(1.5, 10.0, 20.0)`, "NaN"}, {`beta_cdf(-10.0, 10.0, 20.0)`, "NaN"}, {`beta_cdf(0.1, -1.0, 20.0)`, "NaN"},
+		{`beta_cdf(1.5, 10.0, 20.0)`, "NaN"}, {`beta_cdf(-10.0, 10.0, 20.0)`, "NaN"}, {`beta_cdf(0.1, -1.0, 20.0)`, "1"}, // the emulator; the docs say NaN
 		{`beta_pdf(1.5, 10.0, 20.0)`, "NaN"}, {`beta_pdf(0.1, -1.0, 20.0)`, "NaN"},
 		{`beta_inv(1.5, 10.0, 20.0)`, ""}, {`beta_inv(0.1, -1.0, 20.0)`, "NaN"}, {`beta_cdf(real(null), 1, 2)`, ""},
 	} {

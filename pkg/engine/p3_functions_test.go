@@ -49,7 +49,8 @@ func TestSeriesStatsReference(t *testing.T) {
 func TestBuildSchemaReference(t *testing.T) {
 	r := queryResult(t, `datatable(value: dynamic) [dynamic({"x":1, "y":3.5}), dynamic({"x":"somevalue", "z":[1, 2, 3]}),
 	dynamic({"y":{"w":"zzz"}, "t":["aa", "bb"], "z":["foo"]})] | summarize buildschema(value)`)
-	want := "{\"x\":[\"long\",\"string\"],\"y\":[\"double\",{\"w\":\"string\"}],\"z\":{\"`indexer`\":[\"long\",\"string\"]},\"t\":{\"`indexer`\":\"string\"}}"
+	// the emulator: object shapes come before scalar types
+	want := "{\"x\":[\"long\",\"string\"],\"y\":[{\"w\":\"string\"},\"double\"],\"z\":{\"`indexer`\":[\"long\",\"string\"]},\"t\":{\"`indexer`\":\"string\"}}"
 	if r.Schema.Columns[0].Name != "schema_value" || formatCell(r, 0, 0) != want {
 		t.Errorf("%s = %s", r.Schema.Columns[0].Name, formatCell(r, 0, 0))
 	}

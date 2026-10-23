@@ -408,6 +408,9 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		if val == nil {
 			return nil, true, nil
 		}
+		if fmt.Sprintf("%v", val) == "" {
+			return "", true, nil // the emulator: an empty input gives ""
+		}
 		var buf bytes.Buffer
 		gw := gzip.NewWriter(&buf)
 		if _, werr := gw.Write([]byte(fmt.Sprintf("%v", val))); werr != nil {
@@ -474,6 +477,9 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		}
 		if val == nil {
 			return nil, true, nil
+		}
+		if fmt.Sprintf("%v", val) == "" {
+			return "", true, nil // the emulator: an empty input gives ""
 		}
 		var buf bytes.Buffer
 		zw := zlib.NewWriter(&buf)

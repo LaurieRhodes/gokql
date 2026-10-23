@@ -55,8 +55,20 @@ func evalBetaFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row ty
 	switch fc.Name {
 	case "beta_cdf":
 		x, al, be := a[0], a[1], a[2]
-		if x < 0 || x > 1 || al <= 0 || al > 10000 || be <= 0 || be > 10000 {
+		if x < 0 || x > 1 || al > 10000 || be > 10000 {
 			return nan, true, nil
+		}
+		// The emulator, inside (0, 1): alpha <= 0 gives 1, beta <= 0
+		// gives 0, both NaN; at x = 0 or 1 a non-positive parameter is NaN.
+		if al <= 0 || be <= 0 {
+			switch {
+			case x == 0 || x == 1 || (al <= 0 && be <= 0):
+				return nan, true, nil
+			case al <= 0:
+				return 1.0, true, nil
+			default:
+				return 0.0, true, nil
+			}
 		}
 		return regIncBeta(x, al, be), true, nil
 	case "beta_pdf":
