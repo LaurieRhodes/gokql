@@ -105,26 +105,29 @@ and ASIM parsers, which is this engine's main query population.
 
 ## P2 — real but less frequent
 
-- `evaluate diffpatterns`: Seed-Expand contrast (Ofer et al. 2017,
-  section 6); output on synthetic data is closed patterns with
-  PercentA/B rounded to two decimals, nothing under ~a few hundred
-  rows. Not yet probed far enough to implement.
-- `autocluster` on large real inputs: the implementation reproduces the
-  emulator on synthetic data and two of the five StormEvents probes;
-  ADX applies further selection on real data (more nested segments kept
-  next to a near-constant column, fewer small ones at low SizeWeight)
-  that is not pinned.
-- `funnel_sequence` prev/next: ADX sometimes drops a prev or next that
-  lies inside the window when the match spans more than one window
-  (StormEvents reference: 188 vs 189 for the empty prev). Matches and
-  counts otherwise agree.
-- `series_periods_detect` / `series_periods_validate`, and with them
-  `series_decompose*` with seasonality -1 (the default). Probed:
-  validate scores 0 unless n/p is within about 1.5 frequency bins of the
-  spectral peak; inside, the score depends on floor(p) and equals
-  (1 + r)/2 with r the circular autocorrelation exactly when n is a
-  multiple of the period; otherwise it is lower by an unpinned
-  normalisation (pure sine, n = 105, period 10: 0.9 for every phase).
+Since 2026-10-23 the aim for the items ADX does not specify is a
+usable tool, not bit-exact agreement. Implemented that way (each file's
+header says what was pinned and what is an approximation):
+
+- `series_periods_detect`, `series_periods_validate`, and seasonality -1
+  of `series_decompose*` and `series_seasonal`: spectral-peak gate plus
+  circular-autocorrelation score. The top period agrees with ADX on the
+  probes (the reference's 14; 168 and 24 on weekly hourly data; the
+  forecast with test points detects ADX's 144); scores differ by a few
+  hundredths; with mixed tones gokql may list a second real period
+  ADX omits.
+- `diffpatterns`: closed-itemset contrast, ranked by |PercentA -
+  PercentB| with a redundancy filter. On the StormEvents reference
+  every ADX segment appears with the same counts, plus three further
+  genuine differences.
+- `reduce`: Drain-style template clustering with ADX's output shape;
+  the reference examples give ADX's patterns. Suited to log/alert lines;
+  free text with varying word counts mostly lands in "others".
+- `autocluster` on large real inputs, `funnel_sequence` prev/next edge
+  cases: approximations, as noted in their files.
+
+Not done:
+
 - GQL and openCypher graph query languages (MATCH ... RETURN ...
   NEXT, with a `#crp query_graph_reference` client property), each
   with its own reference section in the docs. The `python` plugin
@@ -151,12 +154,8 @@ with their own examples.
 
 ## P3 — carried over
 
-`reduce`: probed on the emulator; it clusters on hashed terms and
-wildcards some terms constant across a group ("user * logged * *
-*.0.0.*" for three "user X logged in from 10.0.0.N" lines), so it is
-not practical to pin from outputs. `hash_combine` with a null argument
-(null here; ADX returns a value whose null encoding is not pinned);
-`hash()` of decimal.
+`hash_combine` with a null argument (null here; ADX returns a value
+whose null encoding is not pinned); `hash()` of decimal.
 
 ## Reference engine: the Kusto emulator
 

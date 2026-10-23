@@ -1139,6 +1139,8 @@ func (e *Engine) applyOperator(input *types.Table, op parser.Operator) (*types.T
 		return e.applyTake(input, o)
 	case *parser.SampleOp:
 		return e.applySample(input, o)
+	case *parser.ReduceOp:
+		return e.applyReduce(input, o)
 	case *parser.CountOp:
 		return e.applyCount(input)
 	case *parser.ConsumeOp:

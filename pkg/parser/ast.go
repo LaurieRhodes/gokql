@@ -499,6 +499,17 @@ type SampleOp struct {
 
 func (*SampleOp) operatorNode() {}
 
+// ReduceOp: | reduce [kind=source] by Expr [with [threshold=T] [, characters=C]]
+type ReduceOp struct {
+	Source     bool
+	By         Expr
+	Threshold  float64 // default 0.1
+	Characters string  // separator characters; "" means the default (every non-alphanumeric)
+	HasChars   bool
+}
+
+func (*ReduceOp) operatorNode() {}
+
 // CountOp: | count
 type CountOp struct{}
 

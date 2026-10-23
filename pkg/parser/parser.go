@@ -2008,6 +2008,11 @@ func parseOperator(seg string) (Operator, error) {
 		return &TakeOp{Count: n}, nil
 	}
 
+	// | reduce [kind=source] by Expr [with [threshold=T] [, characters="..."]]
+	if strings.HasPrefix(lower, "reduce ") {
+		return parseReduce(strings.TrimSpace(seg[len("reduce "):]))
+	}
+
 	// | sample N
 	if strings.HasPrefix(lower, "sample ") {
 		numStr := strings.TrimSpace(seg[len("sample "):])
@@ -4370,4 +4375,85 @@ func renameColumnRefs(e Expr, m map[string]string) Expr {
 		return &c
 	}
 	return e
+}
+
+// parseReduce parses the text after `reduce `.
+func parseReduce(rest string) (Operator, error) {
+	op := &ReduceOp{Threshold: 0.1}
+	if l := strings.ToLower(rest); strings.HasPrefix(l, "kind") {
+		eq := strings.Index(rest, "=")
+		if eq < 0 {
+			return nil, fmt.Errorf("reduce: expected kind=source")
+		}
+		after := strings.TrimSpace(rest[eq+1:])
+		f := strings.Fields(after)
+		if len(f) == 0 || strings.ToLower(f[0]) != "source" {
+			return nil, fmt.Errorf("reduce: the only kind is source")
+		}
+		op.Source = true
+		rest = strings.TrimSpace(after[len(f[0]):])
+	}
+	if !strings.HasPrefix(strings.ToLower(rest), "by ") {
+		return nil, fmt.Errorf("reduce: expected 'by Expr'")
+	}
+	rest = strings.TrimSpace(rest[3:])
+	exprText, with := rest, ""
+	if i := findKeyword(rest, "with"); i >= 0 {
+		exprText, with = strings.TrimSpace(rest[:i]), strings.TrimSpace(rest[i+len("with"):])
+	}
+	expr, err := ParseExpr(exprText)
+	if err != nil {
+		return nil, fmt.Errorf("reduce: %w", err)
+	}
+	op.By = expr
+	for _, part := range splitTopLevelCommas(with) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		eq := strings.Index(part, "=")
+		if eq < 0 {
+			return nil, fmt.Errorf("reduce: expected name=value in with(...), got %q", part)
+		}
+		name, val := strings.ToLower(strings.TrimSpace(part[:eq])), strings.TrimSpace(part[eq+1:])
+		v, err := ParseExpr(val)
+		if err != nil {
+			return nil, fmt.Errorf("reduce: %s: %w", name, err)
+		}
+		lit, ok := v.(*Literal)
+		if !ok {
+			return nil, fmt.Errorf("reduce: %s must be a constant", name)
+		}
+		switch name {
+		case "threshold":
+			f, ok := toFloatLiteral(lit.Value)
+			if !ok || f < 0 || f > 1 {
+				return nil, fmt.Errorf("reduce: threshold must be between 0 and 1")
+			}
+			op.Threshold = f
+		case "characters":
+			cs, ok := lit.Value.(string)
+			if !ok {
+				return nil, fmt.Errorf("reduce: characters must be a string")
+			}
+			op.Characters, op.HasChars = cs, true
+		default:
+			return nil, fmt.Errorf("reduce: unknown option %q (threshold, characters)", name)
+		}
+	}
+	return op, nil
+}
+
+func toFloatLiteral(v interface{}) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int64:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	}
+	return 0, false
 }
