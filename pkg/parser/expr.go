@@ -664,6 +664,16 @@ func (p *exprParser) parsePrimary() (Expr, error) {
 		return p.parseIdentOrFunc()
 	}
 
+	// $table (search, union withsource) and other $-names are columns.
+	if ch == '$' && p.pos+1 < len(p.input) && isIdentStart(p.input[p.pos+1]) {
+		start := p.pos
+		p.pos++
+		for p.pos < len(p.input) && isIdentChar(p.input[p.pos]) {
+			p.pos++
+		}
+		return p.parsePostfixAccess(&ColumnRef{Name: p.input[start:p.pos]})
+	}
+
 	// Quoted identifier: ['name'] or ["name"], for names that are not
 	// valid bare identifiers (spaces, keywords).
 	if ch == '[' {

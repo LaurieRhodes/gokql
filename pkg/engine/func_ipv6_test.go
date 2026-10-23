@@ -14,8 +14,8 @@ import "testing"
 // TestParseIPv6MaskWorkedExample guards all 7 rows of real ADX's own
 // parse_ipv6_mask worked-example table exactly, including the two
 // non-obvious rules: the +96 IPv4-space offset for an embedded prefix
-// on a dot-bearing address, and the "::a.b.c.d" auto-canonicalization
-// to the IPv4-mapped (ffff-inserted) form.
+// on a dot-bearing address; "::a.b.c.d" prints in the IPv4-compatible
+// form (the emulator; the docs page's table shows the mapped form).
 func TestParseIPv6MaskWorkedExample(t *testing.T) {
 	result := queryResult(t, `datatable(ip_string:string, netmask:long)
 		[
@@ -34,8 +34,8 @@ func TestParseIPv6MaskWorkedExample(t *testing.T) {
 		"0000:0000:0000:0000:0000:ffff:ffff:ffff",
 		"fe80:0000:0000:0000:085d:e82c:9446:7994",
 		"fe80:0000:0000:0000:085d:e82c:9446:7900",
-		"0000:0000:0000:0000:0000:ffff:c0a8:ffff",
-		"0000:0000:0000:0000:0000:ffff:c0a8:ff00",
+		"0000:0000:0000:0000:0000:0000:c0a8:ffff", // the emulator; the docs page shows ffff
+		"0000:0000:0000:0000:0000:0000:c0a8:ff00",
 	}
 	if len(result.Rows) != len(want) {
 		t.Fatalf("expected %d rows, got %d", len(want), len(result.Rows))

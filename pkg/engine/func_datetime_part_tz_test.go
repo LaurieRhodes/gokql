@@ -108,15 +108,17 @@ func TestDatetimeLocalUtcRoundTripDstAmbiguity(t *testing.T) {
 	if len(result.Rows) != 4 {
 		t.Fatalf("expected 4 rows, got %d", len(result.Rows))
 	}
+	// The emulator's values: 02:00 (in the gap) takes the summer
+	// offset, 00:00Z, where the docs page's table shows 01:00Z.
 	wantUTC := []string{
 		"2022-03-27T00:00:00Z",
-		"2022-03-27T01:00:00Z",
+		"2022-03-27T00:00:00Z",
 		"2022-03-27T01:00:00Z",
 		"2022-03-27T02:00:00Z",
 	}
 	wantBack := []string{
 		"2022-03-27T01:00:00Z",
-		"2022-03-27T03:00:00Z",
+		"2022-03-27T01:00:00Z",
 		"2022-03-27T03:00:00Z",
 		"2022-03-27T04:00:00Z",
 	}

@@ -2089,6 +2089,7 @@ func applyParseCore(input *types.Table, column, kind, flags string, patterns []p
 		outRow := make(types.Row, len(outCols))
 		copy(outRow, row)
 		fieldIdx := 0
+		failed := false
 		for i, val := range extracted {
 			if i < len(newCols) {
 				var outVal types.Value
@@ -2096,9 +2097,22 @@ func applyParseCore(input *types.Table, column, kind, flags string, patterns []p
 					outVal = val
 				} else if converted, cerr := types.ParseValue(val, colTypes[i]); cerr == nil {
 					outVal = converted
-				} // else outVal stays nil: failed conversion -> null
+				} else {
+					failed = true // relaxed: this column null
+				}
 				outRow[len(input.Schema.Columns)+fieldIdx] = outVal
 				fieldIdx++
+			}
+		}
+		if failed && !strings.EqualFold(kind, "relaxed") {
+			// Outside relaxed mode a failed conversion fails the
+			// whole match (the emulator): every new column null, or
+			// the row dropped by parse-where.
+			if dropUnmatched {
+				continue
+			}
+			for i := len(input.Schema.Columns); i < len(outRow); i++ {
+				outRow[i] = nil
 			}
 		}
 		output.AddRow(outRow)

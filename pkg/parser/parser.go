@@ -229,6 +229,77 @@ func stripLineComments(s string) string {
 	return b.String()
 }
 
+// rewriteBackslashVerbatim rewrites each verbatim literal (@"...",
+// @'...', h@"...") in which a backslash touches a quote character, as
+// in @"C:\", into the equivalent escaped literal ("C:\\"). Many of the
+// statement and argument scanners judge a quote escaped by the
+// backslashes before it, which is wrong inside a verbatim literal;
+// only these literals can mislead them, so others keep their text.
+func rewriteBackslashVerbatim(s string) string {
+	if !strings.Contains(s, "@") || !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	changed := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch != '"' && ch != '\'' {
+			b.WriteByte(ch)
+			continue
+		}
+		quote := ch
+		verbatim := i > 0 && s[i-1] == '@'
+		// find the closing quote and the literal's content
+		j := i + 1
+		var content strings.Builder
+		for j < len(s) {
+			c := s[j]
+			if !verbatim && c == '\\' && j+1 < len(s) {
+				content.WriteByte(c)
+				content.WriteByte(s[j+1])
+				j += 2
+				continue
+			}
+			if c == quote {
+				if verbatim && j+1 < len(s) && s[j+1] == quote {
+					content.WriteByte(quote) // "" is one quote
+					j += 2
+					continue
+				}
+				break
+			}
+			content.WriteByte(c)
+			j++
+		}
+		text := content.String()
+		awkward := verbatim && (strings.Contains(text, "\\"+string(quote)) || strings.HasSuffix(text, "\\") ||
+			(strings.Contains(text, "\\") && strings.ContainsRune(text, rune(quote))))
+		if !awkward || j >= len(s) {
+			b.WriteString(s[i:min(j+1, len(s))])
+			i = j
+			continue
+		}
+		// drop the '@' already written, keep an h prefix
+		out := b.String()
+		b.Reset()
+		b.WriteString(out[:len(out)-1])
+		b.WriteByte(quote)
+		for k := 0; k < len(text); k++ {
+			if text[k] == '\\' || text[k] == quote {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(text[k])
+		}
+		b.WriteByte(quote)
+		changed = true
+		i = j
+	}
+	if !changed {
+		return s
+	}
+	return b.String()
+}
+
 func Parse(input string) (Statement, error) {
 	input, err := translateQueryLanguage(input)
 	if err != nil {
@@ -243,6 +314,7 @@ func Parse(input string) (Statement, error) {
 	}
 	if !strings.HasPrefix(head, ".ingest inline") {
 		input = stripLineComments(input)
+		input = rewriteBackslashVerbatim(input)
 	}
 	input = strings.TrimSpace(input)
 	if input == "" {

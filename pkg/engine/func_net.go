@@ -1629,11 +1629,12 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if val == nil {
 			return nil, true, nil
 		}
-		b, effPrefix, ok := parseIPv6WithPrefix(fmt.Sprintf("%v", val))
+		text := fmt.Sprintf("%v", val)
+		b, effPrefix, ok := parseIPv6WithPrefix(text)
 		if !ok {
 			return "", true, nil
 		}
-		return canonicalIPv6String(maskIPv6(b, effPrefix)), true, nil
+		return canonicalIPv6String(compatForm(text, maskIPv6(b, effPrefix))), true, nil
 
 	case "parse_ipv6_mask":
 		// parse_ipv6_mask(ip, prefix) — added 2026-08-17. Converts an
@@ -1651,13 +1652,11 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		//      unprefixed '192.168.255.255' explicit-120 — both
 		//      effective at 120 = 96+24). A genuine IPv6-notation
 		//      address's own embedded prefix has NO offset.
-		//   2. The literal "::a.b.c.d" spelling (which Go's own
-		//      net.ParseIP renders with NO ffff inserted, the
-		//      deprecated all-zero "IPv4-compatible" form) is
-		//      auto-canonicalized by real ADX to the IPv4-MAPPED form
-		//      instead (ffff inserted) — confirmed directly:
-		//      '::192.168.255.255' with no masking still produces
-		//      "...:ffff:c0a8:ffff", not "...:0000:c0a8:ffff".
+		//   2. The literal "::a.b.c.d" spelling compares equal to the
+		//      IPv4-mapped form (parseIPv6WithPrefix maps it), but the
+		//      emulator prints it as written: '::192.168.255.255'
+		//      gives "...:0000:c0a8:ffff" (compatForm). The docs
+		//      page's table shows ffff; the emulator does not.
 		// See parseIPv6WithPrefix's own doc comment for the full
 		// verification detail and the one genuinely untested edge
 		// case (a non-zero-prefix IPv6 address embedding a dotted-
@@ -1677,7 +1676,8 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if ipVal == nil || prefixVal == nil {
 			return nil, true, nil
 		}
-		b, embeddedEff, ok := parseIPv6WithPrefix(fmt.Sprintf("%v", ipVal))
+		ipText := fmt.Sprintf("%v", ipVal)
+		b, embeddedEff, ok := parseIPv6WithPrefix(ipText)
 		if !ok {
 			return "", true, nil
 		}
@@ -1689,7 +1689,7 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if int(explicitP) < effective {
 			effective = int(explicitP)
 		}
-		return canonicalIPv6String(maskIPv6(b, effective)), true, nil
+		return canonicalIPv6String(compatForm(ipText, maskIPv6(b, effective))), true, nil
 
 	case "ipv6_compare":
 		// ipv6_compare(ip1, ip2 [, prefix]) — added 2026-08-17. Same
@@ -2621,21 +2621,30 @@ func parsePathBag(p string) string {
 		scheme = p[:i]
 		p = p[i+3:]
 	}
-	root := ""
+	// RootPath is the drive with its separator ("C:\\", "C:/"); as the
+	// emulator gives: C:\\file.txt → dir "C:", C:file.txt → dir "",
+	// C:\\ → dir "" and no file.
+	root, drive := "", ""
 	if len(p) >= 2 && p[1] == ':' && ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) {
-		root = p[:2]
+		drive, root = p[:2], p[:2]
+		if len(p) > 2 && (p[2] == '/' || p[2] == '\\') {
+			root = p[:3]
+		}
 	}
 	dirPath, file := "", p
-	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+	switch i := strings.LastIndexAny(p, `/\`); {
+	case p == root:
+		file = ""
+	case i >= 0:
 		dirPath, file = p[:i], p[i+1:]
-	} else if root != "" {
-		dirPath, file = root, p[2:]
+	case drive != "":
+		file = p[2:]
 	}
 	dirName := dirPath
 	if i := strings.LastIndexAny(dirPath, `/\`); i >= 0 {
 		dirName = dirPath[i+1:]
 	}
-	if dirName == root {
+	if dirName == drive {
 		dirName = ""
 	}
 	ads := ""
@@ -2678,4 +2687,19 @@ func hashInputText(eng *Engine, arg parser.Expr, schema *types.Schema, val types
 		}
 	}
 	return kqlToString(val, t)
+}
+
+// compatForm undoes, for display, parseIPv6WithPrefix's mapping of the
+// "::a.b.c.d" (IPv4-compatible) spelling to ::ffff:a.b.c.d: the
+// emulator compares the two as equal but prints the compatible form
+// ("...:0000:c0a8:ffff").
+func compatForm(text string, b [16]byte) [16]byte {
+	addr := text
+	if i := strings.LastIndex(addr, "/"); i >= 0 {
+		addr = addr[:i]
+	}
+	if strings.HasPrefix(addr, "::") && !strings.Contains(addr[2:], ":") && strings.Contains(addr[2:], ".") {
+		b[10], b[11] = 0, 0
+	}
+	return b
 }

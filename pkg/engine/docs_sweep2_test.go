@@ -33,7 +33,7 @@ func TestSweep2Scalars(t *testing.T) {
 		{"parse_url", `print parse_url("scheme://username:password@host:1234/this/is/a/path?k1=v1&k2=v2#fragment")`,
 			`{"Scheme":"scheme","Host":"host","Port":"1234","Path":"/this/is/a/path","Username":"username","Password":"password","Query Parameters":{"k1":"v1","k2":"v2"},"Fragment":"fragment"}`},
 		{"parse_path", `print parse_path("file://C:/temp/file.txt:some.exe")`,
-			`{"Scheme":"file","RootPath":"C:","DirectoryPath":"C:/temp","DirectoryName":"temp","Filename":"file.txt","Extension":"txt","AlternateDataStreamName":"some.exe"}`},
+			`{"Scheme":"file","RootPath":"C:/","DirectoryPath":"C:/temp","DirectoryName":"temp","Filename":"file.txt","Extension":"txt","AlternateDataStreamName":"some.exe"}`},
 		{"array_sort nulls last", `print array_sort_asc(dynamic([null,"blue","yellow","green",null]))`, `["blue","green","yellow",null,null]`},
 		{"array_sort desc nulls first", `print array_sort_desc(dynamic([null,"blue","yellow","green",null]), false)`, `[null,null,"yellow","green","blue"]`},
 		{"array_sort numeric", `print array_sort_asc(dynamic([10,2,1.5]))`, `[1.5,2,10]`},

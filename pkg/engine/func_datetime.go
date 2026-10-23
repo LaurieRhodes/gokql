@@ -339,10 +339,7 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		if lerr != nil {
 			return nil, true, nil
 		}
-		wall := time.Unix(0, types.ToInt64(fromVal)).UTC()
-		reinterpreted := time.Date(wall.Year(), wall.Month(), wall.Day(),
-			wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc)
-		return reinterpreted.UTC().UnixNano(), true, nil
+		return localToUTC(types.ToInt64(fromVal), loc), true, nil
 
 	case "datetime_list_timezones":
 		if len(fc.Args) != 0 {
@@ -883,4 +880,49 @@ func evalPeriodBoundary(eng *Engine, fc *parser.FuncCall, schema *types.Schema, 
 		n -= 100
 	}
 	return n, true, nil
+}
+
+// localToUTC reads nanos as a wall-clock time in loc and returns the
+// UTC instant. Around a transition it follows the emulator: a time in
+// a spring-forward gap takes the offset of larger magnitude (02:00 in
+// Brussels is 00:00Z; 02:30 in New York is 07:30Z); a time that occurs
+// twice takes the offset after the transition (standard time).
+func localToUTC(nanos int64, loc *time.Location) int64 {
+	wall := time.Unix(0, nanos).UTC()
+	t := time.Date(wall.Year(), wall.Month(), wall.Day(),
+		wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc)
+	_, offBefore := t.Add(-12 * time.Hour).Zone()
+	_, offAfter := t.Add(12 * time.Hour).Zone()
+	if offBefore == offAfter {
+		return t.UnixNano()
+	}
+	w := wall.UnixNano() // the wall reading as if UTC
+	cand := func(off int) (int64, bool) {
+		u := w - int64(off)*int64(time.Second)
+		lw := time.Unix(0, u).In(loc)
+		return u, lw.Year() == wall.Year() && lw.YearDay() == wall.YearDay() &&
+			lw.Hour() == wall.Hour() && lw.Minute() == wall.Minute() && lw.Second() == wall.Second()
+	}
+	ub, okb := cand(offBefore)
+	ua, oka := cand(offAfter)
+	switch {
+	case oka && okb: // occurs twice
+		return ua
+	case oka:
+		return ua
+	case okb:
+		return ub
+	}
+	// in a gap
+	if abs(offAfter) >= abs(offBefore) {
+		return ua
+	}
+	return ub
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

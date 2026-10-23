@@ -183,9 +183,10 @@ func (e *Engine) searchFilter(input *types.Table, pred parser.Expr) (*types.Tabl
 }
 
 // searchTables resolves in (...) (names and wildcards) or, without it,
-// every user table, sorted for a deterministic result.
+// every user table and view, sorted for a deterministic result.
 func (e *Engine) searchTables(patterns []string) ([]string, error) {
-	all := e.Catalog.ListTables()
+	// every table and every view lambda in scope, as union * sees them
+	all := e.unionWildcardNames("*")
 	sort.Strings(all)
 	if len(patterns) == 0 {
 		return all, nil
@@ -216,19 +217,37 @@ func (e *Engine) applySearch(op *parser.SearchOp) (*types.Table, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A table lacking a column the predicate names is not searched
+	// (nor does it contribute columns), as in ADX.
+	refs := map[string]bool{}
+	if op.Predicate != nil {
+		collectColumnRefs(op.Predicate, refs)
+	}
 	var legs []*types.Table
+	var kept []string
 	for _, name := range names {
 		data, err := e.executeQuery(&parser.Query{Source: name})
 		if err != nil {
 			return nil, fmt.Errorf("search: %s: %w", name, err)
+		}
+		lacks := false
+		for c := range refs {
+			if data.Schema.ColumnIndex(c) < 0 {
+				lacks = true
+				break
+			}
+		}
+		if lacks && len(names) > 1 {
+			continue
 		}
 		hits, err := e.searchFilter(data, op.Predicate)
 		if err != nil {
 			return nil, fmt.Errorf("search: %s: %w", name, err)
 		}
 		legs = append(legs, hits)
+		kept = append(kept, name)
 	}
-	return withSearchTable(legs, names), nil
+	return withSearchTable(legs, kept), nil
 }
 
 // applySearchPiped is the operator form: search the input.
