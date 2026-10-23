@@ -62,6 +62,19 @@ string or a dynamic array. Graph models also use their declared labels.
 - `ORDER BY ... [ASC|DESC] [NULLS FIRST|LAST]`, `OFFSET`/`SKIP`, `LIMIT`. These can follow RETURN or stand before it.
 - `NEXT`, and openCypher `WITH`. A node returned before NEXT can be matched again after it.
 - `UNION [ALL]`.
+- Comma-separated patterns that share no variable are matched separately and cross-joined.
+
+**openCypher expressions**
+- Pattern predicates: `WHERE (p)-[:R]->()`, `NOT (a)-->()<--(b)`, `exists((p)-->())`, `EXISTS { [MATCH] pattern [WHERE ...] }`.
+- Pattern counts and lists: `COUNT { pattern }`, `size((p)-->())`, and pattern comprehensions `[(p)-->(m) WHERE ... | m.x]`.
+  - The pattern is matched on its own and joined back by the node variables it shares with the query, so it may share nodes but not relationships.
+- List comprehensions `[x IN list WHERE ... | ...]`, and `any`/`all`/`none`/`single(x IN list WHERE ...)`; each runs as an `mv-apply` per row.
+- `reduce(acc = init, x IN list | acc + expr)`: sums and string concatenation only.
+- Map projection `n {.a, .*, key: expr, var}`.
+- Query parameters `$name`. They bind from the request's `Parameters` (REST `properties.Parameters`) and are null when absent.
+- `startNode(r)` / `endNode(r)` for a single-hop directed relationship of a MATCH.
+- A property a node or relationship does not have reads as null, so `coalesce(n.missing, ...)` and `n.missing IS NULL` work.
+- A returned node or relationship shows only its non-null, non-empty properties.
 
 **Expressions**
 - Operators:
@@ -78,9 +91,9 @@ string or a dynamic array. Graph models also use their declared labels.
   - `char_length`, `size`, `string_join`, `split`, `replace`, `reverse`;
   - `toString`, `toInteger`, `toFloat`, `toBoolean`.
 - Numeric: `abs`, `ceil`, `floor`, `round`, `sqrt`, `exp`, `ln`, `log10`, `sign`, the trigonometric functions, `mod`, `power`, `rand`, `e`.
-- Date and time: `zoned_datetime`, `duration({days: .., hours: ..})`, `duration_between`, `now`.
-- List and JSON: `head`, `last`, `tail`, `range`, `coalesce`, `parse_json_string`, `to_json_string`.
-- Aggregates: `count(*)`, `count([DISTINCT] x)`, `sum`, `avg`, `min`, `max`, `collect_list`/`collect` (DISTINCT gives a set), `stddev`/`stdev`, `stddev_pop`.
+- Date and time: `zoned_datetime`, `date`, `datetime`, `timestamp`, `duration({days: .., hours: ..})`, `duration_between`, `now`.
+- List and JSON: `head`, `last`, `tail`, `range`, `isEmpty`, `coalesce`, `exists(n.prop)`, `parse_json_string`, `to_json_string`.
+- Aggregates: `count(*)`, `count([DISTINCT] x)`, `sum`, `avg`, `min`, `max`, `collect_list`/`collect` (DISTINCT gives a set), `stddev`/`stdev`, `stddev_pop`, `percentileCont` (interpolated), `percentileDisc` (nearest rank).
 - Any other function name passes through to KQL unchanged, so KQL functions can be used directly.
 
 Values:
@@ -91,6 +104,8 @@ Values:
 
 - Undirected `~` edges.
 - Quantified parenthesized path patterns `((a)-[]->(b)){2}`.
-- List comprehensions.
-- `EXISTS`, query parameters (`$x`), and graph modification.
+- `CALL { ... }` subqueries, and EXISTS / COUNT subqueries with more than a pattern and WHERE.
+- Pattern or list expressions nested inside a list or pattern comprehension.
+- `reduce` other than `acc + expr`.
+- Graph modification (`CREATE`, `MERGE`, `SET`, `DELETE`); ADX graphs are read-only too.
 - `=`/`<>` between entities. Compare `element_id()` instead.

@@ -747,6 +747,9 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 	if err != nil {
 		return nil, err
 	}
+	if op.GQLLabels {
+		op = plan.nullMissingProps(op)
+	}
 	preds := plan.buildMatchPredicates(op.Where)
 
 	if op.Shortest != "" {
@@ -782,6 +785,51 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 		return nil, err
 	}
 	return e.applyProject(matches, plan.projectWithGraphNames(op.Project))
+}
+
+// nullMissingProps returns op with v.Prop replaced by null wherever the
+// pattern variable v has no column Prop: GQL and openCypher read a
+// missing property as null, where KQL reports an error.
+func (plan *gmPlan) nullMissingProps(op *parser.GraphMatchOp) *parser.GraphMatchOp {
+	have := map[string]bool{}
+	for _, c := range plan.schema.Columns {
+		have[c.Name] = true
+	}
+	fix := func(x parser.Expr) parser.Expr {
+		out, err := rewriteExpr(x, func(x parser.Expr) (parser.Expr, error) {
+			ax, ok := x.(*parser.AccessExpr)
+			if !ok || len(ax.Path) == 0 || ax.Path[0].Name == "" {
+				return nil, nil
+			}
+			ref, ok := ax.Object.(*parser.ColumnRef)
+			if !ok {
+				return nil, nil
+			}
+			if _, isVar := plan.varPos[ref.Name]; !isVar || have[ref.Name] || have[ref.Name+"."+ax.Path[0].Name] {
+				return nil, nil
+			}
+			return &parser.Literal{Value: nil, Type: types.TypeDynamic}, nil
+		})
+		if err != nil || out == nil {
+			return x
+		}
+		return out
+	}
+	o := *op
+	if o.Where != nil {
+		o.Where = fix(o.Where)
+	}
+	if o.Project != nil {
+		p := *o.Project
+		p.Items = append([]parser.ProjectItem(nil), p.Items...)
+		for i := range p.Items {
+			if p.Items[i].Expr != nil {
+				p.Items[i].Expr = fix(p.Items[i].Expr)
+			}
+		}
+		o.Project = &p
+	}
+	return &o
 }
 
 // graphVarFuncs take a pattern variable as an argument.

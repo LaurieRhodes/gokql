@@ -166,7 +166,190 @@ func (ps *parser) linear() ([]clause, error) {
 	if _, ok := cs[0].(*matchClause); !ok {
 		return nil, fmt.Errorf("gql: a query must start with MATCH")
 	}
+	if err := resolveEndpoints(cs); err != nil {
+		return nil, err
+	}
 	return cs, nil
+}
+
+// resolveEndpoints rewrites openCypher startNode(r) / endNode(r) into
+// the node variables at the ends of the directed edge r, naming
+// anonymous end nodes as needed.
+func resolveEndpoints(cs []clause) error {
+	used := false
+	for _, c := range cs {
+		forClauseExprs(c, func(x expr) expr {
+			walk(x, func(e expr) bool {
+				if c, ok := e.(*call); ok && (c.name == "startnode" || c.name == "endnode") {
+					used = true
+				}
+				return true
+			})
+			return x
+		})
+	}
+	if !used {
+		return nil
+	}
+	type ends struct{ start, end string }
+	edges := map[string]*ends{}
+	n := 0
+	for _, c := range cs {
+		mc, ok := c.(*matchClause)
+		if !ok {
+			continue
+		}
+		for _, pp := range mc.paths {
+			for i, e := range pp.edges {
+				if e.name == "" || e.varLen {
+					continue
+				}
+				a, b := pp.nodes[i], pp.nodes[i+1]
+				for _, nd := range []*nodePat{a, b} {
+					if nd.name == "" {
+						n++
+						nd.name = fmt.Sprintf("__end%d", n)
+					}
+				}
+				switch e.dir {
+				case dirForward:
+					edges[e.name] = &ends{a.name, b.name}
+				case dirBackward:
+					edges[e.name] = &ends{b.name, a.name}
+				default:
+					edges[e.name] = nil // direction unknown
+				}
+			}
+		}
+	}
+	var err error
+	for _, c := range cs {
+		forClauseExprs(c, func(x expr) expr {
+			return mapExpr(x, func(e expr) expr {
+				c, ok := e.(*call)
+				if !ok || (c.name != "startnode" && c.name != "endnode") || len(c.args) != 1 {
+					return e
+				}
+				v, ok := c.args[0].(*varRef)
+				if !ok {
+					err = fmt.Errorf("gql: %s() expects a relationship variable", c.name)
+					return e
+				}
+				en, known := edges[v.name]
+				if !known || en == nil {
+					err = fmt.Errorf("gql: %s(%s) needs %s to be a directed, single-hop relationship of a MATCH", c.name, v.name, v.name)
+					return e
+				}
+				name := en.start
+				if c.name == "endnode" {
+					name = en.end
+				}
+				return &varRef{exprBase{c.src()}, name}
+			})
+		})
+	}
+	return err
+}
+
+// forClauseExprs applies f to every expression of clause c, replacing
+// each with f's result.
+func forClauseExprs(c clause, f func(expr) expr) {
+	apply := func(x *expr) {
+		if *x != nil {
+			*x = f(*x)
+		}
+	}
+	pats := func(paths []*pathPat) {
+		for _, pp := range paths {
+			for _, n := range pp.nodes {
+				for i := range n.vals {
+					apply(&n.vals[i])
+				}
+				apply(&n.where)
+			}
+			for _, e := range pp.edges {
+				for i := range e.vals {
+					apply(&e.vals[i])
+				}
+				apply(&e.where)
+			}
+		}
+	}
+	switch c := c.(type) {
+	case *matchClause:
+		pats(c.paths)
+		apply(&c.where)
+	case *filterClause:
+		apply(&c.cond)
+	case *letClause:
+		for i := range c.exprs {
+			apply(&c.exprs[i])
+		}
+	case *forClause:
+		apply(&c.list)
+	case *orderClause:
+		for i := range c.items {
+			apply(&c.items[i].x)
+		}
+	case *offsetClause:
+		apply(&c.n)
+	case *limitClause:
+		apply(&c.n)
+	case *returnClause:
+		for i := range c.items {
+			apply(&c.items[i].x)
+		}
+	}
+}
+
+// mapExpr rebuilds x bottom-up, replacing each node with f's result.
+func mapExpr(x expr, f func(expr) expr) expr {
+	if x == nil {
+		return nil
+	}
+	m := func(e expr) expr { return mapExpr(e, f) }
+	switch e := x.(type) {
+	case *listLit:
+		for i := range e.items {
+			e.items[i] = m(e.items[i])
+		}
+	case *mapLit:
+		for i := range e.vals {
+			e.vals[i] = m(e.vals[i])
+		}
+	case *propRef:
+		e.x = m(e.x)
+	case *indexRef:
+		e.x, e.i = m(e.x), m(e.i)
+	case *unary:
+		e.x = m(e.x)
+	case *binary:
+		e.l, e.r = m(e.l), m(e.r)
+	case *isNull:
+		e.x = m(e.x)
+	case *call:
+		for i := range e.args {
+			e.args[i] = m(e.args[i])
+		}
+	case *caseExpr:
+		e.operand = m(e.operand)
+		for k := range e.whens {
+			e.whens[k], e.thens[k] = m(e.whens[k]), m(e.thens[k])
+		}
+		e.els = m(e.els)
+	case *castExpr:
+		e.x = m(e.x)
+	case *listExpr:
+		e.list, e.where, e.proj, e.init = m(e.list), m(e.where), m(e.proj), m(e.init)
+	case *mapProj:
+		e.x = m(e.x)
+		for i := range e.vals {
+			e.vals[i] = m(e.vals[i])
+		}
+	case *patternExpr:
+		e.where, e.proj = m(e.where), m(e.proj)
+	}
+	return f(x)
 }
 
 func (ps *parser) clause() (clause, error) {
@@ -314,8 +497,8 @@ func (ps *parser) returnClause(with bool) (clause, error) {
 	rc := &returnClause{with: with}
 	if ps.acceptKw("distinct") {
 		rc.distinct = true
-	} else {
-		ps.acceptKw("all")
+	} else if !ps.peekN(1).is("(") {
+		ps.acceptKw("all") // RETURN ALL, not all(...)
 	}
 	if ps.accept("*") {
 		rc.star = true
@@ -916,6 +1099,11 @@ func (ps *parser) postfix() (expr, error) {
 			}
 			xx := x
 			x = ps.wrap(start, func(s string) expr { return &indexRef{exprBase{s}, xx, i} })
+		case ps.cypher && ps.peek().is("{"):
+			if _, ok := x.(*varRef); !ok {
+				return x, nil
+			}
+			return ps.mapProjection(start, x)
 		default:
 			return x, nil
 		}
@@ -944,6 +1132,12 @@ func (ps *parser) primary() (expr, error) {
 	case tPunct:
 		switch t.text {
 		case "(":
+			// A pattern with at least one edge is a pattern predicate.
+			if pp, ok := ps.tryPattern(); ok {
+				return ps.wrap(start, func(s string) expr {
+					return &patternExpr{exprBase: exprBase{s}, kind: "exists", paths: []*pathPat{pp}}
+				}), nil
+			}
 			ps.next()
 			x, err := ps.expr()
 			if err != nil {
@@ -953,7 +1147,10 @@ func (ps *parser) primary() (expr, error) {
 		case "[":
 			ps.next()
 			if (ps.peek().kind == tIdent || ps.peek().kind == tQuotedIdent) && ps.peekN(1).kw("in") {
-				return nil, ps.errf("list comprehensions ([x IN list | ...]) are not supported")
+				return ps.listComprehension(start)
+			}
+			if pp, ok := ps.tryPattern(); ok {
+				return ps.patternComprehension(start, pp)
 			}
 			var items []expr
 			if !ps.accept("]") {
@@ -985,6 +1182,18 @@ func (ps *parser) primary() (expr, error) {
 		return nil, ps.errf("expected an expression")
 	}
 	low := strings.ToLower(t.text)
+	switch {
+	case (low == "exists" || low == "count") && ps.peekN(1).is("{"):
+		ps.p += 2
+		return ps.patternSubquery(start, low)
+	case (low == "any" || low == "all" || low == "none" || low == "single") && ps.peekN(1).is("(") &&
+		(ps.peekN(2).kind == tIdent || ps.peekN(2).kind == tQuotedIdent) && ps.peekN(3).kw("in"):
+		ps.p += 2
+		return ps.listQuantifier(start, low)
+	case low == "reduce" && ps.peekN(1).is("(") && ps.peekN(3).is("="):
+		ps.p += 2
+		return ps.reduceExpr(start)
+	}
 	switch low {
 	case "true", "false":
 		ps.next()
@@ -1046,9 +1255,217 @@ func (ps *parser) primary() (expr, error) {
 		if err := ps.expect(")"); err != nil {
 			return nil, err
 		}
+		// size(pattern) / length(pattern) counts its matches.
+		if (low == "size" || low == "length") && len(c.args) == 1 {
+			if pe, ok := c.args[0].(*patternExpr); ok && pe.kind == "exists" {
+				pe.kind = "count"
+				return ps.wrap(start, func(s string) expr { pe.text = s; return pe }), nil
+			}
+		}
 		return ps.wrap(start, func(s string) expr { c.text = s; return c }), nil
 	}
 	return &varRef{exprBase{t.text}, t.text}, nil
+}
+
+// tryPattern parses a path pattern with at least one edge at the
+// current position, or restores the position and reports false.
+func (ps *parser) tryPattern() (*pathPat, bool) {
+	save := ps.p
+	if (ps.peek().kind == tIdent || ps.peek().kind == tQuotedIdent) && ps.peekN(1).is("=") && ps.peekN(2).is("(") {
+		// a named path: p = (...)
+	} else if !ps.peek().is("(") {
+		return nil, false
+	}
+	pp, err := ps.pathPattern()
+	if err != nil || len(pp.edges) == 0 {
+		ps.p = save
+		return nil, false
+	}
+	return pp, true
+}
+
+// patternComprehension parses the rest of [pattern [WHERE c] | x].
+func (ps *parser) patternComprehension(start int, pp *pathPat) (expr, error) {
+	pe := &patternExpr{kind: "list", paths: []*pathPat{pp}}
+	var err error
+	if ps.acceptKw("where") {
+		if pe.where, err = ps.expr(); err != nil {
+			return nil, err
+		}
+	}
+	if err := ps.expect("|"); err != nil {
+		return nil, err
+	}
+	if pe.proj, err = ps.expr(); err != nil {
+		return nil, err
+	}
+	if err := ps.expect("]"); err != nil {
+		return nil, err
+	}
+	return ps.wrap(start, func(s string) expr { pe.text = s; return pe }), nil
+}
+
+// patternSubquery parses the rest of EXISTS { [MATCH] patterns [WHERE c] }
+// or COUNT { ... }.
+func (ps *parser) patternSubquery(start int, kind string) (expr, error) {
+	pe := &patternExpr{kind: kind}
+	ps.acceptKw("match")
+	for {
+		pp, err := ps.pathPattern()
+		if err != nil {
+			return nil, err
+		}
+		pe.paths = append(pe.paths, pp)
+		if !ps.accept(",") {
+			break
+		}
+	}
+	if ps.acceptKw("where") {
+		var err error
+		if pe.where, err = ps.expr(); err != nil {
+			return nil, err
+		}
+	}
+	if !ps.accept("}") {
+		return nil, ps.errf("expected \"}\" (subqueries other than a MATCH pattern are not supported)")
+	}
+	return ps.wrap(start, func(s string) expr { pe.text = s; return pe }), nil
+}
+
+// listIn parses "v IN list" of a list expression.
+func (ps *parser) listIn(le *listExpr) error {
+	v, ok := ps.ident()
+	if !ok {
+		return ps.errf("expected a variable")
+	}
+	le.v = v
+	if err := ps.expectKw("in"); err != nil {
+		return err
+	}
+	var err error
+	le.list, err = ps.expr()
+	return err
+}
+
+// listComprehension parses the rest of [v IN list [WHERE c] [| x]].
+func (ps *parser) listComprehension(start int) (expr, error) {
+	le := &listExpr{kind: "comp"}
+	if err := ps.listIn(le); err != nil {
+		return nil, err
+	}
+	var err error
+	if ps.acceptKw("where") {
+		if le.where, err = ps.expr(); err != nil {
+			return nil, err
+		}
+	}
+	if ps.accept("|") {
+		if le.proj, err = ps.expr(); err != nil {
+			return nil, err
+		}
+	}
+	if err := ps.expect("]"); err != nil {
+		return nil, err
+	}
+	return ps.wrap(start, func(s string) expr { le.text = s; return le }), nil
+}
+
+// listQuantifier parses the rest of any/all/none/single(v IN list WHERE c).
+func (ps *parser) listQuantifier(start int, kind string) (expr, error) {
+	le := &listExpr{kind: kind}
+	if err := ps.listIn(le); err != nil {
+		return nil, err
+	}
+	if err := ps.expectKw("where"); err != nil {
+		return nil, err
+	}
+	var err error
+	if le.where, err = ps.expr(); err != nil {
+		return nil, err
+	}
+	if err := ps.expect(")"); err != nil {
+		return nil, err
+	}
+	return ps.wrap(start, func(s string) expr { le.text = s; return le }), nil
+}
+
+// reduceExpr parses the rest of reduce(acc = init, v IN list | x).
+func (ps *parser) reduceExpr(start int) (expr, error) {
+	le := &listExpr{kind: "reduce"}
+	acc, ok := ps.ident()
+	if !ok {
+		return nil, ps.errf("expected an accumulator")
+	}
+	le.acc = acc
+	if err := ps.expect("="); err != nil {
+		return nil, err
+	}
+	var err error
+	if le.init, err = ps.expr(); err != nil {
+		return nil, err
+	}
+	if err := ps.expect(","); err != nil {
+		return nil, err
+	}
+	if err := ps.listIn(le); err != nil {
+		return nil, err
+	}
+	if err := ps.expect("|"); err != nil {
+		return nil, err
+	}
+	if le.proj, err = ps.expr(); err != nil {
+		return nil, err
+	}
+	if err := ps.expect(")"); err != nil {
+		return nil, err
+	}
+	return ps.wrap(start, func(s string) expr { le.text = s; return le }), nil
+}
+
+// mapProjection parses the rest of x {.a, k: v, .*, var}.
+func (ps *parser) mapProjection(start int, x expr) (expr, error) {
+	mp := &mapProj{x: x}
+	ps.next() // {
+	if !ps.accept("}") {
+		for {
+			switch {
+			case ps.accept("."):
+				if ps.accept("*") {
+					mp.star = true
+					break
+				}
+				name, ok := ps.ident()
+				if !ok {
+					return nil, ps.errf("expected a property name")
+				}
+				mp.keys = append(mp.keys, name)
+				mp.vals = append(mp.vals, &propRef{exprBase{x.src() + "." + name}, x, name})
+			default:
+				name, ok := ps.ident()
+				if !ok {
+					return nil, ps.errf("expected a map projection item")
+				}
+				if ps.accept(":") {
+					v, err := ps.expr()
+					if err != nil {
+						return nil, err
+					}
+					mp.keys = append(mp.keys, name)
+					mp.vals = append(mp.vals, v)
+				} else {
+					mp.keys = append(mp.keys, name)
+					mp.vals = append(mp.vals, &varRef{exprBase{name}, name})
+				}
+			}
+			if !ps.accept(",") {
+				break
+			}
+		}
+		if err := ps.expect("}"); err != nil {
+			return nil, err
+		}
+	}
+	return ps.wrap(start, func(s string) expr { mp.text = s; return mp }), nil
 }
 
 func (ps *parser) caseExpr(start int) (expr, error) {

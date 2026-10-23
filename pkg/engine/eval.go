@@ -981,7 +981,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			// works correctly once toint() is actually distinguishable
 			// from tolong() via inferExprType, not just by name.
 			return types.TypeInt
-		case "todouble", "toreal", "real", "double", "series_cosine_similarity", "series_dot_product", "array_sum", "jaccard_index":
+		case "todouble", "toreal", "real", "double", "series_cosine_similarity", "series_dot_product", "array_sum", "jaccard_index", "__gql_percentile_cont":
 			return types.TypeReal
 		case "tolower", "toupper", "tostring", "strcat", "format_datetime",
 			"substring", "replace_string", "replace_regex", "trim", "trim_start", "trim_end",
@@ -1020,7 +1020,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			"pack", "pack_array", "set_difference", "set_intersect",
 			"set_union", "treepath", "array_rotate_left", "array_rotate_right",
 			"array_split", "array_iff", "array_iif", "bag_zip", "bag_set_key",
-			"bag_pack_columns", "parse_json", "todynamic", "__gql_interleave", "__gql_labels":
+			"bag_pack_columns", "parse_json", "todynamic", "__gql_interleave", "__gql_labels", "__gql_props":
 			// parse_json/todynamic found missing from this switch
 			// entirely 2026-08-18 while implementing gettype(): with
 			// no case here, both fell through to the FuncCall

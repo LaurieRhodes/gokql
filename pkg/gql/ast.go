@@ -198,3 +198,38 @@ type query struct {
 	parts    [][]clause
 	unionAll []bool // unionAll[i] joins parts[i] and parts[i+1]
 }
+
+// patternExpr is a pattern used as an expression: an openCypher pattern
+// predicate or exists(...) ("exists"), COUNT { ... } or size(pattern)
+// ("count"), or a pattern comprehension [pattern WHERE c | x] ("list").
+type patternExpr struct {
+	exprBase
+	kind  string
+	paths []*pathPat
+	where expr
+	proj  expr // "list" only
+}
+
+// listExpr is an openCypher list expression over a variable v bound to
+// each element of list in turn: a comprehension [v IN list WHERE c | p]
+// ("comp"), a quantifier any/all/none/single(v IN list WHERE c), or
+// reduce(acc = init, v IN list | proj).
+type listExpr struct {
+	exprBase
+	kind  string
+	v     string
+	list  expr
+	where expr
+	proj  expr
+	acc   string // reduce
+	init  expr   // reduce
+}
+
+// mapProj is an openCypher map projection x {.a, k: v, .*}.
+type mapProj struct {
+	exprBase
+	x    expr
+	keys []string
+	vals []expr
+	star bool
+}

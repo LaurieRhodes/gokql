@@ -26,7 +26,7 @@ func Translate(src, graphRef string, cypher bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	t := &tr{ref: graphRef}
+	t := &tr{ref: graphRef, params: map[string]bool{}}
 	var branches []string
 	for _, part := range q.parts {
 		s, err := t.linear(part)
@@ -35,8 +35,21 @@ func Translate(src, graphRef string, cypher bool) (string, error) {
 		}
 		branches = append(branches, s)
 	}
+	decl := ""
+	if len(t.params) > 0 {
+		// Parameters bind from the request's Parameters (null if absent).
+		var ps []string
+		for p := range t.params {
+			ps = append(ps, p)
+		}
+		sort.Strings(ps)
+		for i, p := range ps {
+			ps[i] = p + ":dynamic = dynamic(null)"
+		}
+		decl = "declare query_parameters(" + strings.Join(ps, ", ") + ");\n"
+	}
 	if len(branches) == 1 {
-		return branches[0], nil
+		return decl + branches[0], nil
 	}
 	out := branches[0]
 	for i, b := range branches[1:] {
@@ -45,7 +58,7 @@ func Translate(src, graphRef string, cypher bool) (string, error) {
 			out += "\n| distinct *"
 		}
 	}
-	return out, nil
+	return decl + out, nil
 }
 
 type bindKind int
@@ -85,8 +98,9 @@ func (st *state) bind(name string, b *binding) {
 }
 
 type tr struct {
-	ref string
-	n   int
+	ref    string
+	n      int
+	params map[string]bool // query parameters used ($name)
 }
 
 func (t *tr) gen(prefix string) string {
@@ -125,7 +139,7 @@ func (t *tr) linear(cs []clause) (string, error) {
 
 	returned := false
 	for si, seg := range segs {
-		seg = mergeMatches(seg)
+		seg = splitComponents(mergeMatches(seg))
 		last := si == len(segs)-1
 		var rest []clause // every clause after the current one, all segments
 		for _, s := range segs[si+1:] {
@@ -215,6 +229,65 @@ func mergeMatches(seg []clause) []clause {
 	return out
 }
 
+// splitComponents turns a MATCH whose patterns fall into several
+// connected components (no shared node variable) into one MATCH per
+// component, which the translation cross-joins, followed by the MATCH's
+// WHERE as a filter: graph-match itself needs a connected pattern.
+func splitComponents(seg []clause) []clause {
+	var out []clause
+	for _, c := range seg {
+		m, ok := c.(*matchClause)
+		if !ok || len(m.paths) < 2 {
+			out = append(out, c)
+			continue
+		}
+		comp := make([]int, len(m.paths))
+		for i := range comp {
+			comp[i] = i
+		}
+		var find func(int) int
+		find = func(i int) int {
+			for comp[i] != i {
+				i = comp[i]
+			}
+			return i
+		}
+		owner := map[string]int{}
+		for i, pp := range m.paths {
+			for _, n := range pp.nodes {
+				if n.name == "" {
+					continue
+				}
+				if j, seen := owner[n.name]; seen {
+					comp[find(i)] = find(j)
+				} else {
+					owner[n.name] = i
+				}
+			}
+		}
+		groups := map[int][]*pathPat{}
+		var roots []int
+		for i, pp := range m.paths {
+			r := find(i)
+			if _, seen := groups[r]; !seen {
+				roots = append(roots, r)
+			}
+			groups[r] = append(groups[r], pp)
+		}
+		if len(roots) == 1 {
+			out = append(out, c)
+			continue
+		}
+		for _, r := range roots {
+			out = append(out, &matchClause{optional: m.optional, mode: m.mode, paths: groups[r]})
+		}
+		if m.where != nil {
+			out = append(out, &filterClause{cond: m.where})
+		}
+	}
+	return out
+}
+
 func hasShortest(m *matchClause) bool {
 	for _, p := range m.paths {
 		if p.shortest != "" {
@@ -267,6 +340,9 @@ func (t *tr) doMatch(st *state, mc *matchClause, after []clause) error {
 	vars := map[string]*gmVar{}
 	var order []string
 	addVar := func(name string, kind bindKind, user, varLen bool) {
+		if strings.HasPrefix(name, "__") {
+			user = false // a name the translator gave (startNode / endNode)
+		}
 		if _, ok := vars[name]; !ok {
 			vars[name] = &gmVar{name: name, kind: kind, user: user, varLen: varLen}
 			order = append(order, name)
@@ -354,6 +430,13 @@ func (t *tr) doMatch(st *state, mc *matchClause, after []clause) error {
 	for _, ec := range elemConds {
 		var s string
 		var err error
+		if needsPipe(ec.x) {
+			if ec.varLen {
+				return fmt.Errorf("gql: unsupported condition on variable-length edge %s", ec.name)
+			}
+			postOut = append(postOut, ec.x)
+			continue
+		}
 		if ec.varLen {
 			gm.allVar = ec.name
 			s, err = gm.emit(ec.x)
@@ -374,6 +457,10 @@ func (t *tr) doMatch(st *state, mc *matchClause, after []clause) error {
 		conds = append(conds, s)
 	}
 	for _, c := range conjuncts(mc.where, nil) {
+		if needsPipe(c) {
+			postOut = append(postOut, c)
+			continue
+		}
 		if s, err := gm.emit(c); err == nil {
 			conds = append(conds, s)
 			continue
@@ -664,7 +751,33 @@ func walk(x expr, f func(expr) bool) {
 		if e.name != "" {
 			walk(&varRef{exprBase{e.name}, e.name}, f)
 		}
+	case *listExpr:
+		walk(e.list, f)
+		walk(e.init, f)
+		walk(e.where, f)
+		walk(e.proj, f)
+	case *mapProj:
+		if e.star {
+			walk(e.x, f)
+		}
+		for _, v := range e.vals {
+			walk(v, f)
+		}
 	}
+}
+
+// needsPipe reports whether x holds a pattern or list expression, which
+// add pipeline steps and so are evaluated over the joined table.
+func needsPipe(x expr) bool {
+	found := false
+	walk(x, func(e expr) bool {
+		switch e.(type) {
+		case *patternExpr, *listExpr:
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 var pathFuncs = map[string]bool{"nodes": true, "edges": true, "relationships": true, "path_length": true, "length": true}
@@ -875,6 +988,7 @@ var aggFuncs = map[string]bool{
 	"count": true, "sum": true, "avg": true, "min": true, "max": true,
 	"collect_list": true, "collect": true, "array_agg": true,
 	"stdev": true, "stddev": true, "stddev_samp": true, "stddev_pop": true, "stdevp": true,
+	"percentilecont": true, "percentiledisc": true,
 }
 
 func hasAgg(x expr) bool {
@@ -997,7 +1111,7 @@ func (t *tr) doReturn(st *state, rc *returnClause, paging []clause, last bool) e
 			if s, ok := resolveOut(x); ok {
 				return s, true
 			}
-			ov := &state{scope: map[string]*binding{}}
+			ov := &state{scope: map[string]*binding{}, pipe: st.pipe}
 			for k, b := range st.scope {
 				ov.scope[k] = b
 			}
@@ -1012,6 +1126,7 @@ func (t *tr) doReturn(st *state, rc *returnClause, paging []clause, last bool) e
 			if err != nil {
 				return "", false
 			}
+			st.pipe = ov.pipe // pattern / list expressions add steps
 			c := t.gen("o")
 			hidden = append(hidden, c+" = "+s)
 			orderCols = append(orderCols, c)
@@ -1212,6 +1327,12 @@ func (t *tr) tableHook(st *state, e expr, aggs *[]string) (string, bool, error) 
 	switch e := e.(type) {
 	case *rawExpr:
 		return e.text, true, nil
+	case *patternExpr:
+		s, err := t.patternSub(st, e)
+		return s, true, err
+	case *listExpr:
+		s, err := t.listSub(st, e)
+		return s, true, err
 	case *varRef:
 		b, ok := st.scope[e.name]
 		if !ok {
@@ -1228,6 +1349,9 @@ func (t *tr) tableHook(st *state, e expr, aggs *[]string) (string, bool, error) 
 		}
 		if b.col == "" {
 			return "", true, fmt.Errorf("gql: variable %s cannot be used as a value here", e.name)
+		}
+		if (b.kind == kNode || b.kind == kEdge) && !b.varLen {
+			return "__gql_props(" + q(b.col) + ")", true, nil
 		}
 		return q(b.col), true, nil
 	case *propRef:
@@ -1256,6 +1380,20 @@ func (t *tr) tableHook(st *state, e expr, aggs *[]string) (string, bool, error) 
 		if aggFuncs[e.name] {
 			if aggs == nil {
 				return "", true, fmt.Errorf("gql: aggregate %s is only allowed in RETURN / WITH", e.name)
+			}
+			if e.name == "percentilecont" && len(e.args) == 2 && !e.distinct {
+				// Interpolated: collect the values, then compute.
+				x, err := t.emit(st, e.args[0])
+				if err != nil {
+					return "", true, err
+				}
+				p, err := t.emit(st, e.args[1])
+				if err != nil {
+					return "", true, err
+				}
+				c := t.gen("a")
+				*aggs = append(*aggs, c+" = make_list("+x+")")
+				return "__gql_percentile_cont(" + c + ", " + p + ")", true, nil
 			}
 			s, err := t.aggKQL(st, e)
 			if err != nil {
@@ -1314,7 +1452,7 @@ func (t *tr) tableHook(st *state, e expr, aggs *[]string) (string, bool, error) 
 			if b.col == "" {
 				return "", true, fmt.Errorf("gql: %s is not available here", v.name)
 			}
-			return q(b.col), true, nil
+			return "__gql_props(" + q(b.col) + ")", true, nil
 		}
 	}
 	return "", false, nil
@@ -1326,6 +1464,21 @@ func (t *tr) aggKQL(st *state, c *call) (string, error) {
 			return "", fmt.Errorf("gql: %s(*) is not valid", c.name)
 		}
 		return "count()", nil
+	}
+	if c.name == "percentilecont" || c.name == "percentiledisc" {
+		if len(c.args) != 2 {
+			return "", fmt.Errorf("gql: %s takes two arguments", c.name)
+		}
+		x, err := t.emit(st, c.args[0])
+		if err != nil {
+			return "", err
+		}
+		p, err := t.emit(st, c.args[1])
+		if err != nil {
+			return "", err
+		}
+		// KQL's percentile is nearest-rank, as percentileDisc.
+		return "percentile(" + x + ", (" + p + ") * 100)", nil
 	}
 	if len(c.args) != 1 {
 		return "", fmt.Errorf("gql: %s takes one argument", c.name)
@@ -1431,7 +1584,32 @@ func (t *tr) emitX(x expr, hook func(expr) (string, bool, error)) (string, error
 		}
 		return "bag_pack(" + strings.Join(parts, ", ") + ")", nil
 	case *param:
-		return "", fmt.Errorf("gql: query parameters ($%s) are not supported", e.name)
+		if !isPlainIdent(e.name) {
+			return "", fmt.Errorf("gql: query parameter $%s must be a plain identifier", e.name)
+		}
+		t.params[e.name] = true
+		return e.name, nil
+	case *mapProj:
+		var parts []string
+		for k, key := range e.keys {
+			s, err := rec(e.vals[k])
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, kqlString(key), s)
+		}
+		packed := "dynamic({})"
+		if len(parts) > 0 {
+			packed = "bag_pack(" + strings.Join(parts, ", ") + ")"
+		}
+		if !e.star {
+			return packed, nil
+		}
+		all, err := rec(e.x)
+		if err != nil {
+			return "", err
+		}
+		return "bag_merge(" + packed + ", " + all + ")", nil
 	case *varRef:
 		return "", fmt.Errorf("gql: unknown variable %s", e.name)
 	case *propRef:
@@ -1787,11 +1965,223 @@ func (t *tr) emitCall(c *call, rec func(expr) (string, error)) (string, error) {
 	case "nodes", "edges", "relationships", "path_length", "element_id", "id", "labels", "type", "properties":
 		return "", fmt.Errorf("gql: %s() expects a pattern variable", c.name)
 	case "exists":
-		return "", fmt.Errorf("gql: EXISTS is not supported")
+		if n == 1 {
+			if _, ok := c.args[0].(*patternExpr); ok {
+				return args[0], nil
+			}
+			return "isnotnull(" + args[0] + ")", nil
+		}
+	case "isempty":
+		if n == 1 {
+			return "(__gql_size(" + args[0] + ") == 0)", nil
+		}
+	case "date":
+		if n == 0 {
+			return "startofday(now())", nil
+		}
+		if n == 1 {
+			return "startofday(todatetime(" + args[0] + "))", nil
+		}
+	case "datetime", "localdatetime":
+		if n == 0 {
+			return "now()", nil
+		}
+	case "timestamp":
+		if n == 0 {
+			return "datetime_diff('millisecond', now(), datetime(1970-01-01))", nil
+		}
+	case "startnode", "endnode":
+		return "", fmt.Errorf("gql: %s() expects a relationship variable of a MATCH", c.name)
 	}
 	name := c.name
 	if m, ok := funcMap[name]; ok {
 		name = m
 	}
 	return name + "(" + strings.Join(args, ", ") + ")", nil
+}
+
+// --- pattern and list expressions -----------------------------------
+
+// patternSub evaluates a pattern expression for each row of the current
+// table: the pattern is matched on its own, its matches are counted (or
+// collected) per binding of the variables it shares with the table, and
+// the result is left-joined onto the table by node id.
+func (t *tr) patternSub(st *state, e *patternExpr) (string, error) {
+	if st.pipe == nil {
+		return "", fmt.Errorf("gql: a pattern expression needs a preceding MATCH")
+	}
+	shared := map[string]bool{}
+	var names []string
+	for _, pp := range e.paths {
+		for _, n := range pp.nodes {
+			if n.name == "" || shared[n.name] {
+				continue
+			}
+			if b, ok := st.scope[n.name]; ok {
+				if b.kind != kNode || b.id == "" {
+					return "", fmt.Errorf("gql: %s in a pattern expression must be a node", n.name)
+				}
+				shared[n.name] = true
+				names = append(names, n.name)
+			}
+		}
+		for _, ed := range pp.edges {
+			if _, ok := st.scope[ed.name]; ok && ed.name != "" {
+				return "", fmt.Errorf("gql: relationship %s is already bound; a pattern expression can only share nodes", ed.name)
+			}
+		}
+	}
+	sub := &state{scope: map[string]*binding{}}
+	mc := &matchClause{paths: e.paths, where: e.where}
+	var after []clause
+	if e.proj != nil {
+		after = append(after, &returnClause{items: []returnItem{{x: e.proj}}})
+	}
+	if err := t.doMatch(sub, mc, after); err != nil {
+		return "", err
+	}
+	agg := "count()"
+	if e.kind == "list" {
+		before := len(sub.pipe)
+		x, err := t.emit(sub, e.proj)
+		if err != nil {
+			return "", err
+		}
+		if len(sub.pipe) != before {
+			return "", fmt.Errorf("gql: nested pattern or list expressions in a pattern comprehension are not supported")
+		}
+		agg = "make_list(" + x + ")"
+	}
+	out := t.gen("p")
+	var by, on, away []string
+	for _, n := range names {
+		in := sub.scope[n].id
+		by = append(by, in)
+		on = append(on, "$left."+st.scope[n].id+" == $right."+in)
+		away = append(away, in)
+	}
+	right := strings.Join(sub.pipe, "\n  | ") + "\n  | summarize " + out + " = " + agg
+	if len(by) > 0 {
+		right += " by " + strings.Join(by, ", ")
+		st.pipe = append(st.pipe, "join kind=leftouter ("+right+") on "+strings.Join(on, ", "),
+			"project-away "+strings.Join(away, ", "))
+	} else {
+		x := t.gen("x")
+		st.pipe = append(st.pipe, "extend "+x+" = 1",
+			"join kind=leftouter ("+right+"\n  | extend "+x+" = 1) on "+x,
+			"project-away "+x+", "+x+"1")
+	}
+	switch e.kind {
+	case "exists":
+		return "(coalesce(" + out + ", 0) > 0)", nil
+	case "count":
+		return "coalesce(" + out + ", 0)", nil
+	}
+	return "coalesce(" + out + ", dynamic([]))", nil
+}
+
+// listSub evaluates a list expression for each row with mv-apply.
+func (t *tr) listSub(st *state, e *listExpr) (string, error) {
+	if st.pipe == nil {
+		return "", fmt.Errorf("gql: a list expression needs a preceding MATCH")
+	}
+	list, err := t.emit(st, e.list)
+	if err != nil {
+		return "", err
+	}
+	xcol := t.gen("x")
+	inner := &state{scope: map[string]*binding{}, pipe: []string{""}}
+	for k, b := range st.scope {
+		inner.scope[k] = b
+	}
+	inner.scope[e.v] = &binding{kind: kValue, col: xcol}
+	sub := func(x expr) (string, error) {
+		s, err := t.emit(inner, x)
+		if err == nil && len(inner.pipe) != 1 {
+			err = fmt.Errorf("gql: nested pattern or list expressions in %s are not supported", e.src())
+		}
+		return s, err
+	}
+	var cond string
+	if e.where != nil {
+		if cond, err = sub(e.where); err != nil {
+			return "", err
+		}
+	}
+	out := t.gen("l")
+	var body, result string
+	switch e.kind {
+	case "comp":
+		proj := xcol
+		if e.proj != nil {
+			if proj, err = sub(e.proj); err != nil {
+				return "", err
+			}
+		}
+		if cond != "" {
+			body = "where " + cond + " | "
+		}
+		body += "summarize " + out + " = make_list(" + proj + ")"
+		result = out
+	case "any", "all", "none", "single":
+		c := cond
+		if e.kind == "all" {
+			c = "not(" + cond + ")"
+		}
+		body = "summarize " + out + " = countif(" + c + ")"
+		switch e.kind {
+		case "any":
+			result = "(" + out + " > 0)"
+		case "single":
+			result = "(" + out + " == 1)"
+		default:
+			result = "(" + out + " == 0)"
+		}
+	case "reduce":
+		// Only folds of the form acc + f(v) (sums and concatenations).
+		b, ok := e.proj.(*binary)
+		var term expr
+		if ok && (b.op == "+" || b.op == "||") {
+			if v, isV := b.l.(*varRef); isV && v.name == e.acc && !refsName(b.r, e.acc) {
+				term = b.r
+			}
+		}
+		if term == nil {
+			return "", fmt.Errorf("gql: reduce() is supported only as acc + expression")
+		}
+		init, err := t.emit(st, e.init)
+		if err != nil {
+			return "", err
+		}
+		f, err := sub(term)
+		if err != nil {
+			return "", err
+		}
+		if b.op == "||" || isStringLit(e.init) {
+			body = "summarize " + out + " = strcat_array(make_list(" + f + "), \"\")"
+			result = "strcat(" + init + ", " + out + ")"
+		} else {
+			body = "summarize " + out + " = sum(" + f + ")"
+			result = "(" + init + " + coalesce(" + out + ", 0))"
+		}
+	default:
+		return "", fmt.Errorf("gql: unsupported list expression %s", e.src())
+	}
+	typ := "dynamic"
+	if lt := listElemType(e.list); lt != "" {
+		typ = lt
+	}
+	st.pipe = append(st.pipe, "mv-apply "+xcol+" = "+list+" to typeof("+typ+") on ("+body+")")
+	return result, nil
+}
+
+func refsName(x expr, name string) bool {
+	found := false
+	walk(x, func(e expr) bool {
+		if v, ok := e.(*varRef); ok && v.name == name {
+			found = true
+		}
+		return !found
+	})
+	return found
 }

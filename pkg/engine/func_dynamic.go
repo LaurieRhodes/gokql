@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -174,6 +175,64 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		b, _ := json.Marshal(out)
 		return string(b), true, nil
+
+	case "__gql_props":
+		// __gql_props(bag): an entity's properties as GQL / openCypher
+		// show them, without the null or empty values that a graph's
+		// merged node schema gives properties of other node kinds.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("__gql_props requires 1 argument")
+		}
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil || v == nil {
+			return nil, true, err
+		}
+		var m map[string]interface{}
+		if json.Unmarshal([]byte(fmt.Sprintf("%v", v)), &m) != nil {
+			return v, true, nil
+		}
+		for k, x := range m {
+			if x == nil || x == "" {
+				delete(m, k)
+			}
+		}
+		b, _ := json.Marshal(m)
+		return string(b), true, nil
+
+	case "__gql_percentile_cont":
+		// __gql_percentile_cont(values, p): openCypher percentileCont,
+		// linear interpolation between the closest ranks of the sorted
+		// non-null values.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("__gql_percentile_cont requires 2 arguments")
+		}
+		lv, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		pv, err := evalExpr(eng, fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		arr, ok := parseJSONArray(lv)
+		p, okp := numericFloat(pv)
+		if !ok || !okp || p < 0 || p > 1 {
+			return nil, true, nil
+		}
+		var xs []float64
+		for _, a := range arr {
+			if f, ok := seriesElementToFloat(a); ok {
+				xs = append(xs, f)
+			}
+		}
+		if len(xs) == 0 {
+			return nil, true, nil
+		}
+		sort.Float64s(xs)
+		pos := p * float64(len(xs)-1)
+		lo := int(math.Floor(pos))
+		hi := int(math.Ceil(pos))
+		return xs[lo] + (xs[hi]-xs[lo])*(pos-float64(lo)), true, nil
 
 	case "__gql_interleave":
 		// __gql_interleave(nodes, edges): a GQL path value, the nodes

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/LaurieRhodes/gokql/pkg/gql"
+	"github.com/LaurieRhodes/gokql/pkg/parser"
 )
 
 // gqlMovies is the graph of ADX's GQL reference examples.
@@ -173,12 +174,86 @@ func TestGQLErrors(t *testing.T) {
 		`return 1`,
 		`match (p:Person)`,
 		`match (p)-[e]~(q) return p`,
-		`match (p:Person) return [x in [1,2] | x] as l`,
 		`match (p:Person) where count(*) > 1 return p.Name`,
-		`match (p:Person) return $param as x`,
 	} {
 		if _, err := gql.Translate(q, "G()", false); err == nil {
 			t.Errorf("%s: expected a translation error", q)
+		}
+	}
+	for _, q := range []string{
+		`MATCH (p:Person) CALL { MATCH (m:Movie) RETURN m } RETURN p`,
+		`MATCH (p:Person) RETURN reduce(s = 1, x IN [1,2] | s * x) AS r`,
+		`MATCH (a)-[r]-(b) RETURN startNode(r) AS s`,
+		`MATCH (a)-[r]->(b) WHERE (r)-->() RETURN a`,
+	} {
+		if _, err := gql.Translate(q, "G()", true); err == nil {
+			t.Errorf("%s: expected a translation error", q)
+		}
+	}
+}
+
+// openCypher expressions beyond the GQL subset: pattern predicates and
+// subqueries, list expressions, map projection, startNode / endNode,
+// percentiles. Expected values follow Neo4j's documented semantics.
+func TestCypherExpressions(t *testing.T) {
+	cases := []struct{ q, want string }{
+		{`MATCH (p:Person) WHERE (p)-[:DIRECTED]->() RETURN p.Name AS n`, "n: Ron;Tom"},
+		{`MATCH (p:Person) WHERE NOT (p)-[:ACTED_IN]->() RETURN p.Name AS n`, "n: Julia;Ron"},
+		{`MATCH (p:Person) WHERE exists((p)-[:DIRECTED]->(:Movie)) RETURN p.Name AS n`, "n: Ron;Tom"},
+		{`MATCH (p:Person) WHERE EXISTS { MATCH (p)-[:ACTED_IN]->(m:Movie) WHERE m.Year > 2010 } RETURN p.Name AS n`, "n: Tom"},
+		{`MATCH (p:Person) RETURN p.Name AS n, COUNT { (p)-[:ACTED_IN]->() } AS c`, "n,c: Julia,0;Kevin,1;Ron,0;Tom,3"},
+		{`MATCH (p:Person) RETURN p.Name AS n, size((p)-->()) AS c`, "n,c: Julia,0;Kevin,1;Ron,1;Tom,4"},
+		{`MATCH (p:Person) RETURN p.Name AS n, [(p)-[:ACTED_IN]->(m) WHERE m.Year > 2000 | m.Title] AS t`,
+			`n,t: Julia,[];Kevin,[];Ron,[];Tom,["T2","T3"]`},
+		{`MATCH (m:Movie) WHERE size([(m)<-[:ACTED_IN]-(a) | a]) >= 2 RETURN m.Title AS t`, "t: T1"},
+		{`MATCH (a:Person), (b:Person) WHERE a.Name < b.Name AND NOT (a)-->()<--(b) RETURN a.Name AS a, b.Name AS b`,
+			"a,b: Julia,Kevin;Julia,Ron;Julia,Tom"},
+		{`MATCH (a:Person), (m:Movie) RETURN count(*) AS c`, "c: 12"},
+		{`MATCH (p:Person) RETURN p.Name AS n ORDER BY size([(p)-->(m) | m]) DESC LIMIT 1`, "n: Tom"},
+		{`UNWIND [1, 2] AS x MATCH (p:Person {Name:'Tom'}) RETURN x, COUNT { (p)-[:ACTED_IN]->() } AS c`, "x,c: 1,3;2,3"},
+		{`MATCH (p:Person) RETURN [x IN range(1,3) WHERE x > 1 | x * 10] AS l LIMIT 1`, "l: [20,30]"},
+		{`MATCH (p:Person {Name:'Tom'}) RETURN [x IN [1,2] | x + p.Born] AS l`, "l: [1957,1958]"},
+		{`MATCH (p:Person) WHERE any(x IN ['T','R'] WHERE p.Name STARTS WITH x) RETURN p.Name AS n`, "n: Ron;Tom"},
+		{`MATCH (p:Person) RETURN all(x IN [1,2] WHERE x > 0) AS a, none(x IN [1,2] WHERE x > 1) AS b, single(x IN [1,2] WHERE x > 1) AS c LIMIT 1`,
+			"a,b,c: true,false,true"},
+		{`MATCH (p:Person)-[:ACTED_IN]->(m) WITH p, collect(m.Year) AS ys RETURN p.Name AS n, reduce(t = 0, y IN ys | t + y) AS total`,
+			"n,total: Kevin,1995;Tom,6026"},
+		{`MATCH (p:Person) RETURN reduce(s = '', x IN ['a','b'] | s + x) AS r LIMIT 1`, "r: ab"},
+		{`MATCH (p:Person) RETURN p.Name AS n, isEmpty([(p)-[:DIRECTED]->(m) | m]) AS e`, "n,e: Julia,true;Kevin,true;Ron,false;Tom,false"},
+		{`MATCH (p:Person {Name:'Tom'}) RETURN p {.Name, born: p.Born} AS m`, `m: {"Name":"Tom","born":1956}`},
+		{`MATCH (p:Person {Name:'Tom'}) RETURN p`, `p: {"Born":1956,"Label":"Person","Label2":["Person","Male","BestActorAward"],"Name":"Tom"}`},
+		{`MATCH (p:Person) RETURN coalesce(p.Missing, 'none') AS c LIMIT 1`, "c: none"},
+		{`MATCH (p:Person) WHERE exists(p.Born) AND p.Missing IS NULL RETURN count(*) AS c`, "c: 4"},
+		{`MATCH (:Person)-[r:DIRECTED]->() RETURN startNode(r).Name AS s, endNode(r).Title AS t`, "s,t: Ron,T1;Tom,T2"},
+		{`MATCH (p:Person) RETURN percentileCont(p.Born, 0.5) AS m, percentileDisc(p.Born, 0.5) AS d`, "m,d: 1957,1956"},
+		{`MATCH (p:Person) RETURN date('2020-01-05') AS d LIMIT 1`, "d: 2020-01-05T00:00:00Z"},
+	}
+	for _, c := range cases {
+		if got := gqlRows(t, c.q, true); got != c.want {
+			t.Errorf("%s\n got  %s\n want %s", c.q, got, c.want)
+		}
+	}
+}
+
+// Query parameters ($name) bind from the request's Parameters.
+func TestCypherParameters(t *testing.T) {
+	eng, _ := graphModelScope(t)
+	q := "#crp query_language=opencypher\n#crp query_graph_reference=graph(\"Simple\")\n" +
+		"MATCH (p:Person) WHERE p.name = $who RETURN p.name AS n"
+	for _, c := range []struct {
+		params map[string]string
+		want   int
+	}{{map[string]string{"who": "'Alice'"}, 1}, {nil, 0}} {
+		stmt, err := parser.ParseWithParameters(q, c.params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := eng.Execute(stmt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Rows) != c.want {
+			t.Errorf("params %v: %d rows, want %d", c.params, len(res.Rows), c.want)
 		}
 	}
 }
