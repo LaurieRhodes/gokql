@@ -92,22 +92,39 @@ and ASIM parsers, which is this engine's main query population.
 | Stored nulls: `int`/`long`/`real`/`bool`/`datetime`/`timespan` nulls were written to extents as 0 / false. Columns are now nullable, a chunk with nulls carries a validity child (vortex-go a8fcabc), and the columnar paths honour it (filters: null passes only `!=`; aggregates skip nulls; null group keys stay apart from 0). `!=` is no longer pushed into zone pruning. Also: inline ingest never stamped `_TimeReceived` (it read back as 1970-01-01) | `storage_nulls_test.go`; files written before keep their zeros |
 | A string is never null: a missing string cell (an extent from before the column was added, an unmatched outer-join or outer-union row) reads as `""` on the row and columnar paths, so `isnull(s)` is false, `isempty(s)` true, `s == ""` matches, dcount counts `""`, and it groups with `""` | `TestStringNeverNull` |
 | Geospatial on the S2 sphere (golang/geo, pure Go, no further dependencies; +0.7 MB binary): points/lines/polygons — `geo_point_in_circle`, `geo_point_in_polygon`, `geo_distance_point_to_line`/`_to_polygon`, `geo_closest_point_on_line`/`_on_polygon`, `geo_polygon_area`/`_perimeter`/`_centroid`, `geo_line_length`/`_centroid`, `geo_line_interpolate_point`, `geo_line_locate_point`, `geo_angle`, `geo_azimuth`, `geo_line_densify`, `geo_polygon_densify`, `geo_intersects_2lines`/`_2polygons`/`_line_with_polygon`, `geo_from_wkt`; geohash — `geo_point_to_geohash`, `geo_geohash_to_central_point`/`_to_polygon`/`_neighbors`; S2 — `geo_point_to_s2cell`, `geo_s2cell_to_central_point`/`_to_polygon`/`_neighbors`, `geo_polygon_to_s2cells`, `geo_line_to_s2cells` (radius, 65536-cell limit); plugins `geo_polygon_lookup`, `geo_line_lookup`. Also from the sweep: `bag_pack` keeps argument order and embeds dynamic values; `x in (dynamic([...]))`; datetime `bin()` aligns to 0001-01-01 (7d bins start Monday); `percentiles_array_tdigest(..., typeof(T))` | `geo_shape.go`, `func_geo_s2.go`, `func_geo_s2b.go`, `func_geo_cells.go`, `plugin_geo_lookup.go`; every reference example exact (`geo_test.go`, `parity_misc_test.go`) except union-of-overlapping MultiPolygon area/centroid (null: golang/geo has no polygon boolean operations). Neighbor order of geohash/S2 follows the reference examples. Not yet: H3 cells, buffers, unions/intersections, simplify (`geo_*_buffer`, `geo_union_*`, `geo_intersection_*`, `geo_*_simplify`, `geo_*_to_h3cell*`) |
+| `hash_combine`, `hash_many`; `hash()` of int (4 bytes), bool (1 byte), guid (.NET layout), null and "" (one constant); dynamic rejected | `func_net.go` `kqlHashCombine`: Jenkins one-at-a-time over each value's 8 LE bytes, signed state; 384 emulator probes and the reference example |
+| `series_outliers` (ctukey/tukey, ignore_val, percentiles) | `func_series_decompose.go`: normal fit to the two percentiles, fences at mu -/+ 2.7 sigma scored -/+1.5; the tabulated quantiles were recovered from scores. Emulator to 1e-7 |
+| `series_decompose`, `series_decompose_anomalies`, `series_decompose_forecast` with an explicit seasonality (or 0) | per-phase median, avg/linefit trend on the training points, test_points extrapolated, nulls make the trend null, anomalies fence on the training residual. Seasonality -1 (the default) needs `series_periods_detect` (P2) |
+| `series_fit_2lines`, `series_fit_2lines_dynamic` | split index starts the right line, local x from 1, smallest index on a tie; ADX's 2- and 3-point results |
+| `datetime_list_timezones` | the emulator's 597 names (the docs list 590, five spelled differently) |
+| `evaluate session_count`, `activity_engagement` | emulator probes (the references show only charts) |
+| `evaluate basket` | closed frequent itemsets; both reference examples exact. ADX samples initial frequent values on large inputs (patterns within a few percent of the threshold can differ) |
+| `evaluate autocluster` | Seed-Expand with a fitted informativeness term; exact on synthetic sweeps and two StormEvents probes, approximate on larger real inputs (P2) |
+| `evaluate funnel_sequence` (three tables), `funnel_sequence_completion` | StormEvents references within a few counts (P2 for the prev/next rule) |
+| `.ingest csv` quoted fields spanning lines; `summarize f(agg(x))` on stored tables (projection pushdown dropped x) | found loading StormEvents |
 
 ## P2 — real but less frequent
 
-- `evaluate` plugins. `bag_unpack`, `ipv4_lookup`, `ipv6_lookup`,
-  `pivot`, `narrow`, `schema_merge`, `rolling_percentile`,
-  `sliding_window_counts`, `activity_counts_metrics`,
-  `activity_metrics`, `active_users_count`, `new_activity_metrics`,
-  `sequence_detect` and `dcount_intersect` exist. Remaining:
-  `funnel_sequence` and `funnel_sequence_completion` (references use
-  StormEvents only; funnel_sequence returns three tables), and
-  `activity_engagement` and `session_count`, whose references show
-  only charts (of random data), so their algorithms are unpinned.
-  Pattern-mining plugins (`autocluster`,
-  `basket`, `diffpatterns`) have the same specification problem as
-  `reduce` and need their algorithm pinned before work starts.
-
+- `evaluate diffpatterns`: Seed-Expand contrast (Ofer et al. 2017,
+  section 6); output on synthetic data is closed patterns with
+  PercentA/B rounded to two decimals, nothing under ~a few hundred
+  rows. Not yet probed far enough to implement.
+- `autocluster` on large real inputs: the implementation reproduces the
+  emulator on synthetic data and two of the five StormEvents probes;
+  ADX applies further selection on real data (more nested segments kept
+  next to a near-constant column, fewer small ones at low SizeWeight)
+  that is not pinned.
+- `funnel_sequence` prev/next: ADX sometimes drops a prev or next that
+  lies inside the window when the match spans more than one window
+  (StormEvents reference: 188 vs 189 for the empty prev). Matches and
+  counts otherwise agree.
+- `series_periods_detect` / `series_periods_validate`, and with them
+  `series_decompose*` with seasonality -1 (the default). Probed:
+  validate scores 0 unless n/p is within about 1.5 frequency bins of the
+  spectral peak; inside, the score depends on floor(p) and equals
+  (1 + r)/2 with r the circular autocorrelation exactly when n is a
+  multiple of the period; otherwise it is lower by an unpinned
+  normalisation (pure sine, n = 105, period 10: 0.9 for every phase).
 - GQL and openCypher graph query languages (MATCH ... RETURN ...
   NEXT, with a `#crp query_graph_reference` client property), each
   with its own reference section in the docs. The `python` plugin
@@ -134,15 +151,27 @@ with their own examples.
 
 ## P3 — carried over
 
-`hash_combine`/
-`hash_many` (the combining step is unpinned: the reference value
--1440138333540407281 for hash("Hello"), hash("World") matches none of
-boost, FNV, multiply-add or xxhash64 round/merge/tail combinations), `series_fit_2lines` (the reference does not say which
-side owns the split point and shows no numbers), series signal
-processing (decompose, outliers, periods; `series_seasonal` without a period
-needs `series_periods_detect`, whose scoring the reference does not pin),
-`datetime_list_timezones`, `reduce`. Details in the existing backlog
-documents.
+`reduce`: probed on the emulator; it clusters on hashed terms and
+wildcards some terms constant across a group ("user * logged * *
+*.0.0.*" for three "user X logged in from 10.0.0.N" lines), so it is
+not practical to pin from outputs. `hash_combine` with a null argument
+(null here; ADX returns a value whose null encoding is not pinned);
+`hash()` of decimal.
+
+## Reference engine: the Kusto emulator
+
+Since 2026-10-23 parity work is checked against the Kusto emulator
+(container `kustainer`, mcr.microsoft.com/azuredataexplorer/kustainer-
+linux, engine 2025.07.06, on localhost:9080), not only the reference
+pages. Its query engine is ADX's. The emulator's database `Samples`
+holds StormEvents (59066 rows, from
+kustosamples.blob.core.windows.net/samplefiles/StormEvents.csv; copied
+into the container with `podman cp`, since the bind mount is owned by
+the container's user namespace), and the same data is a gokql database
+at /media/laurie/Data/kustainer/samples/gokql_db. Comparison scripts
+(run a query on both engines and diff typed cells, or diff multi-table
+results as sets) were in /tmp/gk_emu (kdiff.py, mdiff.py); they are
+short to rewrite. The emulator license forbids benchmarking.
 
 ## Out of scope (unchanged)
 

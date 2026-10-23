@@ -349,6 +349,20 @@ Element-wise array math, gap-filling, and summary statistics — the operations 
 | prev          | Value from previous row (optional offset and default)        |
 | next           | Value from next row (optional offset and default)              |
 
+### ✅ Emulator-pinned functions and plugins (2026-10-23)
+
+Pinned by probing the Kusto emulator (ADX's query engine, build
+2025.07.06) where the reference pages are silent; details and residual
+gaps in `docs/parity_backlog.md` (Closed, P2, and "Reference engine").
+
+1. ✅ `hash_combine`, `hash_many` (Jenkins one-at-a-time over 8-byte LE values); `hash()` of int, bool, guid, null and "" corrected.
+2. ✅ `series_outliers`, `series_decompose`, `series_decompose_anomalies`, `series_decompose_forecast` (explicit seasonality or 0; -1 waits on `series_periods_detect`), `series_fit_2lines` / `_dynamic`.
+3. ✅ `datetime_list_timezones` (597 zones, the engine's list).
+4. ✅ `evaluate session_count`, `activity_engagement`, `basket`, `autocluster`, `funnel_sequence` (three tables), `funnel_sequence_completion`.
+5. ✅ Found on the way: `.ingest csv` quoted fields spanning lines; `summarize f(agg(x))` on stored tables returned null (projection pushdown); `let s = range(a, b, c);` parsed as the operator.
+
+Still open: `series_periods_detect`/`series_periods_validate` (scoring partly pinned), `diffpatterns`, `reduce`, autocluster's extra selection on large real inputs, a funnel_sequence prev/next edge rule.
+
 ### Not Yet Implemented (notable gaps)
 
 Correction to an earlier version of this document, which claimed "no standalone scalar-function gaps identified" — that was wrong, found by cross-checking against a full real-ADX scalar-function enumeration (2026-08-14) rather than the earlier, narrower pass this document itself had done. **~110 real, confirmed gaps found**, verified with a combination of source-grep and live CLI spot-checks (a few names in the raw reference list turned out to be false positives during that verification — e.g. `not` is already implemented here, just via a different mechanism than the check pattern used for the rest). Full list, organized by category and priority, with implementation notes for a future session to work from directly: **[`docs/scalar_function_backlog.md`](./scalar_function_backlog.md)**.
@@ -858,7 +872,7 @@ Closes the "Bag/dynamic functions" item from `scalar_function_backlog.md`'s Medi
 8. ✅ New tests — `pkg/engine/func_bag_family_test.go`: 16 tests total, one per worked-example value (all 6 `bag_zip` cases, both `bag_set_key` cases plus its own non-bag-input null case, `bag_pack_columns`'s worked example plus a non-column-argument error case, `dynamic_to_json`'s canonical-ordering example plus a non-dynamic-scalar case, and three `set_has_element` cases covering found/not-found/string-match).
 9. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
 
-### ✅ Sprint 24: hash() / hash_xxhash64() — COMPLETE; hash_combine/hash_many BLOCKED, not guessed (2026-08-18)
+### ✅ Sprint 24: hash() / hash_xxhash64() — COMPLETE; hash_combine/hash_many BLOCKED, not guessed (2026-08-18; both implemented 2026-10-23, see "Emulator-pinned")
 
 Closes the "Hash functions" item from `scalar_function_backlog.md`'s Medium-priority tier — with a real correction to that list's own earlier assumption, and a genuine blocker documented rather than worked around with a guess.
 
@@ -916,7 +930,7 @@ Closes the "String functions" item from `scalar_function_backlog.md`'s Medium-pr
 9. ✅ New tests — `pkg/engine/func_string_misc_test.go`: 14 tests total, one per worked-example value across all seven functions, including a dedicated test for `replace_strings`'s own order-reversal case (the single most important behavior to guard, since it's the one a naive re-implementation would most likely get wrong) and its non-string-rewrite case.
 10. Full suite passes with `-race`, `go vet` clean, zero regressions. Verified against all three production scopes (dumuzi Findings=70, nergal Findings=154, girsu-paper `LatestTasks()`=100).
 
-### ✅ Sprint 28: datetime_part, datetime_local_to_utc/utc_to_local, unixtime_microseconds/nanoseconds_todatetime — COMPLETE; datetime_list_timezones deliberately deferred (2026-08-18)
+### ✅ Sprint 28: datetime_part, datetime_local_to_utc/utc_to_local, unixtime_microseconds/nanoseconds_todatetime — COMPLETE; datetime_list_timezones deliberately deferred (2026-08-18; implemented 2026-10-23)
 
 Closes the "Datetime" item from `scalar_function_backlog.md`'s Medium-priority tier — five functions implemented, one deferred with real reasoning, plus a stale doc row corrected along the way.
 
@@ -944,7 +958,7 @@ Closes the `_TimeReceived` accessor item and the Misc item (minus `assert`, stil
 
 1. **hll / hll_if / hll_merge, tdigest / tdigest_merge** — sketch structures; low priority for a single-node engine
 2. **buildschema, percentilesw / percentilesw_array** — niche aggregation gaps
-3. **series_* Tiers 4-5** — 18 functions remain, all curve-fitting (`series_fit_line`, `series_fit_poly`, etc.) and signal-processing/anomaly-detection (`series_decompose`, `series_outliers`, `series_periods_detect`, etc.; `series_fir`, `series_fft`/`series_ifft` and `series_seasonal` with a period exist since 2026-10-23) — already LOW priority per this project's own use cases; see `docs/timeseries_backlog.md` for the full list. No MED-priority time-series work remains.
+3. **series_* Tiers 4-5** — `series_periods_detect`/`series_periods_validate` and seasonality -1 of `series_decompose*` remain (`series_fit_*`, `series_fir`, `series_fft`/`series_ifft`, `series_seasonal`, `series_outliers`, `series_decompose*` with a period and `series_fit_2lines` exist since 2026-10-23) — already LOW priority per this project's own use cases; see `docs/timeseries_backlog.md` for the full list. No MED-priority time-series work remains.
 4. **query parameters** — `declare query_parameters(...)`
 5. **reduce** — see Sprint 12 item 5 and the "Out of Scope" section's own note above; revisit if the actual SLCT reference implementation (the `logparser` project's wrapped C source) or the full original paper text becomes directly readable.
 ~~6. `inferExprType` can't resolve a let-bound scalar's type for a declared tabular parameter~~ RESOLVED (Sprint 20, 2026-08-18) — see the Sprint 20 entry below for full detail.
