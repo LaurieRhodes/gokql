@@ -18,6 +18,9 @@ import (
 // before writing this, including the bin_at (not bin) grouping rule and
 // the half-open [start, end) bin range.
 func (e *Engine) applyMakeSeries(input *types.Table, op *parser.MakeSeriesOp) (*types.Table, error) {
+	if op.From == nil || op.To == nil {
+		return e.applyMakeSeriesAutoRange(input, op)
+	}
 	emptySchema := types.Schema{}
 	emptyRow := types.Row{}
 
@@ -395,4 +398,184 @@ func valueForJSONArray(v types.Value, t types.KQLType) interface{} {
 func formatDatetimeISO7(nanos int64) string {
 	t := time.Unix(0, nanos).UTC()
 	return t.Format("2006-01-02T15:04:05.0000000Z")
+}
+
+// applyMakeSeriesAutoRange is make-series with from and/or to omitted:
+// each group's range comes from its own data, then the group runs
+// through the explicit-range path. The rules are the emulator's:
+//
+//   - neither: bin(min, step) through the bin holding max;
+//   - from only: from (bins aligned to it) through the bin holding max;
+//   - to only: bins aligned to to, from the last grid point at or before
+//     min; the bin starting at to is included when to is itself on the
+//     step grid (bin(to, step) == to), else the series ends before to.
+func (e *Engine) applyMakeSeriesAutoRange(input *types.Table, op *parser.MakeSeriesOp) (*types.Table, error) {
+	axisCol := input.Schema.ColumnByName(op.AxisColumn)
+	if axisCol == nil {
+		return nil, fmt.Errorf("make-series: column %q not found", op.AxisColumn)
+	}
+	axisType := axisCol.Type
+	if !axisType.IsNumeric() {
+		return nil, fmt.Errorf("make-series: AxisColumn %q must be numeric (int, long, real, datetime, or timespan), got %s", op.AxisColumn, axisType)
+	}
+	axisIdx := input.Schema.ColumnIndex(op.AxisColumn)
+	emptySchema, emptyRow := types.Schema{}, types.Row{}
+	eval := func(x parser.Expr, what string) (types.Value, error) {
+		if x == nil {
+			return nil, nil
+		}
+		v, err := evalExpr(e, x, &emptySchema, emptyRow)
+		if err != nil {
+			return nil, fmt.Errorf("make-series: %s: %w", what, err)
+		}
+		return v, nil
+	}
+	fromVal, err := eval(op.From, "from")
+	if err != nil {
+		return nil, err
+	}
+	toVal, err := eval(op.To, "to")
+	if err != nil {
+		return nil, err
+	}
+	stepVal, err := eval(op.Step, "step")
+	if err != nil {
+		return nil, err
+	}
+
+	// Group the rows (first-seen order), skipping null axis values.
+	type group struct {
+		rows     []types.Row
+		min, max float64 // real axis
+		imin     int64   // int64-backed axis (ns for datetime)
+		imax     int64
+	}
+	useFloat := axisType == types.TypeReal
+	groups := map[string]*group{}
+	var order []string
+	for _, row := range input.Rows {
+		ax := row[axisIdx]
+		if ax == nil {
+			continue
+		}
+		parts := make([]string, len(op.ByExprs))
+		for i, by := range op.ByExprs {
+			v, err := evalExpr(e, by.Expr, &input.Schema, row)
+			if err != nil {
+				return nil, fmt.Errorf("make-series by %s: %w", by.Name, err)
+			}
+			parts[i] = fmt.Sprintf("%v", v)
+		}
+		key := strings.Join(parts, "\x00")
+		g := groups[key]
+		f, n := types.ToFloat64(ax), types.ToInt64(ax)
+		if g == nil {
+			g = &group{min: f, max: f, imin: n, imax: n}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.rows = append(g.rows, row)
+		g.min, g.max = math.Min(g.min, f), math.Max(g.max, f)
+		if n < g.imin {
+			g.imin = n
+		}
+		if n > g.imax {
+			g.imax = n
+		}
+	}
+
+	var out *types.Table
+	for _, key := range order {
+		g := groups[key]
+		sub := &parser.MakeSeriesOp{Aggregations: op.Aggregations, AxisColumn: op.AxisColumn,
+			Step: op.Step, ByExprs: op.ByExprs, KindNonEmpty: op.KindNonEmpty}
+		if useFloat {
+			step := types.ToFloat64(stepVal)
+			if step <= 0 {
+				return nil, fmt.Errorf("make-series: step must be a positive value")
+			}
+			start, end := seriesRangeFloat(g.min, g.max, fromVal, toVal, step)
+			sub.From = &parser.Literal{Value: start, Type: types.TypeReal}
+			sub.To = &parser.Literal{Value: end, Type: types.TypeReal}
+		} else {
+			step := types.ToInt64(stepVal)
+			if axisType == types.TypeDatetime {
+				step *= 100 // timespan ticks -> datetime nanoseconds
+			}
+			if step <= 0 {
+				return nil, fmt.Errorf("make-series: step must be a positive value")
+			}
+			start, end := seriesRangeInt(g.imin, g.imax, fromVal, toVal, step)
+			sub.From = &parser.Literal{Value: start, Type: axisType}
+			sub.To = &parser.Literal{Value: end, Type: axisType}
+		}
+		part := types.NewTable(input.Name, input.Schema)
+		part.Rows = g.rows
+		res, err := e.applyMakeSeries(part, sub)
+		if err != nil {
+			return nil, err
+		}
+		if out == nil {
+			out = res
+		} else {
+			out.Rows = append(out.Rows, res.Rows...)
+		}
+	}
+	if out == nil {
+		// No rows: the explicit path's empty result (schema only).
+		sub := *op
+		zero := &parser.Literal{Value: int64(0), Type: axisType}
+		if useFloat {
+			zero = &parser.Literal{Value: 0.0, Type: types.TypeReal}
+		}
+		sub.From, sub.To = zero, zero
+		return e.applyMakeSeries(input, &sub)
+	}
+	return out, nil
+}
+
+// seriesRangeInt is a group's [start, end) for an int64-backed axis.
+func seriesRangeInt(min, max int64, fromVal, toVal types.Value, step int64) (int64, int64) {
+	floor := func(v, s int64) int64 { return binAtInt64(v, s, 0) }
+	switch {
+	case fromVal == nil && toVal == nil:
+		return floor(min, step), floor(max, step) + step
+	case toVal == nil:
+		from := types.ToInt64(fromVal)
+		return from, binAtInt64(max, step, from) + step
+	default:
+		to := types.ToInt64(toVal)
+		if min >= to {
+			return to, to
+		}
+		k := (to - min + step - 1) / step
+		start := to - k*step
+		if floor(to, step) == to {
+			return start, to + step
+		}
+		return start, to
+	}
+}
+
+// seriesRangeFloat is seriesRangeInt for a real axis.
+func seriesRangeFloat(min, max float64, fromVal, toVal types.Value, step float64) (float64, float64) {
+	floor := func(v, s float64) float64 { return math.Floor(v/s) * s }
+	switch {
+	case fromVal == nil && toVal == nil:
+		return floor(min, step), floor(max, step) + step
+	case toVal == nil:
+		from := types.ToFloat64(fromVal)
+		return from, binAtFloat64(max, step, from) + step
+	default:
+		to := types.ToFloat64(toVal)
+		if min >= to {
+			return to, to
+		}
+		k := math.Ceil((to - min) / step)
+		start := to - k*step
+		if floor(to, step) == to {
+			return start, to + step
+		}
+		return start, to
+	}
 }

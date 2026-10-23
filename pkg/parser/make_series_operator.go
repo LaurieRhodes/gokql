@@ -162,10 +162,6 @@ func parseMakeSeries(s string) (Operator, error) {
 	}
 	op.Step = stepExpr
 
-	if op.From == nil || op.To == nil {
-		return nil, fmt.Errorf("make-series: 'from' and 'to' are both required here — real ADX's own auto-detect-from-data behavior for an omitted from/to is not implemented")
-	}
-
 	// By clause: identical grammar/auto-naming to summarize's own by
 	// clause — reuses ByExpr and deriveByName directly.
 	if byStr != "" {

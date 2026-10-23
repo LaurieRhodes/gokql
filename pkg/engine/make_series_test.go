@@ -215,13 +215,14 @@ func TestMakeSeriesRejectsNonNumericAggregation(t *testing.T) {
 		| make-series make_list(s) on t from datetime(2020-01-01) to datetime(2020-01-02) step 1d`)
 }
 
-// TestMakeSeriesRequiresFromAndTo guards this engine's own documented
-// scope limitation (real ADX allows omitting from/to and auto-detects
-// from the data; this engine requires both explicitly, per
-// MakeSeriesOp's own doc comment).
-func TestMakeSeriesRequiresFromAndTo(t *testing.T) {
-	queryError(t, `datatable(t:datetime,v:real)[datetime(2020-01-01),1]
+// TestMakeSeriesInfersRange: from/to may be omitted (ADX infers them
+// from the data; see TestMakeSeriesAutoRange for the rules).
+func TestMakeSeriesInfersRange(t *testing.T) {
+	tbl := queryResult(t, `datatable(t:datetime,v:real)[datetime(2020-01-01),1, datetime(2020-01-03),3]
 		| make-series avg(v) on t step 1d`)
+	if got := cell(t, tbl, 0, 0); got != "[1,0,3]" {
+		t.Errorf("got %s, want [1,0,3]", got)
+	}
 }
 
 // TestMakeSeriesEnforcesCap guards real ADX's own documented 2^20

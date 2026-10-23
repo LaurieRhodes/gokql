@@ -248,15 +248,10 @@ func (*RangeOp) operatorNode() {}
 //	on AxisColumn [from start] [to end] step step [by [Column=]GroupExpr[, ...]]
 //
 // Verified against real ADX docs (make-series-operator.md) before
-// building. Only the "main syntax" is implemented (real ADX's own docs
-// explicitly recommend it over the alternate "on AxisColumn in
-// range(start, stop, step)" form, so that form is deliberately out of
-// scope — see MakeSeriesOp's Not Yet Implemented note in
-// kql_coverage.md). From/To are both optional in the real grammar
-// ([from start] [to end]) but this engine requires both explicitly —
-// real ADX's own "auto-detect from the data" behavior when either is
-// omitted is NOT implemented; a query omitting either gets a clear
-// parse error rather than a silently wrong bin range. Step is always
+// building. Both the main syntax and "on AxisColumn in range(start,
+// stop, step)" are accepted. From and To are each optional: an omitted
+// bound is inferred per group from the data (engine/make_series.go
+// applyMakeSeriesAutoRange, matched to the Kusto emulator). Step is always
 // required, matching real ADX's own grammar (no brackets around it).
 type MakeSeriesOp struct {
 	Aggregations []MakeSeriesAggregation
