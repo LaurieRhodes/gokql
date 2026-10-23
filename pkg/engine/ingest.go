@@ -26,7 +26,7 @@ func (e *Engine) ingestInline(tableName string, data string) (*types.Table, erro
 	// Rows are still SIZED to the full schema (len(table.Schema.Columns),
 	// not len(fields)), leaving the reserved _TimeReceived slot nil for
 	// flushBatch's own stampTimeReceived to fill in.
-	lines := strings.Split(data, "\n")
+	lines := splitCSVRecords(data)
 	var rows []types.Row
 	dataCols := dataColumnCount(table.Schema)
 
@@ -118,7 +118,7 @@ func (e *Engine) ingestCSVFile(tableName string, filePath string) (*types.Table,
 	}
 
 	csvData := string(data)
-	lines := strings.Split(csvData, "\n")
+	lines := splitCSVRecords(csvData)
 
 	// dataCols excludes a trailing, automatic _TimeReceived column (see
 	// timereceived.go) — a real CSV file can never supply a field for
@@ -403,6 +403,32 @@ func (e *Engine) flushBatch(tableName string, tableDef *catalog.Table, rows []ty
 }
 
 // splitCSVLine splits a CSV line on commas, respecting quoted fields.
+// splitCSVRecords splits CSV text into records at line breaks outside
+// double quotes, so a quoted field may span lines (RFC 4180; the
+// StormEvents sample's StormSummary JSON does). A "" escape toggles
+// twice and so leaves the state unchanged. The \r of a CRLF record
+// end is dropped; line breaks inside quotes are kept.
+func splitCSVRecords(data string) []string {
+	var recs []string
+	inQuote := false
+	start := 0
+	for i := 0; i < len(data); i++ {
+		switch data[i] {
+		case '"':
+			inQuote = !inQuote
+		case '\n':
+			if !inQuote {
+				recs = append(recs, strings.TrimSuffix(data[start:i], "\r"))
+				start = i + 1
+			}
+		}
+	}
+	if start < len(data) {
+		recs = append(recs, strings.TrimSuffix(data[start:], "\r"))
+	}
+	return recs
+}
+
 func splitCSVLine(line string) []string {
 	var fields []string
 	var current strings.Builder

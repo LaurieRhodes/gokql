@@ -202,3 +202,20 @@ func TestIngestCSVBadValueRejectedNotZeroed(t *testing.T) {
 	got := diskQuery(t, eng, `T | count`)
 	expectCell(t, got, 0, 0, "0") // all-or-nothing: none of the good rows should have landed either
 }
+
+// A quoted field may span lines (RFC 4180): the StormEvents sample's
+// StormSummary JSON does, with CRLF line ends. Each record was split at
+// every line break, so the file was rejected.
+func TestIngestCSVQuotedMultilineFields(t *testing.T) {
+	dir := t.TempDir()
+	eng := diskEngineEmpty(t)
+	diskExec(t, eng, `.create table M (Id: long, Note: string, D: dynamic)`)
+	content := "Id,Note,D\r\n1,\"two\r\nlines\",\"{\r\n  \"\"a\"\": 1\r\n}\"\r\n2,plain,\"{\"\"a\"\": 2}\"\r\n"
+	path := writeCSV(t, dir, "m.csv", content)
+	diskExec(t, eng, `.ingest csv into table M from "`+path+`"`)
+	tbl := diskExec(t, eng, `M | order by Id asc | project Id, Note, a = toint(D.a)`)
+	expectRows(t, tbl, 2)
+	expectCell(t, tbl, 0, 1, "two\r\nlines")
+	expectCell(t, tbl, 0, 2, "1")
+	expectCell(t, tbl, 1, 2, "2")
+}
