@@ -163,7 +163,8 @@ func TestFederationWriteTargetNeverTouchesRemote(t *testing.T) {
 	beforeCount := remoteBefore.Rows[0][0]
 
 	eng := discoverEngine(t, localDir)
-	diskExec(t, eng, `.set-or-append database('remote').Findings <| datatable(Id:string) ["x"]`)
+	// A write naming another database is refused outright.
+	diskQueryError(t, eng, `.set-or-append database('remote').Findings <| datatable(Id:string) ["x"]`)
 
 	remoteAfter := diskQuery(t, discoverEngine(t, remoteDir), `Findings | count`)
 	if remoteAfter.Rows[0][0] != beforeCount {

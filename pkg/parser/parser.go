@@ -1066,6 +1066,10 @@ func parseCommand(input string) (Statement, error) {
 		return st, err
 	}
 
+	if st, ok, err := parseUpdatePolicyCommand(input); ok {
+		return st, err
+	}
+
 	// .show database
 	if lower == ".show database" {
 		return &ShowDatabaseCmd{}, nil
@@ -1145,19 +1149,38 @@ func parseCommand(input string) (Statement, error) {
 	// .set-or-append T <| query — appends the query's result rows as a
 	// new extent. Checked before ".set " since it's a longer, more
 	// specific prefix.
-	if strings.HasPrefix(lower, ".set-or-append ") {
-		rest := input[len(".set-or-append "):]
+	for _, mode := range []string{"set-or-append", "set-or-replace", "append"} {
+		if !strings.HasPrefix(lower, "."+mode+" ") {
+			continue
+		}
+		rest := input[len(mode)+2:]
 		idx := strings.Index(rest, "<|")
 		if idx < 0 {
-			return nil, fmt.Errorf(".set-or-append requires <| delimiter")
+			return nil, fmt.Errorf(".%s requires <| delimiter", mode)
 		}
-		tableName := strings.TrimSpace(rest[:idx])
-		queryStr := strings.TrimSpace(rest[idx+2:])
-		query, err := parseQuery(queryStr)
+		tableName, opts, err := parseIngestTarget(mode, rest[:idx])
 		if err != nil {
-			return nil, fmt.Errorf(".set-or-append query: %w", err)
+			return nil, err
 		}
-		return &SetOrAppendCmd{TableName: tableName, Query: query.(*Query)}, nil
+		query, err := parseQuery(strings.TrimSpace(rest[idx+2:]))
+		if err != nil {
+			return nil, fmt.Errorf(".%s query: %w", mode, err)
+		}
+		q, ok := query.(*Query)
+		if !ok {
+			return nil, fmt.Errorf(".%s: expected a tabular query after <|", mode)
+		}
+		return &SetOrAppendCmd{TableName: tableName, Query: q, Mode: mode, Options: opts}, nil
+	}
+
+	// .delete table T records [with (whatif=true)] <| T | where ...
+	if strings.HasPrefix(lower, ".delete table ") {
+		return parseDeleteRecords(input[len(".delete table "):])
+	}
+
+	// .execute database script [with (...)] <| commands
+	if strings.HasPrefix(lower, ".execute database script") {
+		return parseExecuteScript(input[len(".execute database script"):])
 	}
 
 	// .chunk-file "path" into T — reads a markdown file, splits it into
@@ -1277,7 +1300,10 @@ func parseCommand(input string) (Statement, error) {
 		if idx < 0 {
 			return nil, fmt.Errorf(".set requires <| delimiter")
 		}
-		tableName := strings.TrimSpace(rest[:idx])
+		tableName, _, err := parseIngestTarget("set", rest[:idx])
+		if err != nil {
+			return nil, err
+		}
 		queryStr := strings.TrimSpace(rest[idx+2:])
 		query, err := parseQuery(queryStr)
 		if err != nil {

@@ -1382,6 +1382,13 @@ func (*SetCmd) statementNode() {}
 type SetOrAppendCmd struct {
 	TableName string
 	Query     *Query
+	// Mode is "set-or-append" (the default when empty), "append" (the
+	// table must exist) or "set-or-replace" (the result replaces the
+	// table's rows).
+	Mode string
+	// Options are the with(...) properties: extend_schema,
+	// recreate_schema.
+	Options map[string]string
 }
 
 func (*SetOrAppendCmd) statementNode() {}

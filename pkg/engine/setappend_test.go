@@ -119,7 +119,7 @@ func TestHelpListsCommands(t *testing.T) {
 	for _, row := range tbl.Rows {
 		found[row[0].(string)] = true
 	}
-	for _, must := range []string{".set-or-append T <| query", ".drop extent <guid>", ".help"} {
+	for _, must := range []string{".set-or-append T [with (extend_schema=true)] <| query", ".drop extent <guid>", ".help"} {
 		if !found[must] {
 			t.Errorf(".help is missing an entry for %q", must)
 		}

@@ -196,60 +196,11 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	// file was playing, so those are safe to supersede below too.
 	// Wide rows (embeddings) are split into several extents so a scan
 	// can spread them across CPUs; others stay one extent.
-	var newIDs []string
-	per := extentRowsFor(allRows)
-	for start := 0; start == 0 || start < len(allRows); start += per {
-		end := start + per
-		if end > len(allRows) {
-			end = len(allRows)
-		}
-		id, err := e.flushBatch(cmd.TableName, tableDef, allRows[start:end])
-		if err != nil {
-			return nil, fmt.Errorf(".compact: writing merged extent: %w", err)
-		}
-		newIDs = append(newIDs, id)
+	newIDs, superseded, renameErrs, err := e.rewriteExtents(cmd.TableName, tableDef, snapshot, shellFiles, allRows)
+	if err != nil {
+		return nil, fmt.Errorf(".compact: %w", err)
 	}
 	newExtentID := strings.Join(newIDs, ",")
-
-	if compactBeforeSupersedeHook != nil {
-		compactBeforeSupersedeHook()
-	}
-
-	// Supersede exactly the snapshotted old extents, PLUS the shell
-	// files found above — rename, not delete. Update the in-memory
-	// Extents list to match immediately, so this same process/session
-	// sees consistent results right away without needing to
-	// re-discover. Shell files were never in tableDef.Extents, so only
-	// the row-bearing ones need that bookkeeping step.
-	superseded := 0
-	var renameErrs []error
-	supersededIDs := make(map[string]bool, len(snapshot))
-	for _, ext := range snapshot {
-		fullPath := filepath.Join(e.Catalog.DatabasePath(), ext.FilePath)
-		if err := os.Rename(fullPath, fullPath+supersededSuffix); err != nil {
-			renameErrs = append(renameErrs, fmt.Errorf("%s: %w", ext.ID, err))
-			continue
-		}
-		supersededIDs[ext.ID] = true
-		superseded++
-	}
-	for _, relPath := range shellFiles {
-		fullPath := filepath.Join(e.Catalog.DatabasePath(), relPath)
-		if err := os.Rename(fullPath, fullPath+supersededSuffix); err != nil {
-			renameErrs = append(renameErrs, fmt.Errorf("shell %s: %w", relPath, err))
-			continue
-		}
-		superseded++
-	}
-	if len(supersededIDs) > 0 {
-		kept := tableDef.Extents[:0]
-		for _, ext := range tableDef.Extents {
-			if !supersededIDs[ext.ID] {
-				kept = append(kept, ext)
-			}
-		}
-		tableDef.Extents = kept
-	}
 
 	status := "OK"
 	if len(renameErrs) > 0 {
@@ -717,4 +668,59 @@ func compactVectorColumns(schema types.Schema, rows []types.Row) ([]string, erro
 		changed = append(changed, col.Name)
 	}
 	return changed, nil
+}
+
+// rewriteExtents writes rows as new extents of tableName, then
+// supersedes the snapshot extents and shell files (rename, not delete)
+// and drops them from tableDef.Extents. A crash between the two steps
+// leaves both old and new extents, never neither. renameErrs lists old
+// files that could not be superseded (their rows are then counted
+// twice until resolved).
+func (e *Engine) rewriteExtents(tableName string, tableDef *catalog.Table, snapshot []catalog.ExtentEntry,
+	shellFiles []string, rows []types.Row) (newIDs []string, superseded int, renameErrs []error, err error) {
+	per := extentRowsFor(rows)
+	for start := 0; start == 0 || start < len(rows); start += per {
+		end := start + per
+		if end > len(rows) {
+			end = len(rows)
+		}
+		id, err := e.flushBatch(tableName, tableDef, rows[start:end])
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("writing extent: %w", err)
+		}
+		newIDs = append(newIDs, id)
+	}
+
+	if compactBeforeSupersedeHook != nil {
+		compactBeforeSupersedeHook()
+	}
+
+	supersededIDs := make(map[string]bool, len(snapshot))
+	for _, ext := range snapshot {
+		fullPath := filepath.Join(e.Catalog.DatabasePath(), ext.FilePath)
+		if err := os.Rename(fullPath, fullPath+supersededSuffix); err != nil {
+			renameErrs = append(renameErrs, fmt.Errorf("%s: %w", ext.ID, err))
+			continue
+		}
+		supersededIDs[ext.ID] = true
+		superseded++
+	}
+	for _, relPath := range shellFiles {
+		fullPath := filepath.Join(e.Catalog.DatabasePath(), relPath)
+		if err := os.Rename(fullPath, fullPath+supersededSuffix); err != nil {
+			renameErrs = append(renameErrs, fmt.Errorf("shell %s: %w", relPath, err))
+			continue
+		}
+		superseded++
+	}
+	if len(supersededIDs) > 0 {
+		kept := tableDef.Extents[:0]
+		for _, ext := range tableDef.Extents {
+			if !supersededIDs[ext.ID] {
+				kept = append(kept, ext)
+			}
+		}
+		tableDef.Extents = kept
+	}
+	return newIDs, superseded, renameErrs, nil
 }

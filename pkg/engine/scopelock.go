@@ -78,11 +78,20 @@ func (e *Engine) lockScope(stmt parser.Statement) func() {
 	}
 }
 
-// needsExclusiveScope reports whether a statement compacts.
+// needsExclusiveScope reports whether a statement compacts or
+// otherwise supersedes extents (.set-or-replace, .delete records).
 func needsExclusiveScope(stmt parser.Statement) bool {
 	switch s := stmt.(type) {
-	case *parser.CompactTableCmd, *parser.CompactDatabaseCmd, *parser.MergeExtentsCmd:
+	case *parser.CompactTableCmd, *parser.CompactDatabaseCmd, *parser.MergeExtentsCmd, *parser.DeleteRecordsCmd:
 		return true
+	case *parser.SetOrAppendCmd:
+		return s.Mode == "set-or-replace"
+	case *parser.ExecuteScriptCmd:
+		for _, c := range s.Commands {
+			if st, err := parser.Parse(c); err == nil && needsExclusiveScope(st) {
+				return true
+			}
+		}
 	case *parser.CompoundStatement:
 		if needsExclusiveScope(s.Final) {
 			return true

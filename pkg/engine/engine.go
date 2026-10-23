@@ -598,9 +598,21 @@ func (e *Engine) execute(stmt parser.Statement) (*types.Table, error) {
 		return e.setCreate(s)
 	case *parser.SetOrAppendCmd:
 		return e.setOrAppend(s)
+	case *parser.DeleteRecordsCmd:
+		return e.applyDeleteRecords(s)
+	case *parser.UpdatePolicyCmd:
+		return e.applyUpdatePolicyCmd(s)
+	case *parser.ExecuteScriptCmd:
+		return e.applyExecuteScript(s)
 	case *parser.IngestInlineCmd:
+		if err := e.checkDirectWrite(s.TableName, "ingest"); err != nil {
+			return nil, err
+		}
 		return e.ingestInline(s.TableName, s.Data)
 	case *parser.IngestCSVCmd:
+		if err := e.checkDirectWrite(s.TableName, "ingest"); err != nil {
+			return nil, err
+		}
 		return e.ingestCSVFile(s.TableName, s.FilePath)
 	case *parser.MergeExtentsCmd:
 		// ADX's name for merging a table's extents; on disk that is
