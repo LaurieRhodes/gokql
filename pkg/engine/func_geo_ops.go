@@ -5,6 +5,7 @@ package engine
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/golang/geo/s1"
@@ -435,43 +436,35 @@ func geoSimplify(g *geoShape, tolMeters float64) (string, bool) {
 	return geoLinesJSON(l.Polylines), true
 }
 
-// geoDestructiveUnion is S2Polygon::DestructiveUnion: repeatedly union the
-// two polygons with the fewest vertices (ties by position), snapping with
-// S2::kIntersectionMergeRadius.
+// geoDestructiveUnion is the older S2Polygon::DestructiveApproxUnion
+// that ADX's results match: a multimap from vertex count to polygon (equal
+// keys in insertion order); the two first entries are unioned with snap
+// radius S2::kIntersectionMergeRadius and the result is re-inserted under
+// the sum of their keys, not its own vertex count. (Current S2 uses a
+// priority queue on the true count, which starts output rings elsewhere.)
 func geoDestructiveUnion(polys []*s2.Polygon) (*s2.Polygon, bool) {
 	if len(polys) == 0 {
 		return s2.PolygonFromLoops(nil), true
 	}
 	type item struct {
-		p   *s2.Polygon
-		pos int
+		p *s2.Polygon
+		n int
 	}
-	queue := make([]item, len(polys))
-	for i, p := range polys {
-		queue[i] = item{p, i}
+	var queue []item
+	insert := func(it item) {
+		i := sort.Search(len(queue), func(i int) bool { return queue[i].n > it.n })
+		queue = append(queue, item{})
+		copy(queue[i+1:], queue[i:])
+		queue[i] = it
 	}
-	less := func(a, b item) bool {
-		na, nb := a.p.NumEdges(), b.p.NumEdges()
-		if na != nb {
-			return na < nb
-		}
-		return a.pos < b.pos
-	}
-	pop := func() item {
-		best := 0
-		for i := 1; i < len(queue); i++ {
-			if less(queue[i], queue[best]) {
-				best = i
-			}
-		}
-		it := queue[best]
-		queue = append(queue[:best], queue[best+1:]...)
-		return it
+	for _, p := range polys {
+		insert(item{p, p.NumEdges()})
 	}
 	o := s2x.DefaultBooleanOptions()
 	o.SnapFunction = s2x.IdentitySnapFunction{Radius: s2x.IntersectionMergeRadius}
 	for len(queue) > 1 {
-		a, b := pop(), pop()
+		a, b := queue[0], queue[1]
+		queue = queue[2:]
 		ia, ib := s2.NewShapeIndex(), s2.NewShapeIndex()
 		ia.Add(a.p)
 		ib.Add(b.p)
@@ -479,7 +472,7 @@ func geoDestructiveUnion(polys []*s2.Polygon) (*s2.Polygon, bool) {
 		if err := s2x.NewBooleanOperation(s2x.OpUnion, o, l).Build(ia, ib); err != nil {
 			return nil, false
 		}
-		queue = append(queue, item{l.Polygon, a.pos})
+		insert(item{l.Polygon, a.n + b.n})
 	}
 	return queue[0].p, true
 }
