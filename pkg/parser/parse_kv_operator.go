@@ -49,6 +49,10 @@ func parseParseKVOperator(s string) (Operator, error) {
 
 	rest = strings.TrimSpace(rest[keysClose+1:])
 	lowerRest := keywordFold(rest)
+	if rest == "" {
+		// non-specified delimiter mode, no options
+		return &ParseKVOp{Column: column, Keys: keys}, nil
+	}
 	if !strings.HasPrefix(lowerRest, "with") {
 		return nil, fmt.Errorf("parse-kv: expected 'with (...)' after KeysList")
 	}
@@ -88,16 +92,22 @@ func parseParseKVOperator(s string) (Operator, error) {
 			op.Greedy = strings.EqualFold(optVal, "true")
 		case "regex":
 			sawRegex = true
+			x, err := ParseExpr(strings.TrimSpace(item[eqIdx+1:]))
+			lit, ok := x.(*Literal)
+			if err != nil || !ok {
+				return nil, fmt.Errorf("parse-kv: regex must be a string literal")
+			}
+			op.Regex = fmt.Sprint(lit.Value)
 		default:
 			return nil, fmt.Errorf("parse-kv: unrecognized with(...) option %q", optName)
 		}
 	}
 
-	if sawRegex {
-		return nil, fmt.Errorf("parse-kv: regex=... mode is not implemented — only the pair_delimiter/kv_delimiter (\"specified delimiter\") mode is supported")
+	if sawRegex && (sawPairDelim || sawKVDelim) {
+		return nil, fmt.Errorf("parse-kv: regex cannot be combined with pair_delimiter/kv_delimiter")
 	}
-	if !sawPairDelim || !sawKVDelim {
-		return nil, fmt.Errorf("parse-kv: the \"non-specified delimiter\" mode (no pair_delimiter/kv_delimiter given) is not implemented — pair_delimiter and kv_delimiter are both required here")
+	if sawPairDelim != sawKVDelim {
+		return nil, fmt.Errorf("parse-kv: pair_delimiter and kv_delimiter go together (or neither, for the non-specified delimiter mode)")
 	}
 
 	return op, nil

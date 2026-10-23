@@ -905,6 +905,11 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			}
 			return types.TypeDynamic
 		}
+		if e.Name == "datetime_diff" && len(e.Args) > 0 {
+			if lit, ok := e.Args[0].(*parser.Literal); ok && strings.EqualFold(fmt.Sprint(lit.Value), "week") {
+				return types.TypeReal // the emulator: the week count is real
+			}
+		}
 		if t, ok := overrideReturnType(e.Name); ok {
 			return t
 		}
@@ -921,6 +926,11 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			return types.TypeDatetime
 		case "bin", "floor", "bin_at":
 			return binResultType(eng, e.Args, schema)
+		case "bin_auto":
+			if len(e.Args) == 1 && eng != nil && eng.binAutoSize != nil {
+				return binResultType(eng, []parser.Expr{e.Args[0], eng.binAutoSize}, schema)
+			}
+			return types.TypeDynamic
 		case "abs", "round", "ceiling":
 			// abs: the argument's type, except abs(int) is long.
 			if len(e.Args) == 0 {

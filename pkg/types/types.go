@@ -333,6 +333,10 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 			"1/2/2006 15:04:05",
 			"1/2/2006 15:04",
 			"1/2/2006",
+			// M-d-yyyy too (the emulator: "12-02-2022" is 2 Dec 2022).
+			"1-2-2006 15:04:05",
+			"1-2-2006 15:04",
+			"1-2-2006",
 			// Unpadded month/day ISO forms: datetime(1970-5-12).
 			"2006-1-2T15:04:05",
 			"2006-1-2 15:04:05",

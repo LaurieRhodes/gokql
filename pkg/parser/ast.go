@@ -337,6 +337,10 @@ type ParseKVOp struct {
 	Quotes        []string // each entry 1 or 2 chars: 1 = same open/close, 2 = distinct open/close
 	Escape        string   // empty = no escape char configured
 	Greedy        bool
+	// Regex is the regex mode's pattern (two groups: key, value).
+	// With no Regex and no delimiters the operator runs in the non-
+	// specified delimiter mode.
+	Regex string
 }
 
 func (*ParseKVOp) operatorNode() {}
@@ -1279,6 +1283,9 @@ type CompoundStatement struct {
 	// BatchLetsBefore[k] counts the lets written before Batch[k].
 	Batch           []Statement
 	BatchLetsBefore []int
+	// Options holds the query's set statements (set name [= value]),
+	// raw value text by lowercased name ("true" when no value).
+	Options map[string]string
 }
 
 func (*CompoundStatement) statementNode() {}

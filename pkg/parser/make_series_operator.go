@@ -234,6 +234,15 @@ func parseMakeSeriesAggregation(s string) (*MakeSeriesAggregation, error) {
 	}
 
 	agg, err := parseAggregation(aggText)
+	if err != nil && strings.Contains(err.Error(), "contains no aggregation function") {
+		// A constant item (other=-1): its value in a bin with rows,
+		// the default in an empty one (the emulator) — take_any.
+		name, expr := "", aggText
+		if eq := assignmentEqIndex(aggText); eq > 0 {
+			name, expr = strings.TrimSpace(aggText[:eq])+" = ", strings.TrimSpace(aggText[eq+1:])
+		}
+		agg, err = parseAggregation(name + "take_any(" + expr + ")")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("make-series: %w", err)
 	}

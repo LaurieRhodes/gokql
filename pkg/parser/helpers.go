@@ -63,7 +63,63 @@ func splitPipe(s string) []string {
 		current.WriteByte(ch)
 	}
 	parts = append(parts, current.String())
-	return parts
+	return expandTopHitters(parts)
+}
+
+// expandTopHitters rewrites each `top-hitters N of Expr [by SumExpr]`
+// segment as the summarize and top it means (exact counts and sums,
+// which the emulator's approximate ones equal on modest data):
+//
+//	summarize approximate_count_X = count() by X = Expr | top N by approximate_count_X desc
+//	summarize approximate_sum_Y = sum(SumExpr) by X = Expr | top N by approximate_sum_Y desc
+func expandTopHitters(parts []string) []string {
+	var out []string
+	for i, seg := range parts {
+		t := strings.TrimSpace(seg)
+		if !strings.HasPrefix(keywordFold(t), "top-hitters ") {
+			if out != nil {
+				out = append(out, seg)
+			}
+			continue
+		}
+		if out == nil {
+			out = append([]string(nil), parts[:i]...)
+		}
+		rest := strings.TrimSpace(t[len("top-hitters "):])
+		of := findKeyword(rest, "of")
+		if of < 0 {
+			out = append(out, seg) // let parseOperator report it
+			continue
+		}
+		n, body := strings.TrimSpace(rest[:of]), strings.TrimSpace(rest[of+2:])
+		ofText, byText := body, ""
+		if by := findKeyword(body, "by"); by >= 0 {
+			ofText, byText = strings.TrimSpace(body[:by]), strings.TrimSpace(body[by+2:])
+		}
+		name := ofText
+		if x, err := ParseExpr(ofText); err == nil {
+			if r, ok := ExprResultName(x); ok && r != "" {
+				name = r
+			}
+		}
+		col, agg := "approximate_count_"+name, "count()"
+		if byText != "" {
+			sumName := byText
+			if x, err := ParseExpr(byText); err == nil {
+				if r, ok := ExprResultName(x); ok && r != "" {
+					sumName = r
+				}
+			}
+			col, agg = "approximate_sum_"+sumName, "sum("+byText+")"
+		}
+		out = append(out,
+			fmt.Sprintf(" summarize ['%s'] = %s by ['%s'] = %s ", col, agg, name, ofText),
+			fmt.Sprintf(" top %s by ['%s'] desc", n, col))
+	}
+	if out == nil {
+		return parts
+	}
+	return out
 }
 
 // splitRespectingParens splits on sep but not inside parentheses or quotes.

@@ -2,7 +2,9 @@ package engine
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -45,6 +47,16 @@ func (e *Engine) applyParseKV(input *types.Table, op *parser.ParseKVOp) (*types.
 		return nil, fmt.Errorf("parse-kv: column %q not found", op.Column)
 	}
 
+	var re *regexp.Regexp
+	if op.Regex != "" {
+		var err error
+		if re, err = regexp.Compile(op.Regex); err != nil {
+			return nil, fmt.Errorf("parse-kv: regex: %w", err)
+		}
+		if re.NumSubexp() != 2 {
+			return nil, fmt.Errorf("parse-kv: regex needs exactly two groups (key, value)")
+		}
+	}
 	for _, row := range input.Rows {
 		srcVal := ""
 		if row[srcIdx] != nil {
@@ -52,9 +64,14 @@ func (e *Engine) applyParseKV(input *types.Table, op *parser.ParseKVOp) (*types.
 		}
 
 		var found map[string]string
-		if op.Greedy {
+		switch {
+		case re != nil:
+			found = parseKVRegex(srcVal, re)
+		case op.PairDelimiter == "" && op.KVDelimiter == "":
+			found = parseKVUndelimited(srcVal, op.Keys, op.Quotes, op.Escape)
+		case op.Greedy:
 			found = parseKVGreedy(srcVal, op.Keys, op.PairDelimiter, op.KVDelimiter, op.Quotes)
-		} else {
+		default:
 			found = parseKVSpecified(srcVal, op.PairDelimiter, op.KVDelimiter, op.Quotes, op.Escape)
 		}
 
@@ -299,4 +316,74 @@ func stripKVDataQuotes(s string, quotes []string) string {
 		}
 	}
 	return s
+}
+
+// parseKVRegex is the regex mode: every match's first group is a key
+// and its second the value; a later match of a key wins (the emulator).
+func parseKVRegex(s string, re *regexp.Regexp) map[string]string {
+	found := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(s, -1) {
+		found[m[1]] = m[2]
+	}
+	return found
+}
+
+// parseKVUndelimited is the non-specified delimiter mode: the text is
+// read as tokens — runs of letters and digits, or quoted strings (with
+// the escape character) — and every other character delimits. A
+// requested key takes the token after its first occurrence (the
+// emulator: "k2=;k3=v3" gives k2 the token k3).
+func parseKVUndelimited(s string, keys []parser.ParseKVKey, quotes []string, escape string) map[string]string {
+	var toks []string
+	rs := []rune(s)
+	for i := 0; i < len(rs); {
+		r := rs[i]
+		if q := quoteFor(r, quotes); q != 0 {
+			var b strings.Builder
+			j := i + 1
+			for ; j < len(rs) && rs[j] != q; j++ {
+				if escape != "" && string(rs[j]) == escape && j+1 < len(rs) {
+					j++
+				}
+				b.WriteRune(rs[j])
+			}
+			toks = append(toks, b.String())
+			i = j + 1
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			j := i
+			for j < len(rs) && (unicode.IsLetter(rs[j]) || unicode.IsDigit(rs[j])) {
+				j++
+			}
+			toks = append(toks, string(rs[i:j]))
+			i = j
+			continue
+		}
+		i++
+	}
+	want := map[string]bool{}
+	for _, k := range keys {
+		want[k.Name] = true
+	}
+	found := map[string]string{}
+	for i := 0; i+1 < len(toks); i++ {
+		if want[toks[i]] {
+			if _, seen := found[toks[i]]; !seen {
+				found[toks[i]] = toks[i+1]
+			}
+		}
+	}
+	return found
+}
+
+// quoteFor is the closing quote for an opening quote r, or 0.
+func quoteFor(r rune, quotes []string) rune {
+	for _, q := range quotes {
+		rq := []rune(q)
+		if len(rq) > 0 && rq[0] == r {
+			return rq[len(rq)-1]
+		}
+	}
+	return 0
 }

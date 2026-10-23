@@ -228,9 +228,28 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		return string(b), true, nil
 
 	case "array_index_of":
-		// array_index_of(array, value) — returns first index or -1
-		if len(fc.Args) != 2 {
-			return nil, true, fmt.Errorf("array_index_of requires 2 arguments")
+		// array_index_of(array, value [, start [, length [, occurrence]]]):
+		// the occurrence-th match inside [start, start+length) (the
+		// emulator); a negative start counts from the end (clamped at
+		// 0), length -1 is unlimited and below -1 null.
+		if len(fc.Args) < 2 || len(fc.Args) > 5 {
+			return nil, true, fmt.Errorf("array_index_of requires 2 to 5 arguments")
+		}
+		opt := func(i int, def int64) (int64, bool) {
+			if len(fc.Args) <= i {
+				return def, true
+			}
+			v, err := evalExpr(eng, fc.Args[i], schema, row)
+			if err != nil || v == nil {
+				return 0, false
+			}
+			return types.ToInt64(v), true
+		}
+		start, ok1 := opt(2, 0)
+		length, ok2 := opt(3, -1)
+		occ, ok3 := opt(4, 1)
+		if !ok1 || !ok2 || !ok3 || length < -1 || occ < 1 {
+			return nil, true, nil
 		}
 		arrVal, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
@@ -247,10 +266,20 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		if !ok {
 			return int64(-1), true, nil
 		}
+		n := int64(len(arr))
+		if start < 0 {
+			start = max(start+n, 0)
+		}
+		end := n
+		if length >= 0 {
+			end = min(start+length, n)
+		}
 		searchStr := fmt.Sprintf("%v", searchVal)
-		for i, elem := range arr {
-			if fmt.Sprintf("%v", elem) == searchStr {
-				return int64(i), true, nil
+		for i := start; i < end; i++ {
+			if fmt.Sprintf("%v", arr[i]) == searchStr {
+				if occ--; occ == 0 {
+					return i, true, nil
+				}
 			}
 		}
 		return int64(-1), true, nil

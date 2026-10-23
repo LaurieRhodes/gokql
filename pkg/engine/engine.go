@@ -13,9 +13,11 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	vortex "github.com/LaurieRhodes/vortex-go"
 
@@ -193,6 +195,15 @@ type Engine struct {
 	// fork and facet produce; ExecuteAll returns them.
 	extraResults []*types.Table
 
+	// queryNow is now() for the running query (ADX: one value per
+	// query; set query_now overrides it); queryOptions holds the
+	// query's set statements while it runs.
+	queryNow     int64
+	queryOptions map[string]string
+	// binAuto is bin_auto's (size, at) from set query_bin_auto_size /
+	// query_bin_auto_at; at is nil when unset.
+	binAutoSize, binAutoAt parser.Expr
+
 	// ExternalResolver is nil by default -- purely additive, zero
 	// impact on this engine's own behavior unless a host application
 	// sets it. Deliberately a field on Engine itself, NOT package-level
@@ -347,11 +358,76 @@ func (e *Engine) getSharedDict(table, column string) (*sharedDict, error) {
 // Execute runs a parsed statement and returns the result table (if any).
 func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 	outer := e.execDepth.Load() == 0
+	if outer {
+		e.queryNow = time.Now().UTC().UnixNano()
+		defer func() { e.queryNow, e.queryOptions, e.binAutoSize, e.binAutoAt = 0, nil, nil, nil }()
+	}
 	t, err := e.execute(stmt)
 	if outer && err == nil {
-		t = stringNullsToEmpty(t)
+		t = stringNullsToEmpty(e.truncateToOption(t))
 	}
 	return t, err
+}
+
+// nowNanos is now() for the running query.
+func (e *Engine) nowNanos() int64 {
+	if e != nil && e.queryNow != 0 {
+		return e.queryNow
+	}
+	return time.Now().UTC().UnixNano()
+}
+
+// applyQueryOptions installs a query's set statements: query_now fixes
+// now(); the bin_auto and truncation options are read where used.
+func (e *Engine) applyQueryOptions(opts map[string]string) error {
+	if len(opts) == 0 {
+		return nil
+	}
+	e.queryOptions = opts
+	for k, dst := range map[string]*parser.Expr{"query_bin_auto_size": &e.binAutoSize, "query_bin_auto_at": &e.binAutoAt} {
+		if v, ok := opts[k]; ok {
+			x, err := parser.ParseExpr(v)
+			if err != nil {
+				return fmt.Errorf("set %s: %w", k, err)
+			}
+			*dst = x
+		}
+	}
+	if v, ok := opts["query_now"]; ok {
+		val, err := e.evalOptionExpr(v)
+		if err != nil {
+			return fmt.Errorf("set query_now: %w", err)
+		}
+		e.queryNow = types.ToInt64(val)
+	}
+	return nil
+}
+
+// evalOptionExpr evaluates a set statement's value text.
+func (e *Engine) evalOptionExpr(text string) (types.Value, error) {
+	x, err := parser.ParseExpr(text)
+	if err != nil {
+		return nil, err
+	}
+	return evalExpr(e, x, &types.Schema{}, types.Row{})
+}
+
+// truncateToOption applies set query_take_max_records /
+// truncationmaxrecords to a query result.
+func (e *Engine) truncateToOption(t *types.Table) *types.Table {
+	if t == nil || e.queryOptions == nil {
+		return t
+	}
+	for _, k := range []string{"query_take_max_records", "truncationmaxrecords"} {
+		if v, ok := e.queryOptions[k]; ok {
+			if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n >= 0 && int64(len(t.Rows)) > n {
+				c := *t
+				c.Rows = t.Rows[:n]
+				return &c
+			}
+		}
+	}
+	return t
 }
 
 // stringNullsToEmpty replaces null cells of string columns with "":
@@ -583,6 +659,9 @@ func (e *Engine) lets() *LetContext {
 
 // executeCompound evaluates let bindings in order, then executes the final statement.
 func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, error) {
+	if err := e.applyQueryOptions(cs.Options); err != nil {
+		return nil, err
+	}
 	ctx := &LetContext{
 		Scalars:     make(map[string]types.Value),
 		ScalarTypes: make(map[string]types.KQLType),

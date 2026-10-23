@@ -301,6 +301,14 @@ func rewriteBackslashVerbatim(s string) string {
 }
 
 func Parse(input string) (Statement, error) {
+	return ParseWithParameters(input, nil)
+}
+
+// ParseWithParameters is Parse with query parameter values (a request's
+// properties.Parameters): each overrides the default of the parameter
+// of that name in the query's declare query_parameters(...). Values are
+// KQL literals; a string parameter may also be given as raw text.
+func ParseWithParameters(input string, params map[string]string) (Statement, error) {
 	input, err := translateQueryLanguage(input)
 	if err != nil {
 		return nil, err
@@ -324,6 +332,78 @@ func Parse(input string) (Statement, error) {
 	// Split on semicolons (respecting strings and parentheses)
 	stmts := splitStatements(input)
 
+	// set statements and declare query_parameters(...) come first;
+	// a parameter's default binds as a let.
+	options := map[string]string{}
+	var paramLets []*LetStatement
+	for len(stmts) > 0 {
+		st := strings.TrimSpace(stmts[0])
+		lower := keywordFold(st)
+		if strings.HasPrefix(lower, "set ") {
+			name, val := strings.TrimSpace(st[4:]), "true"
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name, val = strings.TrimSpace(name[:eq]), strings.TrimSpace(name[eq+1:])
+			}
+			options[strings.ToLower(name)] = val
+			stmts = stmts[1:]
+			continue
+		}
+		if strings.HasPrefix(lower, "declare query_parameters") {
+			rest := strings.TrimSpace(st[len("declare query_parameters"):])
+			if !strings.HasPrefix(rest, "(") || !strings.HasSuffix(rest, ")") {
+				return nil, fmt.Errorf("declare query_parameters: expected (name:type [= default], ...)")
+			}
+			decl, err := ParseFunctionParams(rest[1 : len(rest)-1])
+			if err != nil {
+				return nil, fmt.Errorf("declare query_parameters: %w", err)
+			}
+			for _, p := range decl {
+				if v, ok := params[p.Name]; ok {
+					x, err := ParseExpr(v)
+					if lit, isLit := x.(*Literal); err != nil || (p.Type == types.TypeString && (!isLit || lit.Type != types.TypeString)) {
+						if p.Type != types.TypeString {
+							return nil, fmt.Errorf("query parameter %s: %q is not a %s literal", p.Name, v, p.Type)
+						}
+						x = &Literal{Value: v, Type: types.TypeString}
+					}
+					paramLets = append(paramLets, &LetStatement{Name: p.Name, Value: &ScalarExpr{Expr: x, Raw: v}})
+					continue
+				}
+				if !p.HasDefault {
+					return nil, fmt.Errorf("query parameter %s has no value and no default", p.Name)
+				}
+				paramLets = append(paramLets, &LetStatement{Name: p.Name, Value: &ScalarExpr{Expr: p.Default}})
+			}
+			stmts = stmts[1:]
+			continue
+		}
+		break
+	}
+	if len(stmts) == 0 {
+		return nil, fmt.Errorf("expected a query after the set/declare statements")
+	}
+	if len(options) > 0 || len(paramLets) > 0 {
+		st, err := parseStatements(stmts)
+		if err != nil {
+			return nil, err
+		}
+		cs, ok := st.(*CompoundStatement)
+		if !ok {
+			cs = &CompoundStatement{Final: st}
+		}
+		cs.Lets = append(paramLets, cs.Lets...)
+		for i := range cs.BatchLetsBefore {
+			cs.BatchLetsBefore[i] += len(paramLets)
+		}
+		cs.Options = options
+		return cs, nil
+	}
+	return parseStatements(stmts)
+}
+
+// parseStatements parses split statements: a single statement, or
+// lets and one or more statements.
+func parseStatements(stmts []string) (Statement, error) {
 	// If single statement with no let prefix, parse directly
 	if len(stmts) == 1 && !strings.HasPrefix(keywordFold(strings.TrimSpace(stmts[0])), "let ") {
 		return parseSingleStatement(stmts[0])

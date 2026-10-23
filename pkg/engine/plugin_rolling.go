@@ -55,9 +55,16 @@ func pluginScalar(eng *Engine, text string) (types.Value, types.KQLType, error) 
 }
 
 func pluginColumn(in *types.Table, plugin, which, name string) (int, error) {
-	i := in.Schema.ColumnIndex(strings.TrimSpace(name))
+	name = strings.TrimSpace(name)
+	// a bracket-quoted name: ['id'], ["id"]
+	if len(name) >= 4 && name[0] == '[' && name[len(name)-1] == ']' {
+		if q := name[1]; (q == '\'' || q == '"') && name[len(name)-2] == q {
+			name = name[2 : len(name)-2]
+		}
+	}
+	i := in.Schema.ColumnIndex(name)
 	if i < 0 {
-		return 0, fmt.Errorf("%s: %s column %q not found", plugin, which, strings.TrimSpace(name))
+		return 0, fmt.Errorf("%s: %s column %q not found", plugin, which, name)
 	}
 	return i, nil
 }

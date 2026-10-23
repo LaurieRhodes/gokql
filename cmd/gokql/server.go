@@ -246,6 +246,32 @@ func (r kustoRequest) queryLanguage() (lang, graphRef string) {
 	return get("query_language"), get("query_graph_reference")
 }
 
+// parameters extracts properties.Parameters: the values of the
+// query's declare query_parameters(...), as KQL literal text.
+func (r kustoRequest) parameters() map[string]string {
+	raw := r.Properties
+	var str string
+	if json.Unmarshal(raw, &str) == nil {
+		raw = json.RawMessage(str)
+	}
+	var props struct {
+		Parameters map[string]interface{} `json:"Parameters"`
+	}
+	if json.Unmarshal(raw, &props) != nil || len(props.Parameters) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(props.Parameters))
+	for k, v := range props.Parameters {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		} else {
+			b, _ := json.Marshal(v)
+			out[k] = string(b)
+		}
+	}
+	return out
+}
+
 // kustoColumn mirrors kustainer-ui's models.Column exactly — verified
 // field names and JSON tags against that real client, not guessed.
 type kustoColumn struct {
@@ -349,7 +375,7 @@ func handleKustoRequest(cfg serverConfig, w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	stmt, err := parser.Parse(query)
+	stmt, err := parser.ParseWithParameters(query, req.parameters())
 	if err != nil {
 		writeKustoError(w, http.StatusBadRequest, fmt.Errorf("parse: %w", err))
 		return

@@ -14,7 +14,16 @@ import (
 func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
 	case "now":
-		return time.Now().UTC().UnixNano(), true, nil
+		// One value per query (ADX), or set query_now's.
+		n := eng.nowNanos()
+		if len(fc.Args) == 1 { // now(offset)
+			off, err := evalExpr(eng, fc.Args[0], schema, row)
+			if err != nil || off == nil {
+				return nil, true, err
+			}
+			n += types.ToInt64(off) * 100
+		}
+		return n, true, nil
 
 	case "ingestion_time":
 		// ingestion_time() — real ADX's own function-form accessor
@@ -62,7 +71,7 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		}
 		ticks := types.ToInt64(val)
 		nanos := ticks * 100
-		return time.Now().UTC().UnixNano() - nanos, true, nil
+		return eng.nowNanos() - nanos, true, nil
 
 	case "make_datetime":
 		return evalMakeDatetime(eng, fc, schema, row)
@@ -91,12 +100,30 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		}
 		parsed, parseErr := types.ParseValue(s, types.TypeDatetime)
 		if parseErr != nil {
+			if fc.Name == "todatetime" {
+				return nil, true, nil // a conversion that fails is null
+			}
 			return nil, true, fmt.Errorf("cannot parse %q as datetime", s)
 		}
 		return parsed, true, nil
 
 	case "bin", "floor", "bin_at":
 		return evalBin(eng, fc, schema, row)
+
+	case "bin_auto":
+		// bin_auto(x): bin(x, query_bin_auto_size), aligned to
+		// query_bin_auto_at when set; the size must be set.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("bin_auto requires 1 argument")
+		}
+		if eng == nil || eng.binAutoSize == nil {
+			return nil, true, fmt.Errorf("bin_auto: set query_bin_auto_size first")
+		}
+		call := &parser.FuncCall{Name: "bin", Args: []parser.Expr{fc.Args[0], eng.binAutoSize}}
+		if eng.binAutoAt != nil {
+			call = &parser.FuncCall{Name: "bin_at", Args: []parser.Expr{fc.Args[0], eng.binAutoSize, eng.binAutoAt}}
+		}
+		return evalBin(eng, call, schema, row)
 
 	case "datetime_diff":
 		if len(fc.Args) != 3 {
@@ -118,29 +145,11 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 			return nil, true, nil
 		}
 		part := strings.ToLower(fmt.Sprintf("%v", partVal))
-		diffNanos := types.ToInt64(dt1Val) - types.ToInt64(dt2Val)
-		switch part {
-		case "year":
-			t1 := time.Unix(0, types.ToInt64(dt1Val)).UTC()
-			t2 := time.Unix(0, types.ToInt64(dt2Val)).UTC()
-			return int64(t1.Year() - t2.Year()), true, nil
-		case "month":
-			t1 := time.Unix(0, types.ToInt64(dt1Val)).UTC()
-			t2 := time.Unix(0, types.ToInt64(dt2Val)).UTC()
-			return int64((t1.Year()-t2.Year())*12 + int(t1.Month()) - int(t2.Month())), true, nil
-		case "day":
-			return diffNanos / (24 * 60 * 60 * 1e9), true, nil
-		case "hour":
-			return diffNanos / (60 * 60 * 1e9), true, nil
-		case "minute":
-			return diffNanos / (60 * 1e9), true, nil
-		case "second":
-			return diffNanos / 1e9, true, nil
-		case "millisecond":
-			return diffNanos / 1e6, true, nil
-		default:
+		v, ok := datetimeDiff(part, types.ToInt64(dt1Val), types.ToInt64(dt2Val))
+		if !ok {
 			return nil, true, fmt.Errorf("unknown datetime_diff part: %q", part)
 		}
+		return v, true, nil
 
 	case "startofday", "startofweek", "startofmonth", "startofyear",
 		"endofday", "endofweek", "endofmonth", "endofyear":
@@ -925,4 +934,42 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+// datetimeDiff is datetime_diff(part, a, b): the number of part
+// boundaries between b and a, as the emulator counts them (one second
+// across midnight is a day; weeks start on Sunday and the week count
+// is real).
+func datetimeDiff(part string, a, b int64) (types.Value, bool) {
+	floorDiv := func(x, d int64) int64 {
+		q := x / d
+		if (x%d != 0) && ((x < 0) != (d < 0)) {
+			q--
+		}
+		return q
+	}
+	units := map[string]int64{
+		"day": 24 * 3600 * 1e9, "hour": 3600 * 1e9, "minute": 60 * 1e9, "second": 1e9,
+		"millisecond": 1e6, "microsecond": 1e3,
+	}
+	if u, ok := units[part]; ok {
+		return floorDiv(a, u) - floorDiv(b, u), true
+	}
+	ta, tb := time.Unix(0, a).UTC(), time.Unix(0, b).UTC()
+	switch part {
+	case "year":
+		return int64(ta.Year() - tb.Year()), true
+	case "quarter":
+		q := func(t time.Time) int64 { return int64(t.Year())*4 + int64(t.Month()-1)/3 }
+		return q(ta) - q(tb), true
+	case "month":
+		return int64((ta.Year()-tb.Year())*12 + int(ta.Month()) - int(tb.Month())), true
+	case "week":
+		const day = 24 * 3600 * 1e9
+		wk := func(x int64) int64 { return floorDiv(floorDiv(x, day)-3, 7) } // 1970-01-04 is a Sunday
+		return float64(wk(a) - wk(b)), true
+	case "nanosecond":
+		return (a - a%100) - (b - b%100), true
+	}
+	return nil, false
 }

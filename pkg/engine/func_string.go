@@ -103,8 +103,8 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		return s[start:], true, nil
 
 	case "split":
-		if len(fc.Args) != 2 {
-			return nil, true, fmt.Errorf("split requires 2 arguments")
+		if len(fc.Args) != 2 && len(fc.Args) != 3 {
+			return nil, true, fmt.Errorf("split requires 2 or 3 arguments")
 		}
 		val, err := evalExpr(eng, fc.Args[0], schema, row)
 		if err != nil {
@@ -120,6 +120,22 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		s := fmt.Sprintf("%v", val)
 		delim := fmt.Sprintf("%v", delimVal)
 		parts := strings.Split(s, delim)
+		if len(fc.Args) == 3 {
+			// split(s, d, i): [part i]; -1 is every part, anything
+			// else outside the parts null (the emulator).
+			iv, err := evalExpr(eng, fc.Args[2], schema, row)
+			if err != nil || iv == nil {
+				return nil, true, err
+			}
+			i := types.ToInt64(iv)
+			switch {
+			case i == -1:
+			case i >= 0 && i < int64(len(parts)):
+				parts = parts[i : i+1]
+			default:
+				return nil, true, nil
+			}
+		}
 		b, _ := json.Marshal(parts)
 		return string(b), true, nil
 

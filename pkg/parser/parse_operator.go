@@ -49,28 +49,18 @@ func parseParsePatternClause(opName, s string) (column, kind, flags string, frag
 	s = strings.TrimSpace(s)
 	kind = "simple"
 
-	// Check for kind=...
-	lower := keywordFold(s)
-	if strings.HasPrefix(lower, "kind=") {
-		eqEnd := strings.IndexByte(s[5:], ' ')
-		if eqEnd < 0 {
-			return "", "", "", nil, fmt.Errorf("%s: expected column name after kind=...", opName)
+	// [kind = K] [flags = F], spaces allowed around '='; flags apply
+	// to kind=regex (matching real KQL, which ignores them otherwise).
+	for {
+		if v, rest, ok := takeOperatorOption(s, "kind"); ok {
+			kind, s = strings.ToLower(v), rest
+			continue
 		}
-		kind = strings.ToLower(s[5 : 5+eqEnd])
-		s = strings.TrimSpace(s[5+eqEnd:])
-	}
-
-	// Check for flags=... (kind=regex only, but accepted syntactically
-	// regardless -- matching real KQL, which defines the parameter as
-	// simply ignored/inapplicable for other kinds rather than an error).
-	lower = keywordFold(s)
-	if strings.HasPrefix(lower, "flags=") {
-		eqEnd := strings.IndexByte(s[6:], ' ')
-		if eqEnd < 0 {
-			return "", "", "", nil, fmt.Errorf("%s: expected column name after flags=...", opName)
+		if v, rest, ok := takeOperatorOption(s, "flags"); ok {
+			flags, s = v, rest
+			continue
 		}
-		flags = s[6 : 6+eqEnd]
-		s = strings.TrimSpace(s[6+eqEnd:])
+		break
 	}
 
 	// Find "with" keyword (word boundary)
@@ -273,4 +263,23 @@ func scanVerbatimLiteral(s string, quote byte) (literal string, consumed int, er
 		i++
 	}
 	return "", 0, fmt.Errorf("unterminated verbatim string in pattern")
+}
+
+// takeOperatorOption reads a leading `name = value` (spaces allowed
+// around '=') from s, returning the value and the text after it.
+func takeOperatorOption(s, name string) (value, rest string, ok bool) {
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(keywordFold(t), name) {
+		return "", s, false
+	}
+	after := strings.TrimLeft(t[len(name):], " \t\n")
+	if !strings.HasPrefix(after, "=") {
+		return "", s, false
+	}
+	after = strings.TrimLeft(after[1:], " \t\n")
+	end := strings.IndexAny(after, " \t\n")
+	if end <= 0 {
+		return "", s, false
+	}
+	return after[:end], strings.TrimSpace(after[end:]), true
 }

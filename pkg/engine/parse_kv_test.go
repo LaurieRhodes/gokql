@@ -141,16 +141,20 @@ func TestParseKVFirstOccurrenceWins(t *testing.T) {
 	}
 }
 
-// TestParseKVRegexModeUnimplemented confirms regex=... mode is
-// rejected with a clear error rather than silently mis-parsed, per
-// ParseKVOp's own documented scope.
-func TestParseKVRegexModeUnimplemented(t *testing.T) {
-	queryError(t, `print str='x' | parse-kv str as (a:string) with (regex='(?P<a>.*)')`)
-}
-
-// TestParseKVNonSpecifiedDelimiterModeUnimplemented confirms the
-// "non-specified delimiter" mode (no pair_delimiter/kv_delimiter given)
-// is rejected with a clear error, per ParseKVOp's own documented scope.
-func TestParseKVNonSpecifiedDelimiterModeUnimplemented(t *testing.T) {
-	queryError(t, `print str='a:1,b:2' | parse-kv str as (a:string, b:string) with (quote='"')`)
+// The regex and non-specified delimiter modes, against the emulator's
+// answers.
+func TestParseKVRegexAndUndelimitedModes(t *testing.T) {
+	cases := []struct{ q, want string }{
+		{`print str="[a: 1] [b: 2] [a: 3]" | parse-kv str as (a:long, b:long) with (regex=@'\[(\w+):\s*(\d+)\]') | project v = strcat(a, ",", b)`, "3,2"},
+		{`print str="ThreadId:458745723, Machine:Node001, Text: Started" | parse-kv str as (Text: string, ThreadId:long, Machine: string) | project v = strcat(Text, ",", ThreadId, ",", Machine)`, "Started,458745723,Node001"},
+		{`print str="Text: 'The service \\' is up'" | parse-kv str as (Text: string) with (quote="'", escape='\\') | project v = Text`, "The service ' is up"},
+		{`print str="k1=v1;k2=;k3=v3" | parse-kv str as (k1:string, k2:string) | project v = strcat(k1, ",", k2)`, "v1,k3"},
+		{`print str="a=1 a=2 xa=9" | parse-kv str as (a:long) | project v = a`, "1"},
+	}
+	for _, c := range cases {
+		if got := cell(t, queryResult(t, c.q), 0, 0); got != c.want {
+			t.Errorf("%s:\n got  %s\n want %s", c.q, got, c.want)
+		}
+	}
+	queryError(t, `print str='x' | parse-kv str as (a:string) with (regex='(?P<a>.*)')`) // one group
 }
