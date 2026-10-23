@@ -1621,7 +1621,52 @@ func convertDataTableValue(eng *Engine, raw string, kt types.KQLType) (interface
 // applyParse extracts fields from a string column using pattern matching.
 // Supports kind=simple (default), kind=relaxed, and kind=regex.
 func (e *Engine) applyParse(input *types.Table, op *parser.ParseOp) (*types.Table, error) {
-	return applyParseCore(input, op.Column, op.Kind, op.Flags, op.Patterns, false)
+	return e.applyParseSource(input, op.Column, op.Kind, op.Flags, op.Patterns, false)
+}
+
+// applyParseSource runs applyParseCore on a column or, as ADX allows,
+// on any expression: an expression source is evaluated into a
+// temporary column, which is removed from the result.
+func (e *Engine) applyParseSource(input *types.Table, source, kind, flags string, patterns []parser.ParseFragment, dropUnmatched bool) (*types.Table, error) {
+	if input.Schema.ColumnIndex(source) >= 0 {
+		return applyParseCore(input, source, kind, flags, patterns, dropUnmatched)
+	}
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return nil, fmt.Errorf("parse: column %q not found", source)
+	}
+	if ref, ok := expr.(*parser.ColumnRef); ok {
+		if input.Schema.ColumnIndex(ref.Name) < 0 {
+			return nil, fmt.Errorf("parse: column %q not found", ref.Name)
+		}
+		return applyParseCore(input, ref.Name, kind, flags, patterns, dropUnmatched)
+	}
+	const tmp = "__gokql_parse_source"
+	n := len(input.Schema.Columns)
+	cols := append(append([]types.Column(nil), input.Schema.Columns...), types.Column{Name: tmp, Type: types.TypeString})
+	staged := types.NewTable(input.Name, types.Schema{Columns: cols})
+	for _, row := range input.Rows {
+		v, _, err := exprToString(e, expr, &input.Schema, row)
+		if err != nil {
+			return nil, err
+		}
+		r := make(types.Row, n+1)
+		copy(r, row)
+		r[n] = v
+		staged.AddRow(r)
+	}
+	out, err := applyParseCore(staged, tmp, kind, flags, patterns, dropUnmatched)
+	if err != nil {
+		return nil, err
+	}
+	outCols := append(append([]types.Column(nil), out.Schema.Columns[:n]...), out.Schema.Columns[n+1:]...)
+	res := types.NewTable(input.Name, types.Schema{Columns: outCols})
+	for _, row := range out.Rows {
+		r := make(types.Row, 0, len(row)-1)
+		r = append(append(r, row[:n]...), row[n+1:]...)
+		res.AddRow(r)
+	}
+	return res, nil
 }
 
 // applyParseWhere implements | parse-where — identical pattern-matching
@@ -1630,7 +1675,7 @@ func (e *Engine) applyParse(input *types.Table, op *parser.ParseOp) (*types.Tabl
 // documented behavior ("Only successfully parsed strings will be in the
 // output").
 func (e *Engine) applyParseWhere(input *types.Table, op *parser.ParseWhereOp) (*types.Table, error) {
-	return applyParseCore(input, op.Column, op.Kind, op.Flags, op.Patterns, true)
+	return e.applyParseSource(input, op.Column, op.Kind, op.Flags, op.Patterns, true)
 }
 
 // applyParseCore is the shared implementation behind both applyParse and

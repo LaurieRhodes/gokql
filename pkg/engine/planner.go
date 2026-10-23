@@ -210,9 +210,9 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 		c.needsAll = true
 
 	case *parser.ParseOp:
-		c.columns[o.Column] = true
+		c.collectParseSource(o.Column)
 	case *parser.ParseWhereOp:
-		c.columns[o.Column] = true
+		c.collectParseSource(o.Column)
 	case *parser.ParseKVOp:
 		c.columns[o.Column] = true
 	case *parser.MakeSeriesOp:
@@ -275,6 +275,16 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 		// forgotten.
 		c.needsAll = true
 	}
+}
+
+// collectParseSource records the columns a parse source reads: the
+// column itself, or every column an expression source references.
+func (c *columnCollector) collectParseSource(src string) {
+	if e, err := parser.ParseExpr(src); err == nil {
+		c.collectExpr(e)
+		return
+	}
+	c.columns[src] = true
 }
 
 func (c *columnCollector) collectExpr(expr parser.Expr) {

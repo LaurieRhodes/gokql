@@ -15,6 +15,11 @@ func TestParityMiscSweepFixes(t *testing.T) {
 		{`print bin(datetime(2007-01-03 13:00), 1d)`, "2007-01-03T00:00:00Z"},
 		// percentiles_array_tdigest takes a trailing typeof() for the output type.
 		{`datatable(x:long)[1,2,3,4,5] | summarize d = tdigest(x) | project p = percentiles_array_tdigest(d, 50, typeof(long)) | project tostring(p)`, "[3]"},
+		// parse and parse-where take any expression as their source.
+		{`range i from 1 to 3 step 1 | parse tostring(i) with x:long | summarize sum(x)`, "6"},
+		{`print s="a=5" | parse strcat(s, ";b=6") with "a=" a:long ";b=" b:long | project a + b`, "11"},
+		{`print d=dynamic({"a":"k=7"}) | parse-where d.a with "k=" v:long | project v`, "7"},
+		{`print s="a=5" | parse strcat(s, "") with "a=" a:long | project c = array_length(bag_keys(pack_all()))`, "2"},
 	}
 	for _, c := range cases {
 		tbl := queryResult(t, c.q)

@@ -324,9 +324,9 @@ func operatorReferencesColumn(op parser.Operator, name string) bool {
 			}
 		}
 	case *parser.ParseOp:
-		return o.Column == name
+		return parseSourceReferences(o.Column, name)
 	case *parser.ParseWhereOp:
-		return o.Column == name
+		return parseSourceReferences(o.Column, name)
 	case *parser.ParseKVOp:
 		return o.Column == name
 	case *parser.ProjectByNamesOp:
@@ -348,6 +348,18 @@ func operatorReferencesColumn(op parser.Operator, name string) bool {
 				}
 			}
 		}
+	}
+	return false
+}
+
+// parseSourceReferences reports whether a parse source (a column or an
+// expression) reads column name.
+func parseSourceReferences(src, name string) bool {
+	if src == name {
+		return true
+	}
+	if e, err := parser.ParseExpr(src); err == nil {
+		return exprReferencesColumn(e, name)
 	}
 	return false
 }
