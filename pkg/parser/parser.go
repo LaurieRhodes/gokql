@@ -578,9 +578,10 @@ func isTabularSource(s string) bool {
 	// Word boundary: next non-space char after "range" must NOT be an
 	// identifier character, so a column or table literally named
 	// "rangeX" isn't misclassified.
+	// range(start, stop, step) is the scalar function, not the operator.
 	if strings.HasPrefix(lower, "range") {
 		rest := lower[len("range"):]
-		if rest == "" || !isIdentChar(rest[0]) {
+		if rest == "" || (!isIdentChar(rest[0]) && !strings.HasPrefix(strings.TrimLeft(rest, " \t"), "(")) {
 			return true
 		}
 	}

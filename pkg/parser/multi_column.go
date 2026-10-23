@@ -33,6 +33,16 @@ var multiColumnFuncs = map[string]struct {
 		{"rvariance", "todouble"}, {"interception", "todouble"}, {"line_fit", "todynamic"}}},
 	"series_fft":  {"__series_fft_dynamic", []multiKey{{"real", "todynamic"}, {"imag", "todynamic"}}},
 	"series_ifft": {"__series_ifft_dynamic", []multiKey{{"real", "todynamic"}, {"imag", "todynamic"}}},
+	"series_decompose": {"__series_decompose_dynamic", []multiKey{
+		{"baseline", "todynamic"}, {"seasonal", "todynamic"}, {"trend", "todynamic"}, {"residual", "todynamic"}}},
+	"series_decompose_anomalies": {"__series_decompose_anomalies_dynamic", []multiKey{
+		{"ad_flag", "todynamic"}, {"ad_score", "todynamic"}, {"baseline", "todynamic"}}},
+	"series_fit_2lines": {"series_fit_2lines_dynamic", []multiKey{
+		{"rsquare", "todouble"}, {"split_idx", "tolong"}, {"variance", "todouble"}, {"rvariance", "todouble"},
+		{"line_fit", "todynamic"}, {"right.rsquare", "todouble"}, {"right.slope", "todouble"},
+		{"right.interception", "todouble"}, {"right.variance", "todouble"}, {"right.rvariance", "todouble"},
+		{"left.rsquare", "todouble"}, {"left.slope", "todouble"}, {"left.interception", "todouble"},
+		{"left.variance", "todouble"}, {"left.rvariance", "todouble"}}},
 	"series_fit_poly": {"__series_fit_poly_dynamic", []multiKey{
 		{"rsquare", "todouble"}, {"coefficients", "todynamic"}, {"variance", "todouble"},
 		{"rvariance", "todouble"}, {"poly_fit", "todynamic"}}},
@@ -70,14 +80,21 @@ func expandMultiColumn(name string, expr Expr) []Assignment {
 	dyn := &FuncCall{Name: spec.bag, RawName: spec.bag, Args: fc.Args}
 	out := make([]Assignment, len(spec.keys))
 	for i, k := range spec.keys {
-		n := fc.Name + "_" + arg + "_" + k.key
+		// A dotted key ("right.slope") reads a nested bag and names the
+		// column with underscores (series_fit_2lines_x_right_slope).
+		parts := strings.Split(k.key, ".")
+		n := fc.Name + "_" + arg + "_" + strings.Join(parts, "_")
 		if i < len(written) && written[i] != "" {
 			n = written[i]
+		}
+		path := make([]AccessKey, len(parts))
+		for j, p := range parts {
+			path[j] = AccessKey{Name: p, Index: -1}
 		}
 		out[i] = Assignment{
 			Name: n,
 			Expr: &FuncCall{Name: k.conv, RawName: k.conv, Args: []Expr{
-				&AccessExpr{Object: dyn, Path: []AccessKey{{Name: k.key, Index: -1}}},
+				&AccessExpr{Object: dyn, Path: path},
 			}},
 		}
 	}
