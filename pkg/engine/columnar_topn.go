@@ -47,9 +47,161 @@ const maxColumnarTopN = 10000
 // colTopNPlan describes a where*/sort/take prefix executable columnar.
 type colTopNPlan struct {
 	preds    []exactPred
+	sim      *simExtend // optional: extend Name = similarity(VecCol, constant)
 	clauses  []parser.OrderClause
 	n        int64
 	consumed int
+}
+
+// simExtend is a vector-similarity extend computed on chunk vectors:
+// the retrieval shape `extend sim = series_cosine_similarity(Vec, qv)
+// | top N by sim`, which otherwise boxes and parses every stored
+// vector before keeping N of them.
+type simExtend struct {
+	name string    // output column
+	col  string    // stored vector column
+	fn   string    // series_cosine_similarity or series_dot_product
+	q    []float64 // the constant vector
+}
+
+// planSimilarityExtend accepts a single assignment Name =
+// series_cosine_similarity|series_dot_product(VecCol, constant) (either
+// argument order) whose constant evaluates to a vector.
+func planSimilarityExtend(eng *Engine, as []parser.Assignment, schema *types.Schema) *simExtend {
+	if len(as) != 1 || as[0].Name == "" || schema.ColumnIndex(as[0].Name) >= 0 {
+		return nil
+	}
+	fc, ok := as[0].Expr.(*parser.FuncCall)
+	if !ok || len(fc.Args) != 2 || (fc.Name != "series_cosine_similarity" && fc.Name != "series_dot_product") {
+		return nil
+	}
+	for vi := 0; vi < 2; vi++ {
+		ref, ok := fc.Args[vi].(*parser.ColumnRef)
+		if !ok {
+			continue
+		}
+		ci := schema.ColumnIndex(ref.Name)
+		if ci < 0 || (schema.Columns[ci].Type != types.TypeDynamic && schema.Columns[ci].Type != types.TypeString) {
+			continue
+		}
+		other, err := substituteToScalars(eng, fc.Args[1-vi])
+		if err != nil {
+			return nil
+		}
+		refs := map[string]bool{}
+		collectColumnRefs(other, refs)
+		for r := range refs {
+			if schema.ColumnIndex(r) >= 0 {
+				return nil // not a constant
+			}
+		}
+		val, err := evalExpr(eng, other, &types.Schema{}, types.Row{})
+		if err != nil || val == nil {
+			return nil
+		}
+		q, ok := parseFloatArray(val)
+		if !ok {
+			return nil
+		}
+		return &simExtend{name: as[0].Name, col: ref.Name, fn: fc.Name, q: q}
+	}
+	return nil
+}
+
+// simVec computes the similarity column for one chunk's selected rows.
+// Semantics are evalVectorFunc's: a null or unparsable vector gives a
+// null score; a length mismatch is an error.
+func (s *simExtend) simVec(v *colVec, sel []bool) (*colVec, error) {
+	n := len(sel)
+	out := &colVec{kt: types.TypeReal, f64: make([]float64, n), valid: make([]bool, n)}
+	if v == nil {
+		return out, nil
+	}
+	// Extents differ greatly in size, so per-extent parallelism alone
+	// leaves the largest ones on one core: split the chunk's rows too.
+	parts := 1
+	if n >= 1024 {
+		parts = runtime.NumCPU()
+		if parts > n/256 {
+			parts = n / 256
+		}
+	}
+	if parts <= 1 {
+		return out, s.simRange(v, sel, out, 0, n)
+	}
+	per := (n + parts - 1) / parts
+	errs := make([]error, parts)
+	var wg sync.WaitGroup
+	for p := 0; p < parts; p++ {
+		lo, hi := p*per, (p+1)*per
+		if hi > n {
+			hi = n
+		}
+		if lo >= hi {
+			break
+		}
+		wg.Add(1)
+		go func(p, lo, hi int) {
+			defer wg.Done()
+			errs[p] = s.simRange(v, sel, out, lo, hi)
+		}(p, lo, hi)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// simRange scores rows [lo, hi) into out.
+func (s *simExtend) simRange(v *colVec, sel []bool, out *colVec, lo, hi int) error {
+	var buf []float64
+	for row := lo; row < hi; row++ {
+		if !sel[row] {
+			continue
+		}
+		var str string
+		switch {
+		case v.str != nil && row < len(v.str):
+			str = v.str[row]
+		case v.dictCodes != nil && row < len(v.dictCodes):
+			str = v.dictVals[v.dictCodes[row]]
+		default:
+			continue
+		}
+		if v.isNull(row) || str == "" {
+			continue
+		}
+		var vec []float64
+		var ok bool
+		if b, ok2 := appendJSONFloats(buf[:0], str); ok2 {
+			buf, vec, ok = b, b, true
+		} else {
+			vec, ok = parseFloatArray(str)
+		}
+		if !ok {
+			continue
+		}
+		if s.fn == "series_dot_product" {
+			if len(vec) != len(s.q) {
+				return fmt.Errorf("series_dot_product: vector length mismatch (%d vs %d)", len(vec), len(s.q))
+			}
+			var dot float64
+			for i := range vec {
+				dot += vec[i] * s.q[i]
+			}
+			out.f64[row], out.valid[row] = dot, true
+			continue
+		}
+		sim, err := cosineSimilarity(vec, s.q)
+		if err != nil {
+			return err
+		}
+		out.f64[row], out.valid[row] = sim, true
+	}
+	return nil
 }
 
 // planColumnarTopN returns a plan when the pipeline prefix is columnar
@@ -68,6 +220,15 @@ func planColumnarTopN(eng *Engine, ops []parser.Operator, schema *types.Schema) 
 	}
 	if i >= len(ops) {
 		return nil
+	}
+	if ext, ok := ops[i].(*parser.ExtendOp); ok {
+		if plan.sim = planSimilarityExtend(eng, ext.Assignments, schema); plan.sim == nil {
+			return nil
+		}
+		i++
+		if i >= len(ops) {
+			return nil
+		}
 	}
 
 	switch op := ops[i].(type) {
@@ -99,6 +260,9 @@ func planColumnarTopN(eng *Engine, ops []parser.Operator, schema *types.Schema) 
 	for _, clause := range plan.clauses {
 		if clause.Expr != nil || clause.Nulls != parser.NullsDefault {
 			return nil // expression keys and explicit null placement: the row path
+		}
+		if plan.sim != nil && clause.Column == plan.sim.name {
+			continue
 		}
 		idx := schema.ColumnIndex(clause.Column)
 		if idx < 0 {
@@ -155,6 +319,10 @@ func (e *Engine) topNExtent(tableName string, ext catalog.ExtentEntry, plan *col
 
 	clauseVecPos := make([]int, len(plan.clauses))
 	for i, clause := range plan.clauses {
+		if plan.sim != nil && clause.Column == plan.sim.name {
+			clauseVecPos[i] = len(scanCols) // the computed column, after the scanned ones
+			continue
+		}
 		clauseVecPos[i] = colPos[clause.Column]
 	}
 
@@ -237,6 +405,13 @@ func (e *Engine) topNExtent(tableName string, ext catalog.ExtentEntry, plan *col
 				}
 			}
 		}
+		if plan.sim != nil {
+			sv, err := plan.sim.simVec(vecs[colPos[plan.sim.col]], sel)
+			if err != nil {
+				return nil, err
+			}
+			vecs = append(vecs, sv)
+		}
 		for i, pos := range clauseVecPos {
 			clauseVecs[i] = vecs[pos]
 		}
@@ -283,6 +458,12 @@ func (e *Engine) runColumnarTopN(tableDef *catalog.Table, plan *colTopNPlan, all
 		}
 	}
 	projectedSchema := buildProjectedSchema(schema, scanCols)
+	if plan.sim != nil {
+		if _, ok := colPosOf(scanCols, plan.sim.col); !ok {
+			return nil, fmt.Errorf("columnar top-N: vector column %q not scanned", plan.sim.col)
+		}
+		projectedSchema.Columns = append(projectedSchema.Columns, types.Column{Name: plan.sim.name, Type: types.TypeReal})
+	}
 
 	spec, err := buildSortSpec(&projectedSchema, &parser.OrderByOp{Clauses: plan.clauses})
 	if err != nil {
@@ -349,11 +530,20 @@ func (e *Engine) runColumnarTopN(tableDef *catalog.Table, plan *colTopNPlan, all
 	}
 
 	if e.Verbose {
-		fmt.Fprintf(os.Stderr, "[scan] columnar top-N: n=%d, %d sort keys, %d predicates, %d extents parallel\n",
-			plan.n, len(plan.clauses), len(plan.preds), len(tableDef.Extents))
+		fmt.Fprintf(os.Stderr, "[scan] columnar top-N: n=%d, %d sort keys, %d predicates, similarity=%v, %d extents parallel\n",
+			plan.n, len(plan.clauses), len(plan.preds), plan.sim != nil, len(tableDef.Extents))
 	}
 
 	result := types.NewTable("", projectedSchema)
 	result.Rows = all
 	return result, nil
+}
+
+func colPosOf(cols []string, name string) (int, bool) {
+	for i, c := range cols {
+		if c == name {
+			return i, true
+		}
+	}
+	return -1, false
 }
