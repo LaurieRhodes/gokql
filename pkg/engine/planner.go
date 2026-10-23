@@ -151,7 +151,18 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 		c.addColumn(o.By)
 
 	case *parser.SummarizeOp:
+		// An expression over aggregates (toint(sum(x)), round(avg(x), 2))
+		// keeps its aggregates in Inner; their arguments are needed too,
+		// or the scan leaves the column out and the aggregate is null.
+		var aggs []parser.Aggregation
 		for _, agg := range o.Aggregations {
+			if agg.Function == parser.PostAggregation {
+				aggs = append(aggs, agg.Inner...)
+			} else {
+				aggs = append(aggs, agg)
+			}
+		}
+		for _, agg := range aggs {
 			for _, arg := range agg.Args {
 				// A bare * argument (arg_max/arg_min's real-ADX
 				// wildcard, added this session) means "every source

@@ -94,3 +94,21 @@ L | join kind=leftouter R on k | where k == 2 | project sn=isnull(s), se=isempty
 	expectCell(t, tbl, 0, 1, "true")
 	expectCell(t, tbl, 0, 2, "true")
 }
+
+// An expression over aggregates reads its aggregates' columns: the
+// projection pushdown left them out of the scan (round(avg(r), 2) was
+// null on a stored table while avg(r) alone was right).
+func TestPostAggregationColumnsScanned(t *testing.T) {
+	eng := nullsEngine(t)
+	plain := cell(t, diskExec(t, eng, `F | summarize a=avg(r)`), 0, 0)
+	if plain == "" {
+		t.Fatal("avg(r) is null")
+	}
+	got := cell(t, diskExec(t, eng, `F | summarize a=round(avg(r), 2)`), 0, 0)
+	if got == "" {
+		t.Errorf("round(avg(r), 2) is null; avg(r) = %s", plain)
+	}
+	if got := cell(t, diskExec(t, eng, `F | summarize n=toint(sum(v)) by s | where s == "s1" | project n`), 0, 0); got == "" {
+		t.Error("toint(sum(v)) by s is null")
+	}
+}
