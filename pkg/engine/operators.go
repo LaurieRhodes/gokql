@@ -397,39 +397,28 @@ func (e *Engine) applySampleDistinct(input *types.Table, op *parser.SampleDistin
 }
 
 func (e *Engine) applyOrderBy(input *types.Table, op *parser.OrderByOp) (*types.Table, error) {
+	orig := input.Schema
+	input, op, width, err := e.withOrderKeys(input, op)
+	if err != nil {
+		return nil, err
+	}
+	t, err := e.applyOrderByKeys(input, op)
+	if err != nil {
+		return nil, err
+	}
+	return dropOrderKeys(t, width, orig), nil
+}
+
+// applyOrderByKeys sorts by clauses that all name columns.
+func (e *Engine) applyOrderByKeys(input *types.Table, op *parser.OrderByOp) (*types.Table, error) {
+	spec, err := buildSortSpec(&input.Schema, op)
+	if err != nil {
+		return nil, err
+	}
 	result := types.NewTable(input.Name, input.Schema)
 	result.Rows = make([]types.Row, len(input.Rows))
 	copy(result.Rows, input.Rows)
-
-	// Resolve column indices
-	type colSort struct {
-		idx  int
-		typ  types.KQLType
-		desc bool
-	}
-	var sortCols []colSort
-	for _, clause := range op.Clauses {
-		idx := input.Schema.ColumnIndex(clause.Column)
-		if idx < 0 {
-			return nil, fmt.Errorf("order by: column %q not found", clause.Column)
-		}
-		sortCols = append(sortCols, colSort{idx: idx, typ: input.Schema.Columns[idx].Type, desc: clause.Desc})
-	}
-
-	sort.SliceStable(result.Rows, func(i, j int) bool {
-		for _, sc := range sortCols {
-			cmp := types.CompareValues(result.Rows[i][sc.idx], result.Rows[j][sc.idx], sc.typ)
-			if cmp == 0 {
-				continue
-			}
-			if sc.desc {
-				return cmp > 0
-			}
-			return cmp < 0
-		}
-		return false
-	})
-
+	sort.SliceStable(result.Rows, func(i, j int) bool { return spec.less(result.Rows[i], result.Rows[j]) })
 	return result, nil
 }
 
@@ -444,7 +433,7 @@ func (e *Engine) applyTop(input *types.Table, op *parser.TopOp) (*types.Table, e
 	}
 	// Bounded top-N heap instead of full sort + take.
 	return e.applyTopN(input, &parser.OrderByOp{
-		Clauses: []parser.OrderClause{{Column: op.By, Desc: op.Desc}},
+		Clauses: []parser.OrderClause{{Column: op.By, Expr: op.ByExpr, Desc: op.Desc, Nulls: op.Nulls}},
 	}, count)
 }
 

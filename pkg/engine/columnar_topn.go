@@ -86,7 +86,7 @@ func planColumnarTopN(eng *Engine, ops []parser.Operator, schema *types.Schema) 
 		if op.CountExpr != nil {
 			return nil
 		}
-		plan.clauses = []parser.OrderClause{{Column: op.By, Desc: op.Desc}}
+		plan.clauses = []parser.OrderClause{{Column: op.By, Expr: op.ByExpr, Desc: op.Desc, Nulls: op.Nulls}}
 		plan.n = op.Count
 		plan.consumed = i + 1
 	default:
@@ -97,6 +97,9 @@ func planColumnarTopN(eng *Engine, ops []parser.Operator, schema *types.Schema) 
 		return nil
 	}
 	for _, clause := range plan.clauses {
+		if clause.Expr != nil || clause.Nulls != parser.NullsDefault {
+			return nil // expression keys and explicit null placement: the row path
+		}
 		idx := schema.ColumnIndex(clause.Column)
 		if idx < 0 {
 			return nil

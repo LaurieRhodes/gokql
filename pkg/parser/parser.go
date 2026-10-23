@@ -3012,79 +3012,103 @@ func splitDataTableValues(s string) []string {
 // followed by take.
 func parseTop(s string) (*TopOp, error) {
 	s = strings.TrimSpace(s)
-
-	// "N by col [asc|desc]"
-	parts := strings.Fields(s)
-	if len(parts) < 3 || strings.ToLower(parts[1]) != "by" {
-		return nil, fmt.Errorf("expected 'top N by column [asc|desc]'")
+	byIdx := findKeyword(" "+s, " by ")
+	if byIdx < 0 {
+		return nil, fmt.Errorf("expected 'top N by expression [asc|desc] [nulls first|last]'")
 	}
-
+	countText := strings.TrimSpace((" " + s)[:byIdx])
+	rest := strings.TrimSpace((" " + s)[byIdx+len(" by "):])
+	if countText == "" || rest == "" {
+		return nil, fmt.Errorf("expected 'top N by expression [asc|desc] [nulls first|last]'")
+	}
 	var countExpr Expr
-	n, err := strconv.ParseInt(parts[0], 10, 64)
+	n, err := strconv.ParseInt(countText, 10, 64)
 	if err != nil {
-		e, perr := ParseExpr(parts[0])
+		e, perr := ParseExpr(countText)
 		if perr != nil {
-			return nil, fmt.Errorf("top: expected a number or scalar expression, got %q", parts[0])
+			return nil, fmt.Errorf("top: expected a number or scalar expression, got %q", countText)
 		}
 		n, countExpr = -1, e
 	}
-
-	if strings.Contains(s, ",") {
+	if len(splitRespectingParens(rest, ',')) > 1 {
 		return nil, fmt.Errorf("top: only a single ranking expression is supported (matching real ADX's own restriction) — combine multiple criteria into one expression (e.g. coalesce(a, b)), or use 'sort by col1, col2 | take N' instead, which supports multiple keys")
 	}
+	cl, err := parseOrderClause(rest)
+	if err != nil {
+		return nil, fmt.Errorf("top: %w", err)
+	}
+	return &TopOp{Count: n, By: cl.Column, ByExpr: cl.Expr, Desc: cl.Desc, Nulls: cl.Nulls, CountExpr: countExpr}, nil
+}
 
-	col := parts[2]
-	desc := true // KQL default for top is desc
-	if len(parts) > 3 {
-		switch strings.ToLower(parts[3]) {
-		case "asc":
-			desc = false
-		case "desc":
-			desc = true
-		default:
-			return nil, fmt.Errorf("top: expected 'asc' or 'desc', got %q", parts[3])
+// parseOrderClause parses `Expr [asc|desc] [nulls first|last]`. A bare
+// (or bracket-quoted) column name sets Column; anything else Expr.
+func parseOrderClause(part string) (OrderClause, error) {
+	cl := OrderClause{Desc: true} // KQL default is desc
+	part = strings.TrimSpace(part)
+	low := keywordFold(part)
+	if strings.HasSuffix(low, " nulls first") {
+		cl.Nulls, part = NullsFirst, strings.TrimSpace(part[:len(part)-len(" nulls first")])
+	} else if strings.HasSuffix(low, " nulls last") {
+		cl.Nulls, part = NullsLast, strings.TrimSpace(part[:len(part)-len(" nulls last")])
+	}
+	low = keywordFold(part)
+	if strings.HasSuffix(low, " asc") {
+		cl.Desc, part = false, strings.TrimSpace(part[:len(part)-len(" asc")])
+	} else if strings.HasSuffix(low, " desc") {
+		part = strings.TrimSpace(part[:len(part)-len(" desc")])
+	}
+	if part == "" {
+		return cl, fmt.Errorf("expected an expression to order by")
+	}
+	// A quoted identifier, ['$table'] or ["a b"], may hold spaces.
+	if (strings.HasPrefix(part, "['") && strings.HasSuffix(part, "']")) ||
+		(strings.HasPrefix(part, `["`) && strings.HasSuffix(part, `"]`)) {
+		if inner := part[2 : len(part)-2]; !strings.ContainsAny(inner, `'"`) {
+			cl.Column = inner
+			return cl, nil
 		}
 	}
+	if isPlainIdentifier(part) {
+		cl.Column = part
+		return cl, nil
+	}
+	e, err := ParseExpr(part)
+	if err != nil {
+		return cl, err
+	}
+	if ref, ok := e.(*ColumnRef); ok {
+		cl.Column = ref.Name
+		return cl, nil
+	}
+	cl.Expr = e
+	return cl, nil
+}
 
-	return &TopOp{Count: n, By: col, Desc: desc, CountExpr: countExpr}, nil
+func isPlainIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || r == '$' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func parseOrderBy(s string) (*OrderByOp, error) {
-	parts := splitAndTrim(s, ',')
 	var clauses []OrderClause
-
-	for _, part := range parts {
-		// A quoted identifier, ['$table'] or ["a b"], may hold spaces.
-		var quoted string
-		if strings.HasPrefix(part, "['") || strings.HasPrefix(part, `["`) {
-			q := part[1:2]
-			if end := strings.Index(part[2:], q+"]"); end >= 0 {
-				quoted = part[2 : 2+end]
-				part = "_ " + strings.TrimSpace(part[2+end+2:])
-			}
-		}
-		fields := strings.Fields(part)
-		if len(fields) == 0 {
+	for _, part := range splitRespectingParens(s, ',') {
+		if strings.TrimSpace(part) == "" {
 			continue
 		}
-		clause := OrderClause{
-			Column: fields[0],
-			Desc:   true, // KQL default is desc
+		cl, err := parseOrderClause(part)
+		if err != nil {
+			return nil, fmt.Errorf("order by: %w", err)
 		}
-		if quoted != "" {
-			clause.Column = quoted
-		}
-		if len(fields) > 1 {
-			switch strings.ToLower(fields[1]) {
-			case "asc":
-				clause.Desc = false
-			case "desc":
-				clause.Desc = true
-			}
-		}
-		clauses = append(clauses, clause)
+		clauses = append(clauses, cl)
 	}
-
 	return &OrderByOp{Clauses: clauses}, nil
 }
 

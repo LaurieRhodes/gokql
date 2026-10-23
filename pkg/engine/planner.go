@@ -141,6 +141,10 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 		}
 		// If there IS a narrowing operator, order by's columns should still be collected
 		for _, clause := range o.Clauses {
+			if clause.Expr != nil {
+				c.collectExpr(clause.Expr)
+				continue
+			}
 			c.addColumn(clause.Column)
 		}
 
@@ -148,7 +152,11 @@ func (c *columnCollector) collectOperator(op parser.Operator) {
 		if !c.hasNarrowing {
 			c.needsAll = true
 		}
-		c.addColumn(o.By)
+		if o.ByExpr != nil {
+			c.collectExpr(o.ByExpr)
+		} else {
+			c.addColumn(o.By)
+		}
 
 	case *parser.SummarizeOp:
 		// An expression over aggregates (toint(sum(x)), round(avg(x), 2))

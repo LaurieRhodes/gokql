@@ -559,17 +559,31 @@ type OrderByOp struct {
 
 func (*OrderByOp) operatorNode() {}
 
-// OrderClause is a single column ordering.
+// OrderClause is a single ordering: a column (Column) or an
+// expression (Expr, with Column empty), direction, and null placement.
 type OrderClause struct {
 	Column string
+	Expr   Expr // non-nil for an expression key
 	Desc   bool // true = descending (KQL default)
+	Nulls  int  // NullsDefault, NullsFirst or NullsLast
 }
+
+// Null placement of an order clause. The default puts nulls first
+// ascending and last descending, as KQL does.
+const (
+	NullsDefault = iota
+	NullsFirst
+	NullsLast
+)
 
 // TopOp: | top N by col [asc|desc]
 type TopOp struct {
 	Count int64
-	By    string
+	By    string // the ranking column, or "" when ByExpr is set
 	Desc  bool
+	// ByExpr is a ranking expression that is not a plain column.
+	ByExpr Expr
+	Nulls  int // NullsDefault, NullsFirst or NullsLast
 	// CountExpr is a non-literal count (top n by x), evaluated as a
 	// scalar when the operator runs; Count is then -1.
 	CountExpr Expr
@@ -1451,8 +1465,12 @@ type GraphMatchOp struct {
 	// Shortest is set for graph-shortest-paths: "any" (one shortest
 	// path per source/target pair) or "all" (every shortest path).
 	Shortest string
-	Where    Expr       // optional filter over pattern variables (nil = none)
-	Project  *ProjectOp // required output projection
+	// GQLLabels (gql_labels=true, set by the GQL/openCypher translator)
+	// takes the labels of a graph without model labels from its Label
+	// property (a string or an array of strings), as ADX's GQL does.
+	GQLLabels bool
+	Where     Expr       // optional filter over pattern variables (nil = none)
+	Project   *ProjectOp // required output projection
 }
 
 // GraphMatchSequence is one path sequence of a graph-match pattern.

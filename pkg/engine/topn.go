@@ -21,11 +21,14 @@ import (
 
 // sortSpec is a resolved order-by clause set.
 type sortSpec struct {
-	cols []struct {
-		idx  int
-		typ  types.KQLType
-		desc bool
-	}
+	cols []sortCol
+}
+
+type sortCol struct {
+	idx   int
+	typ   types.KQLType
+	desc  bool
+	nulls int
 }
 
 func buildSortSpec(schema *types.Schema, op *parser.OrderByOp) (*sortSpec, error) {
@@ -35,19 +38,21 @@ func buildSortSpec(schema *types.Schema, op *parser.OrderByOp) (*sortSpec, error
 		if idx < 0 {
 			return nil, fmt.Errorf("order by: column %q not found", clause.Column)
 		}
-		spec.cols = append(spec.cols, struct {
-			idx  int
-			typ  types.KQLType
-			desc bool
-		}{idx, schema.Columns[idx].Type, clause.Desc})
+		spec.cols = append(spec.cols, sortCol{idx, schema.Columns[idx].Type, clause.Desc, clause.Nulls})
 	}
 	return spec, nil
 }
 
-// less reports whether row a sorts before row b under the spec.
+// less reports whether row a sorts before row b under the spec. Nulls
+// follow the clause's placement; by default they come first ascending
+// and last descending.
 func (s *sortSpec) less(a, b types.Row) bool {
 	for _, sc := range s.cols {
-		cmp := types.CompareValues(a[sc.idx], b[sc.idx], sc.typ)
+		av, bv := a[sc.idx], b[sc.idx]
+		if sc.nulls != parser.NullsDefault && (av == nil) != (bv == nil) {
+			return (av == nil) == (sc.nulls == parser.NullsFirst)
+		}
+		cmp := types.CompareValues(av, bv, sc.typ)
 		if cmp == 0 {
 			continue
 		}
@@ -57,6 +62,63 @@ func (s *sortSpec) less(a, b types.Row) bool {
 		return cmp < 0
 	}
 	return false
+}
+
+// withOrderKeys evaluates expression clauses into hidden trailing
+// columns and returns the widened table, the clauses rewritten to name
+// them, and the original width (0 when nothing was added).
+func (e *Engine) withOrderKeys(input *types.Table, op *parser.OrderByOp) (*types.Table, *parser.OrderByOp, int, error) {
+	need := false
+	for _, c := range op.Clauses {
+		if c.Expr != nil {
+			need = true
+		}
+	}
+	if !need {
+		return input, op, 0, nil
+	}
+	width := len(input.Schema.Columns)
+	schema := types.Schema{Columns: append([]types.Column(nil), input.Schema.Columns...)}
+	clauses := make([]parser.OrderClause, len(op.Clauses))
+	var exprs []parser.Expr
+	for i, c := range op.Clauses {
+		clauses[i] = c
+		if c.Expr == nil {
+			continue
+		}
+		name := fmt.Sprintf("\x00order%d", i)
+		schema.Columns = append(schema.Columns, types.Column{Name: name, Type: inferExprType(e, c.Expr, &input.Schema)})
+		clauses[i].Column, clauses[i].Expr = name, nil
+		exprs = append(exprs, c.Expr)
+	}
+	out := types.NewTable(input.Name, schema)
+	out.Rows = make([]types.Row, len(input.Rows))
+	for ri, row := range input.Rows {
+		nr := make(types.Row, width, width+len(exprs))
+		copy(nr, row)
+		for _, x := range exprs {
+			v, err := evalExpr(e, x, &input.Schema, row)
+			if err != nil {
+				return nil, nil, 0, fmt.Errorf("order by: %w", err)
+			}
+			nr = append(nr, v)
+		}
+		out.Rows[ri] = nr
+	}
+	return out, &parser.OrderByOp{Clauses: clauses}, width, nil
+}
+
+// dropOrderKeys removes withOrderKeys' hidden columns.
+func dropOrderKeys(t *types.Table, width int, schema types.Schema) *types.Table {
+	if width == 0 {
+		return t
+	}
+	out := types.NewTable(t.Name, schema)
+	out.Rows = make([]types.Row, len(t.Rows))
+	for i, r := range t.Rows {
+		out.Rows[i] = r[:width]
+	}
+	return out
 }
 
 // rowHeap keeps the N best rows with the WORST at the root, so the
@@ -82,11 +144,24 @@ func (h *rowHeap) Pop() interface{} {
 // using a bounded heap. Falls back to a full stable sort when n covers
 // most of the input (the heap only pays off when n << len(rows)).
 func (e *Engine) applyTopN(input *types.Table, op *parser.OrderByOp, n int64) (*types.Table, error) {
+	orig := input.Schema
+	input, op, width, err := e.withOrderKeys(input, op)
+	if err != nil {
+		return nil, err
+	}
+	t, err := e.applyTopNKeys(input, op, n)
+	if err != nil {
+		return nil, err
+	}
+	return dropOrderKeys(t, width, orig), nil
+}
+
+func (e *Engine) applyTopNKeys(input *types.Table, op *parser.OrderByOp, n int64) (*types.Table, error) {
 	if n <= 0 {
 		return types.NewTable(input.Name, input.Schema), nil
 	}
 	if n >= int64(len(input.Rows))/2 {
-		ordered, err := e.applyOrderBy(input, op)
+		ordered, err := e.applyOrderByKeys(input, op)
 		if err != nil {
 			return nil, err
 		}

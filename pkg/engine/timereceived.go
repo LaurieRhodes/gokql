@@ -304,12 +304,12 @@ func operatorReferencesColumn(op parser.Operator, name string) bool {
 		}
 	case *parser.OrderByOp:
 		for _, c := range o.Clauses {
-			if c.Column == name {
+			if c.Column == name || (c.Expr != nil && exprReferencesColumn(c.Expr, name)) {
 				return true
 			}
 		}
 	case *parser.TopOp:
-		return o.By == name
+		return o.By == name || (o.ByExpr != nil && exprReferencesColumn(o.ByExpr, name))
 	case *parser.SummarizeOp:
 		for _, agg := range o.Aggregations {
 			for _, arg := range agg.Args {
