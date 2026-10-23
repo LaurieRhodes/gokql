@@ -520,7 +520,7 @@ func parseStatements(stmts []string) (Statement, error) {
 // nothing about either command's own grammar conflicts with piping.
 var pipeableSimpleCommandPrefixes = []string{
 	".show tables", ".show database", ".help", ".show table ",
-	".show graph_model", ".show graph_snapshot", ".show operations",
+	".show graph_model", ".show cluster policy callout", ".show graph_snapshot", ".show operations",
 }
 
 func parseSingleStatement(input string) (Statement, error) {
@@ -771,7 +771,7 @@ func isTabularExpression(s string) bool {
 // when no pipe operator is present.
 func isTabularSource(s string) bool {
 	lower := keywordFold(strings.TrimSpace(s))
-	if isExternalDataSource(lower) {
+	if isExternalDataSource(lower) || strings.HasPrefix(lower, "evaluate ") {
 		return true
 	}
 	if strings.HasPrefix(lower, "datatable") {
@@ -1080,6 +1080,13 @@ func parseCommand(input string) (Statement, error) {
 
 	if lower == ".show databases" {
 		return &ShowDatabasesCmd{}, nil
+	}
+	if lower == ".show cluster policy callout" {
+		return &ShowCalloutPolicyCmd{}, nil
+	}
+	if strings.HasPrefix(lower, ".alter cluster policy callout") || strings.HasPrefix(lower, ".alter-merge cluster policy callout") ||
+		strings.HasPrefix(lower, ".delete cluster policy callout") {
+		return nil, fmt.Errorf("the callout policy is read from \"callouts\" in .okql-federation.json and cannot be changed by a command")
 	}
 
 	// .show database
@@ -1930,6 +1937,12 @@ func parseQuery(input string) (Statement, error) {
 			q.Operators = append(q.Operators, op)
 		}
 		return q, nil
+	}
+
+	// evaluate as a source (http_request, infer_storage_schema, ...):
+	// the plugin's input is one row (column __evaluate_source), which source plugins ignore.
+	if strings.HasPrefix(keywordFold(source), "evaluate ") {
+		return parseQuery("print __evaluate_source = 0 | " + strings.TrimSpace(input))
 	}
 
 	// Standalone union: "union T1, T2, T3 | where ..."

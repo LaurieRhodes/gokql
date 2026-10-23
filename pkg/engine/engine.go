@@ -158,7 +158,10 @@ type Engine struct {
 	// database of a cluster, the cluster name and principal of the
 	// query that opened it (cluster.go).
 	hostCluster, hostPrincipal string
-	Catalog                    *catalog.Catalog
+	// hostCallouts: the callout policy of the query that opened this
+	// engine (callout.go); nil for a primary engine.
+	hostCallouts *[]calloutRule
+	Catalog      *catalog.Catalog
 
 	// execDepth counts nested Execute calls; the outermost refreshes
 	// the catalog from disk (catalog.Refresh) so a long-lived engine
@@ -316,6 +319,8 @@ func (e *Engine) forNested(cat *catalog.Catalog) *Engine {
 	n.stmtEmbedder = e.stmtEmbedder
 	n.udfDepth = e.udfDepth
 	n.hostCluster, n.hostPrincipal = e.clusterName(), e.principal()
+	rules := e.calloutRules()
+	n.hostCallouts = &rules
 	return n
 }
 
@@ -607,6 +612,8 @@ func (e *Engine) execute(stmt parser.Statement) (*types.Table, error) {
 		return e.applyDeleteRecords(s)
 	case *parser.UpdatePolicyCmd:
 		return e.applyUpdatePolicyCmd(s)
+	case *parser.ShowCalloutPolicyCmd:
+		return e.applyShowCalloutPolicy()
 	case *parser.ShowDatabasesCmd:
 		return e.applyShowDatabases()
 	case *parser.ExecuteScriptCmd:

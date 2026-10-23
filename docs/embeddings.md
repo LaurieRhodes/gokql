@@ -10,6 +10,7 @@ Both facts are deliberate and they are the same fact.
 |---|---|---|
 | `series_cosine_similarity` | Yes, real ADX | Scalar function over two `dynamic` arrays |
 | `series_dot_product` | Yes, real ADX | Same shape |
+| `evaluate ai_embeddings(T, '')` | Yes, real ADX | An empty connection string uses this embedder; an endpoint URI goes through the callout policy (type azure_openai) |
 | `embed_text()` | **No. gokql extension** | ADX has managed embedding endpoints; this is the local equivalent |
 | `.embed-into` | **No. gokql extension** | Bulk embedding of a Text column at ingest time |
 | `.chunk-file` | **No. gokql extension** | Paragraph chunking, `ChunkMaxChars` default 1500 |

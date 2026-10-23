@@ -27,11 +27,14 @@ import (
 
 const externalDataMaxBytes = 1 << 30
 
-func openExternal(uri string) (io.ReadCloser, error) {
+func (e *Engine) openExternal(uri string) (io.ReadCloser, error) {
 	lower := strings.ToLower(uri)
 	var rc io.ReadCloser
 	switch {
 	case strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://"):
+		if err := e.checkCallout("external_data", uri); err != nil {
+			return nil, err
+		}
 		client := &http.Client{Timeout: 5 * time.Minute}
 		resp, err := client.Get(uri)
 		if err != nil {
@@ -103,7 +106,7 @@ func (e *Engine) readExternalData(tf *parser.TableFunc) (*types.Table, error) {
 	cols := tf.Schema.Columns
 	skipFirst := strings.EqualFold(tf.Props["ignorefirstrecord"], "true")
 	for _, uri := range tf.URIs {
-		rc, err := openExternal(uri)
+		rc, err := e.openExternal(uri)
 		if err != nil {
 			return nil, err
 		}

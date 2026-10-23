@@ -674,6 +674,13 @@ func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types
 		return nil, nil
 	}
 
+	// A dynamic string is held as its JSON text ("abc" with quotes);
+	// compared, it is the string (parse_json('"abc"') == 'abc').
+	if expr != nil {
+		left = unquoteDynamicString(eng, left, expr.Left, schema)
+		right = unquoteDynamicString(eng, right, expr.Right, schema)
+	}
+
 	// String operators take their operands as strings, and null
 	// converts to the empty string (tostring(null) is ""), so
 	// null !startswith "555" is true. The mv-apply reference example
@@ -1588,4 +1595,22 @@ func euclidMod(a, b int64) int64 {
 		}
 	}
 	return m
+}
+
+// unquoteDynamicString turns a dynamic string's JSON text into the
+// string; other values pass through. The type check runs only for
+// values that look like a JSON string.
+func unquoteDynamicString(eng *Engine, v types.Value, e parser.Expr, schema *types.Schema) types.Value {
+	x, ok := v.(string)
+	if !ok || len(x) < 2 || x[0] != '"' || x[len(x)-1] != '"' || e == nil {
+		return v
+	}
+	if inferExprType(eng, e, schema) != types.TypeDynamic {
+		return v
+	}
+	var s string
+	if json.Unmarshal([]byte(x), &s) != nil {
+		return v
+	}
+	return s
 }

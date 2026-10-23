@@ -219,6 +219,14 @@ func firstLine(s string) string {
 	return s
 }
 
+// ShowCalloutPolicyCmd: .show cluster policy callout — the callout
+// policy (.okql-federation.json "callouts" plus the predefined rules).
+// Altering it from a query is refused: the policy is the operator's
+// file, not something a query may widen.
+type ShowCalloutPolicyCmd struct{}
+
+func (*ShowCalloutPolicyCmd) statementNode() {}
+
 // ShowDatabasesCmd: .show databases — the databases of this cluster
 // (the local scope and its federation aliases).
 type ShowDatabasesCmd struct{}

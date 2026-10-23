@@ -184,10 +184,11 @@ short to rewrite. The emulator license forbids benchmarking.
 
 ## Out of scope
 
-What needs outside systems: `external_table`/`inline_external_table`,
-`stored_query_result`, `geo_info_from_ip_address`, and the plugins that
-call other services (python, R, ai_*, http_request*, SQL/Cosmos DB,
-Digital Twins, infer_storage_schema*). Cluster, cursor, principal and
+`external_table`/`inline_external_table`, `stored_query_result`,
+`geo_info_from_ip_address`, and the plugins python, R, the SQL,
+MySQL, PostgreSQL and Cosmos DB requests, Digital Twins and dax.
+http_request*, ai_* and infer_storage_schema* are implemented behind
+the callout policy (kql_coverage.md). Cluster, cursor, principal and
 extent introspection (the cluster layer, `.okql-federation.json`),
 HLL/T-Digest sketches and geo are implemented.
 

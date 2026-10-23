@@ -192,9 +192,7 @@ func (o *OpenAI) embedOnce(ctx context.Context, body []byte) (vecs [][]float64, 
 		return nil, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if o.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+o.APIKey)
-	}
+	setAPIKey(req, o.APIKey)
 
 	resp, err := o.Client.Do(req)
 	if err != nil {
@@ -351,3 +349,19 @@ func snippet(b []byte) string {
 	}
 	return s
 }
+
+// setAPIKey sends key as Azure's api-key header to *.azure.com hosts
+// and as a bearer token elsewhere.
+func setAPIKey(req *http.Request, key string) {
+	if key == "" {
+		return
+	}
+	if strings.HasSuffix(strings.ToLower(req.URL.Hostname()), ".azure.com") {
+		req.Header.Set("api-key", key)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+}
+
+// SetAPIKey is setAPIKey for other OpenAI-compatible callers.
+func SetAPIKey(req *http.Request, key string) { setAPIKey(req, key) }

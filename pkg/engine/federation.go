@@ -74,6 +74,8 @@ type federationConfig struct {
 	// of another cluster, whose own .okql-federation.json lists its
 	// databases.
 	Clusters []federationAlias `json:"clusters,omitempty"`
+	// Callouts is the callout policy, in ADX's form (callout.go).
+	Callouts []calloutRule `json:"callouts,omitempty"`
 }
 
 // loadFederationConfig reads the federation config from inside dbPath.

@@ -25,6 +25,7 @@ var helpEntries = []helpEntry{
 	{".execute database script [with (ContinueOnErrors=true, ThrowOnErrors=true, Atomic=true)] <| commands", "run control commands in order, one per line; Atomic: an all-append script writes nothing unless every command succeeds"},
 	{".alter table T policy update @'[{...}]'", "update policy: rows appended to Source run Query (Source = the new rows) into T; IsTransactional fails the source write too; BlockDirectWrites makes the policy T's only way in"},
 	{".show / .delete table T policy update", "show or remove T's update policy"},
+	{".show cluster policy callout", "the callout policy (\"callouts\" in .okql-federation.json): which URIs http_request, the ai_* plugins and externaldata may reach"},
 	{".show databases", "this cluster's databases: the local scope and the aliases of .okql-federation.json"},
 	{".ingest inline into table T <| row1,row2,...", "append rows given as inline CSV text (no separate file)"},
 	{".ingest csv into table T from \"path\"", "append rows from a CSV file"},

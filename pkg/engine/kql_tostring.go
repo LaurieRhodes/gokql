@@ -11,6 +11,7 @@ package engine
 // "[-][d.]hh:mm:ss[.fffffff]".
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -35,6 +36,15 @@ func kqlToString(v types.Value, t types.KQLType) string {
 	case types.TypeTimespan:
 		if n, ok := asInt64(v); ok {
 			return formatTimespanTostring(n)
+		}
+	case types.TypeDynamic:
+		// a dynamic string is held as its JSON text: tostring gives
+		// the string itself, as ADX does
+		if x, ok := v.(string); ok && len(x) >= 2 && x[0] == '"' && x[len(x)-1] == '"' {
+			var s string
+			if json.Unmarshal([]byte(x), &s) == nil {
+				return s
+			}
 		}
 	}
 	switch x := v.(type) {
