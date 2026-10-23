@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -165,6 +166,11 @@ func splitPushableFederationOps(operators []parser.Operator) (pushable, remainin
 // operator like JoinOp changes what's available to reference
 // afterward, in ways a later where/project might depend on.
 func (e *Engine) resolveFederatedTable(ref *parser.DatabaseTableRef, operators []parser.Operator) (*types.Table, []parser.Operator, error) {
+	// database("<this database>").T is T itself
+	if db := e.Catalog.Database; db != nil && db.Name != "" && strings.EqualFold(db.Name, ref.Alias) {
+		t, err := e.executeQuery(&parser.Query{Source: ref.TableName})
+		return t, operators, err
+	}
 	localPath := e.Catalog.DatabasePath()
 	cfg, err := loadFederationConfig(localPath)
 	if err != nil {
