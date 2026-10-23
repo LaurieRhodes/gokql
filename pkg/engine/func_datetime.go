@@ -341,6 +341,12 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 			wall.Hour(), wall.Minute(), wall.Second(), wall.Nanosecond(), loc)
 		return reinterpreted.UTC().UnixNano(), true, nil
 
+	case "datetime_list_timezones":
+		if len(fc.Args) != 0 {
+			return nil, true, fmt.Errorf("datetime_list_timezones takes no arguments")
+		}
+		return kqlTimezonesJSON, true, nil
+
 	case "datetime_utc_to_local":
 		// datetime_utc_to_local(from, timezone) — the documented
 		// inverse of datetime_local_to_utc(), verified against real
