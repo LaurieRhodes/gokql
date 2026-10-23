@@ -69,6 +69,8 @@ func evalSeriesFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		return evalSeriesFillLinear(eng, fc, schema, row)
 	case "series_fir":
 		return evalSeriesFir(eng, fc, schema, row)
+	case "series_iir":
+		return evalSeriesIir(eng, fc, schema, row)
 	case "__series_fft_dynamic":
 		return evalSeriesFFTBag(eng, fc, schema, row, false)
 	case "__series_ifft_dynamic":

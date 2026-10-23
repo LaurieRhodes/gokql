@@ -42,6 +42,10 @@ func (e *Engine) applyPartition(input *types.Table, op *parser.PartitionOp) (*ty
 		groups[key] = append(groups[key], row)
 	}
 
+	if op.Source != nil {
+		return e.applyPartitionWithSource(input, op, colIdx, keyOrder, groups)
+	}
+
 	var output *types.Table
 	for _, key := range keyOrder {
 		sub := types.NewTable(input.Name, input.Schema)
@@ -86,4 +90,46 @@ func (e *Engine) applyPartition(input *types.Table, op *parser.PartitionOp) (*ty
 	}
 
 	return output, nil
+}
+
+// applyPartitionWithSource runs the legacy `{ SubQueryWithSource }`
+// form: the subquery once per key, with the key column bound as a
+// scalar (x, or toscalar(x)), the results unioned.
+func (e *Engine) applyPartitionWithSource(input *types.Table, op *parser.PartitionOp, colIdx int, keyOrder []string, groups map[string][]types.Row) (*types.Table, error) {
+	colType := input.Schema.Columns[colIdx].Type
+	var legs []*types.Table
+	for _, key := range keyOrder {
+		ctx := &LetContext{
+			Scalars:     map[string]types.Value{op.ByColumn: groups[key][0][colIdx]},
+			ScalarTypes: map[string]types.KQLType{op.ByColumn: colType},
+			Functions:   map[string]*parser.FunctionDef{},
+			Tables:      map[string]*types.Table{},
+			Parent:      e.letContext,
+		}
+		prev := e.letContext
+		e.setLetContext(ctx)
+		t, err := e.executeQuery(op.Source)
+		e.setLetContext(prev)
+		if err != nil {
+			return nil, fmt.Errorf("partition %s: %w", op.ByColumn, err)
+		}
+		legs = append(legs, t)
+	}
+	if len(legs) == 0 {
+		return types.NewTable(input.Name, types.Schema{}), nil
+	}
+	schema, colMap := buildUnionSchema(legs, "outer")
+	out := types.NewTable(input.Name, schema)
+	for li, leg := range legs {
+		for _, r := range leg.Rows {
+			row := make(types.Row, len(schema.Columns))
+			for ci, src := range colMap[li] {
+				if src >= 0 && src < len(r) {
+					row[ci] = r[src]
+				}
+			}
+			out.AddRow(row)
+		}
+	}
+	return out, nil
 }

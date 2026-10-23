@@ -37,13 +37,13 @@ func TestPartitionHintStrategySkipped(t *testing.T) {
 	expectRows(t, spaced, 2)
 }
 
-// TestPartitionExplicitSourceFormRejectedClearly guards that the
-// deliberately out-of-scope "{SubQueryWithSource}" form gets a clear,
-// explicit error, not silent mis-parsing into something else.
-func TestPartitionExplicitSourceFormRejectedClearly(t *testing.T) {
+// TestPartitionExplicitSourceForm runs the legacy {SubQueryWithSource}
+// form: the subquery once per key, the results unioned.
+func TestPartitionExplicitSourceForm(t *testing.T) {
 	eng := diskEngineEmpty(t)
-	_, err := runStmt(t, eng, `datatable(x:long) [1,2] | partition by x {datatable(y:long) [1]}`)
-	if err == nil {
-		t.Fatal("expected a clear error for the unsupported {SubQueryWithSource} form")
+	r, err := runStmt(t, eng, `datatable(x:long) [1,2] | partition by x {datatable(y:long) [1]}`)
+	if err != nil {
+		t.Fatal(err)
 	}
+	expectRows(t, r, 2)
 }

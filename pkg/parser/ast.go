@@ -702,6 +702,10 @@ func (*MvApplyOp) operatorNode() {}
 type PartitionOp struct {
 	ByColumn  string
 	Operators []Operator
+	// Source is the legacy `{ SubQueryWithSource }` form: a query with
+	// its own source, run once per key with the key column bound as a
+	// scalar (Operators is then empty).
+	Source *Query
 }
 
 func (*PartitionOp) operatorNode() {}

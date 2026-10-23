@@ -332,6 +332,33 @@ func ParseWithParameters(input string, params map[string]string) (Statement, err
 	// Split on semicolons (respecting strings and parentheses)
 	stmts := splitStatements(input)
 
+	// declare pattern statements: their invocations in the other
+	// statements are expanded before those are parsed.
+	var decls map[string]*patternDecl
+	var rest []string
+	for _, st := range stmts {
+		if isPatternDecl(st) {
+			d, err := parsePatternDecl(st)
+			if err != nil {
+				return nil, err
+			}
+			if decls == nil {
+				decls = map[string]*patternDecl{}
+			}
+			decls[d.name] = d
+			continue
+		}
+		if decls != nil {
+			x, err := expandPatterns(st, decls)
+			if err != nil {
+				return nil, err
+			}
+			st = x
+		}
+		rest = append(rest, st)
+	}
+	stmts = rest
+
 	// set statements and declare query_parameters(...) come first;
 	// a parameter's default binds as a let.
 	options := map[string]string{}
@@ -1839,7 +1866,12 @@ func parseQuery(input string) (Statement, error) {
 	// materialize(Expr): a tabular let is already evaluated once and
 	// cached, so materialize is the expression itself. Its own
 	// operators continue after the inner query's.
-	if inner, ok := unwrapMaterialize(source); ok {
+	inner, ok := unwrapMaterialize(source)
+	if !ok && strings.HasPrefix(source, "(") && matchingClose(source, 0, '(', ')') == len(source)-1 {
+		// a parenthesised tabular expression: (T | where ...) | count
+		inner, ok = strings.TrimSpace(source[1:len(source)-1]), true
+	}
+	if ok {
 		stmt, err := parseQuery(inner)
 		if err != nil {
 			return nil, fmt.Errorf("materialize: %w", err)
@@ -2763,7 +2795,22 @@ func parsePartition(s string) (Operator, error) {
 	}
 
 	if s[openIdx] == '{' {
-		return nil, fmt.Errorf("partition: the '{SubQueryWithSource}' explicit-source form (legacy strategy only in real ADX) isn't supported — use the '(SubQuery)' implicit-source form instead, which covers native, shuffle, and legacy strategies alike here")
+		closeB := matchingClose(s, openIdx, '{', '}')
+		if closeB < 0 {
+			return nil, fmt.Errorf("partition %s: unmatched '{'", byColumn)
+		}
+		if trailing := strings.TrimSpace(s[closeB+1:]); trailing != "" {
+			return nil, fmt.Errorf("partition %s: unexpected trailing content %q", byColumn, trailing)
+		}
+		q, err := parseQuery(strings.TrimSpace(s[openIdx+1 : closeB]))
+		if err != nil {
+			return nil, fmt.Errorf("partition %s subquery: %w", byColumn, err)
+		}
+		query, ok := q.(*Query)
+		if !ok {
+			return nil, fmt.Errorf("partition %s: the subquery must be a single tabular expression", byColumn)
+		}
+		return &PartitionOp{ByColumn: byColumn, Source: query}, nil
 	}
 
 	closeIdx := findMatchingParen(s, openIdx)

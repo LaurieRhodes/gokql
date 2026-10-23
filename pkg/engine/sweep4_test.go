@@ -83,6 +83,18 @@ func TestSweep4EmulatorValues(t *testing.T) {
 		{`print v = isnull(todatetime("13-02-2022"))`, "true"},
 		// make-series with a constant item
 		{`datatable(Time: datetime, Value: int)[datetime(2025-01-07), 10] | make-series Value=sum(Value), other=-1, k=5 default=-2 on Time from datetime(2025-01-06) to datetime(2025-01-20) step 7d | project v = k`, "[5,-2]"},
+		// declare pattern; partition { source }; (tabular) | ...
+		{"declare pattern country = (name:string)[state:string] { (\"USA\").[\"New York\"] = { print Capital = \"Albany\" }; (\"Canada\").[\"Alberta\"] = { print Capital = \"Edmonton\" }; }; country(\"Canada\").Alberta | project v = Capital", "Edmonton"},
+		{"declare pattern p = (a:string)[b:string] { ('x').['s'] = { print e=1 }; ('x').['t'] = { print e=2 }; }; union p('x').[\"*\"] | summarize v = sum(e)", "3"},
+		{"declare pattern m = (address:string) { ('10.10.10.10') = { print Lat=37.4 }; }; m('10.10.10.10') | project v = Lat", "37.4"},
+		{"range x from 1 to 2 step 1 | partition hint.strategy=legacy by x { range y from 1 to 3 step 1 | where y >= x } | summarize v = count()", "5"},
+		{"range x from 1 to 2 step 1 | partition by x { print k = toscalar(x) } | summarize v = sum(k)", "3"},
+		{"(range x from 1 to 3 step 1 | where x > 1) | summarize v = count()", "2"},
+		// series_iir; preview's rows; fork before render
+		{`print v = series_iir(dynamic([1,2,3,4,5]), dynamic([1]), dynamic([1,-1]))`, "[1,3,6,10,15]"},
+		{`print v = series_iir(dynamic([1,2,3,4,5]), dynamic([0.5, 0.5]), dynamic([2]))`, "[0.25,0.75,1.25,1.75,2.25]"},
+		{`print v = isnull(series_iir(dynamic([1,"a"]), dynamic([1]), dynamic([1])))`, "true"},
+		{"range x from 1 to 5 step 1 | evaluate preview(2)", "1"},
 		// project-away wildcards
 		{`print Ignore0=1, a=2, Ignore1=3 | project-away Ignore* | project v = a`, "2"},
 	}
@@ -99,6 +111,7 @@ func TestSweep4EmulatorValues(t *testing.T) {
 	queryError(t, `print A=1 | project-away x`)
 	queryError(t, `range x from 1 to 3 step 1 | extend b = bin_auto(x)`)
 	queryError(t, `declare query_parameters(a:string); print v = 1`)
+	queryError(t, `range x from 1 to 5 step 1 | evaluate preview(2) | count`)
 	if tbl := queryResult(t, "set query_take_max_records=2; range x from 1 to 5 step 1"); len(tbl.Rows) != 2 {
 		t.Errorf("query_take_max_records=2: %d rows", len(tbl.Rows))
 	}

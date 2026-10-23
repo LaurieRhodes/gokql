@@ -13,6 +13,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -39,9 +40,11 @@ func (e *Engine) ExecuteAll(stmt parser.Statement) ([]*types.Table, error) {
 }
 
 func isMultiResultOp(op parser.Operator) bool {
-	switch op.(type) {
+	switch o := op.(type) {
 	case *parser.ForkOp, *parser.FacetOp:
 		return true
+	case *parser.EvaluateOp:
+		return strings.EqualFold(o.PluginName, "preview")
 	}
 	return false
 }
@@ -106,11 +109,22 @@ func (e *Engine) applyFacet(input *types.Table, op *parser.FacetOp) (*types.Tabl
 
 // multiResultNotLast reports a fork or facet followed by other operators.
 func multiResultNotLast(ops []parser.Operator) error {
-	for i, op := range ops {
-		if isMultiResultOp(op) && i != len(ops)-1 {
+	// trailing render operators don't count: they only describe display
+	end := len(ops)
+	for end > 0 {
+		if _, ok := ops[end-1].(*parser.RenderOp); !ok {
+			break
+		}
+		end--
+	}
+	for i, op := range ops[:end] {
+		if isMultiResultOp(op) && i != end-1 {
 			kw := "fork"
-			if _, ok := op.(*parser.FacetOp); ok {
+			switch op.(type) {
+			case *parser.FacetOp:
 				kw = "facet"
+			case *parser.EvaluateOp:
+				kw = "evaluate preview"
 			}
 			return fmt.Errorf("%s must be the last operator of the query: its result tables cannot be piped further", kw)
 		}

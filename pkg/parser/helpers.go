@@ -49,10 +49,10 @@ func splitPipe(s string) []string {
 			current.WriteByte(ch)
 			continue
 		}
-		if ch == '(' {
+		if ch == '(' || ch == '{' {
 			depth++
 		}
-		if ch == ')' && depth > 0 {
+		if (ch == ')' || ch == '}') && depth > 0 {
 			depth--
 		}
 		if ch == '|' && depth == 0 {

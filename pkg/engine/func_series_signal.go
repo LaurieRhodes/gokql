@@ -267,3 +267,46 @@ func median(v []float64) float64 {
 	}
 	return (s[len(s)/2-1] + s[len(s)/2]) / 2
 }
+
+// evalSeriesIir is series_iir(series, numerators, denominators): the
+// IIR filter y[n] = (sum b[i]*x[n-i] - sum_{j>=1} a[j]*y[n-j]) / a[0].
+// Any non-numeric element (series or coefficients) gives null (the
+// emulator).
+func evalSeriesIir(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	if len(fc.Args) != 3 {
+		return nil, true, fmt.Errorf("series_iir requires (series, numerators, denominators)")
+	}
+	var vs [3][]float64
+	for i := range vs {
+		v, ok, err := seriesFloats(eng, fc, i, schema, row)
+		if err != nil || !ok {
+			return nil, true, err
+		}
+		for _, f := range v {
+			if math.IsNaN(f) {
+				return nil, true, nil
+			}
+		}
+		vs[i] = v
+	}
+	x, b, a := vs[0], vs[1], vs[2]
+	if len(a) == 0 || a[0] == 0 || len(b) == 0 {
+		return nil, true, nil
+	}
+	y := make([]float64, len(x))
+	for n := range x {
+		acc := 0.0
+		for i, c := range b {
+			if n-i >= 0 {
+				acc += c * x[n-i]
+			}
+		}
+		for j := 1; j < len(a); j++ {
+			if n-j >= 0 {
+				acc -= a[j] * y[n-j]
+			}
+		}
+		y[n] = acc / a[0]
+	}
+	return floatsJSON(y), true, nil
+}
