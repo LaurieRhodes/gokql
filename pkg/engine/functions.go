@@ -71,7 +71,7 @@ func evalFuncRaw(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		return v, err
 	}
 	switch fc.Name {
-	case "map", "all", "any", "inner_nodes", "labels", "node_id", "node_degree_in", "node_degree_out":
+	case "map", "all", "any", "inner_nodes", "labels", "node_id", "node_degree_in", "node_degree_out", "__gql_path_nodes", "__gql_path_edges":
 		if v, ok, err := evalGraphPathFunc(eng, fc, schema, row); ok {
 			return v, err
 		}

@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -55,6 +57,68 @@ type Graph struct {
 
 	elemMu      sync.Mutex
 	elemSchemas map[elemSchemaKey]*types.Schema
+
+	gqlOnce sync.Once
+	gqlView *Graph // the graph with labels from the Label property
+}
+
+// gqlLabeled returns the graph as GQL sees it: a graph model keeps its
+// labels; otherwise each node's and edge's labels are its Label
+// property, a string or an array of strings (ADX's GQL convention for
+// make-graph graphs). The view shares everything else with g.
+func (g *Graph) gqlLabeled() *Graph {
+	if g.isModel {
+		return g
+	}
+	g.gqlOnce.Do(func() {
+		v := &Graph{
+			EdgeSchema: g.EdgeSchema, NodeSchema: g.NodeSchema, Edges: g.Edges, NodeIDs: g.NodeIDs,
+			NodeRows: g.NodeRows, Adjacency: g.Adjacency, SourceIdx: g.SourceIdx, TargetIdx: g.TargetIdx,
+			NodeIdIdx: g.NodeIdIdx, hasNodeTable: g.hasNodeTable, NodeIdName: g.NodeIdName,
+			withNodeIdIdx: g.withNodeIdIdx, coercedIds: g.coercedIds, idType: g.idType, idTypeSet: g.idTypeSet,
+		}
+		if i := g.NodeSchema.ColumnIndex("Label"); i >= 0 && g.hasNodeTable {
+			v.nodeLabels = make(map[string][]string, len(g.NodeRows))
+			for k, row := range g.NodeRows {
+				if row != nil {
+					v.nodeLabels[k] = labelValues(row[i])
+				}
+			}
+		}
+		if i := g.EdgeSchema.ColumnIndex("Label"); i >= 0 {
+			v.edgeLabels = make([][]string, len(g.Edges))
+			for ei, e := range g.Edges {
+				v.edgeLabels[ei] = labelValues(e.Row[i])
+			}
+		}
+		g.gqlView = v
+	})
+	return g.gqlView
+}
+
+// labelValues reads a Label property: a JSON array of strings, or one
+// string.
+func labelValues(v types.Value) []string {
+	if v == nil {
+		return nil
+	}
+	s := fmt.Sprint(v)
+	if s == "" {
+		return nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(s), "[") {
+		var arr []interface{}
+		if json.Unmarshal([]byte(s), &arr) == nil {
+			out := make([]string, 0, len(arr))
+			for _, a := range arr {
+				if a != nil {
+					out = append(out, strings.TrimSpace(fmt.Sprint(a)))
+				}
+			}
+			return out
+		}
+	}
+	return []string{s}
 }
 
 // GraphEdge is one directed edge with its full source row for property access.
@@ -261,7 +325,11 @@ func (e *Engine) applyOperatorState(st pipeState, op parser.Operator) (pipeState
 		if st.graph == nil {
 			return st, fmt.Errorf("graph-match: input is not a graph (make-graph must precede it)")
 		}
-		t, err := e.applyGraphMatch(st.graph, o)
+		g := st.graph
+		if o.GQLLabels {
+			g = g.gqlLabeled()
+		}
+		t, err := e.applyGraphMatch(g, o)
 		if err != nil {
 			return st, err
 		}

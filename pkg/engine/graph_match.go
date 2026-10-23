@@ -258,6 +258,10 @@ func collectGraphUses(op *parser.GraphMatchOp) graphUses {
 	u := graphUses{paths: map[string]bool{}, labels: map[string]bool{}, nodes: map[string]bool{}}
 	fn := func(fc *parser.FuncCall) {
 		switch {
+		case (fc.Name == "__gql_path_nodes" || fc.Name == "__gql_path_edges") && len(fc.Args) == 1:
+			if r, ok := fc.Args[0].(*parser.ColumnRef); ok {
+				u.paths[r.Name] = true
+			}
 		case (fc.Name == "map" || fc.Name == "all" || fc.Name == "any") && len(fc.Args) == 2:
 			src := fc.Args[0]
 			if c, ok := src.(*parser.FuncCall); ok && c.Name == "inner_nodes" && len(c.Args) == 1 {
@@ -638,6 +642,10 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 	return e.applyProject(matches, plan.projectWithGraphNames(op.Project))
 }
 
+// graphVarFuncs take a pattern variable as an argument.
+var graphVarFuncs = map[string]bool{"labels": true, "node_id": true, "node_degree_in": true, "node_degree_out": true,
+	"map": true, "all": true, "any": true, "inner_nodes": true, "__gql_path_nodes": true, "__gql_path_edges": true}
+
 // projectWithGraphNames renames unnamed project items the way
 // Kusto.Language does for pattern properties (GraphResultName).
 func (plan *gmPlan) projectWithGraphNames(p *parser.ProjectOp) *parser.ProjectOp {
@@ -648,6 +656,54 @@ func (plan *gmPlan) projectWithGraphNames(p *parser.ProjectOp) *parser.ProjectOp
 			if n, ok := parser.GraphResultName(it.Expr, isVar); ok {
 				out.Items[i].Name = n
 			}
+		}
+	}
+	// A bare node or (single) edge variable stands for its properties
+	// as a bag, as ADX projects it: `project p` gives {"Name": ...}.
+	bags := map[string]parser.Expr{}
+	for n := range plan.varPos {
+		var args []parser.Expr
+		for _, c := range plan.schema.Columns {
+			if strings.HasPrefix(c.Name, n+".") {
+				args = append(args, &parser.Literal{Value: c.Name[len(n)+1:]}, &parser.ColumnRef{Name: c.Name})
+			}
+		}
+		if len(args) > 0 {
+			bags[n] = &parser.FuncCall{Name: "bag_pack", RawName: "bag_pack", Args: args}
+		}
+	}
+	if len(bags) == 0 {
+		return out
+	}
+	for i, it := range out.Items {
+		if it.Expr == nil {
+			// a bare name: a variable becomes its bag
+			if b := bags[it.Name]; b != nil {
+				out.Items[i].Expr = b
+			}
+			continue
+		}
+		if ref, ok := it.Expr.(*parser.ColumnRef); ok && bags[ref.Name] != nil && (it.Unnamed || it.Name == "") {
+			out.Items[i].Name = ref.Name
+		}
+		rewritten, err := rewriteExpr(it.Expr, func(x parser.Expr) (parser.Expr, error) {
+			// graph functions take the variable itself
+			if fc, ok := x.(*parser.FuncCall); ok && graphVarFuncs[fc.Name] {
+				return x, nil
+			}
+			// v.prop reads the property column, not the bag
+			if ax, ok := x.(*parser.AccessExpr); ok {
+				if ref, ok := ax.Object.(*parser.ColumnRef); ok && bags[ref.Name] != nil {
+					return x, nil
+				}
+			}
+			if ref, ok := x.(*parser.ColumnRef); ok && bags[ref.Name] != nil {
+				return bags[ref.Name], nil
+			}
+			return nil, nil
+		})
+		if err == nil {
+			out.Items[i].Expr = rewritten
 		}
 	}
 	return out
@@ -964,6 +1020,8 @@ func (g *Graph) elemSchema(outer *types.Schema, nodes bool) (*types.Schema, int)
 // aggregation reaching scalar evaluation), so dispatch continues.
 func evalGraphPathFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	switch fc.Name {
+	case "__gql_path_nodes", "__gql_path_edges":
+		return evalGQLPath(fc, schema, row)
 	case "labels":
 		return evalGraphLabels(fc, schema, row)
 	case "node_id", "node_degree_in", "node_degree_out":
@@ -1177,4 +1235,65 @@ func evalGraphNodeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row)
 	default:
 		return int64(len(ref.g.Adjacency[key])), true, nil
 	}
+}
+
+// evalGQLPath is __gql_path_nodes(e) / __gql_path_edges(e), used by
+// the GQL translator for path variables: the nodes along edge variable
+// e's path, both ends included, or its edges, as arrays of property
+// bags.
+func evalGQLPath(fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
+	if len(fc.Args) != 1 {
+		return nil, true, fmt.Errorf("%s expects one edge variable", fc.Name)
+	}
+	ref, ok := fc.Args[0].(*parser.ColumnRef)
+	if !ok {
+		return nil, true, fmt.Errorf("%s expects an edge variable", fc.Name)
+	}
+	idx := schema.ColumnIndex(graphPathColumn(ref.Name))
+	if idx < 0 {
+		return nil, true, fmt.Errorf("%s: %q is not an edge variable of the pattern", fc.Name, ref.Name)
+	}
+	path, _ := row[idx].(*graphPath)
+	if path == nil {
+		return nil, true, nil
+	}
+	g := path.g
+	var list []map[string]interface{}
+	if fc.Name == "__gql_path_nodes" {
+		ns := g.nodeElemSchema()
+		for _, id := range path.nodes() {
+			list = append(list, rowBag(ns, g.nodeElemRow(id)))
+		}
+	} else {
+		for _, ei := range path.edges {
+			list = append(list, rowBag(g.EdgeSchema, g.Edges[ei].Row))
+		}
+	}
+	if list == nil {
+		list = []map[string]interface{}{}
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return nil, true, err
+	}
+	return string(b), true, nil
+}
+
+// rowBag renders a row as a property bag, embedding dynamic columns.
+func rowBag(s types.Schema, row types.Row) map[string]interface{} {
+	m := make(map[string]interface{}, len(s.Columns))
+	for c, col := range s.Columns {
+		var v types.Value
+		if c < len(row) {
+			v = row[c]
+		}
+		if col.Type == types.TypeDynamic {
+			if str, ok := v.(string); ok && json.Valid([]byte(str)) {
+				m[col.Name] = json.RawMessage(str)
+				continue
+			}
+		}
+		m[col.Name] = v
+	}
+	return m
 }

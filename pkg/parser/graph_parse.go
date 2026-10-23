@@ -174,7 +174,7 @@ func parseGraphPatternOp(s, opName string) (*GraphMatchOp, error) {
 			break
 		}
 		key := strings.ToLower(strings.TrimSpace(s[:eq]))
-		if key != "cycles" && key != "output" {
+		if key != "cycles" && key != "output" && key != "gql_labels" {
 			break
 		}
 		r := strings.TrimSpace(s[eq+1:])
@@ -189,6 +189,8 @@ func parseGraphPatternOp(s, opName string) (*GraphMatchOp, error) {
 				return nil, fmt.Errorf("graph-match: cycles must be none, all or unique_edges, got %q", r[:e])
 			}
 			op.Cycles = v
+		case key == "gql_labels":
+			op.GQLLabels = v == "true"
 		case key == "output" && opName == "graph-shortest-paths":
 			if v != "any" && v != "all" {
 				return nil, fmt.Errorf("graph-shortest-paths: output must be any or all, got %q", r[:e])

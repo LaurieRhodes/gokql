@@ -947,7 +947,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			"pack", "pack_array", "set_difference", "set_intersect",
 			"set_union", "treepath", "array_rotate_left", "array_rotate_right",
 			"array_split", "array_iff", "array_iif", "bag_zip", "bag_set_key",
-			"bag_pack_columns", "parse_json", "todynamic":
+			"bag_pack_columns", "parse_json", "todynamic", "__gql_interleave":
 			// parse_json/todynamic found missing from this switch
 			// entirely 2026-08-18 while implementing gettype(): with
 			// no case here, both fell through to the FuncCall

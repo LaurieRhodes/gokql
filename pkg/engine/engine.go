@@ -883,6 +883,17 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	e.waitForMaterializedView(q.Source)
 
 	tableDef := e.Catalog.GetTable(q.Source)
+	if tableDef == nil && q.Source != "" {
+		// A parameterless stored function may be named without
+		// parentheses, as in ADX: `G | graph-match ...`.
+		if fn, ever, err := e.lookupStoredFunction(q.Source); err == nil && ever && !fn.Deleted &&
+			strings.TrimSpace(strings.Trim(strings.TrimSpace(fn.Parameters), "()")) == "" {
+			call := *q
+			call.SourceFuncCall = &parser.StoredFunctionCall{Name: q.Source}
+			call.Source = ""
+			return e.executeQuery(&call)
+		}
+	}
 	if tableDef == nil {
 		// Check if first operator is PrintOp (no source table needed)
 		if q.Source == "" && len(q.Operators) > 0 {

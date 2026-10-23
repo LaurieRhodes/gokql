@@ -127,6 +127,39 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		return strings.Join(parts, delim), true, nil
 
+	case "__gql_interleave":
+		// __gql_interleave(nodes, edges): a GQL path value, the nodes
+		// and edges alternating (n0, e0, n1, ...). Used by the GQL
+		// translator when a path variable is returned.
+		if len(fc.Args) != 2 {
+			return nil, true, fmt.Errorf("__gql_interleave requires 2 arguments")
+		}
+		nv, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		ev, err := evalExpr(eng, fc.Args[1], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		ns, ok1 := parseJSONArray(nv)
+		es, ok2 := parseJSONArray(ev)
+		if nv == nil || !ok1 || !ok2 {
+			return nil, true, nil
+		}
+		out := make([]interface{}, 0, len(ns)+len(es))
+		for i, n := range ns {
+			out = append(out, n)
+			if i < len(es) {
+				out = append(out, es[i])
+			}
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return nil, true, err
+		}
+		return string(b), true, nil
+
 	case "array_concat":
 		// array_concat(arr1, arr2, ...) — concatenate arrays
 		var result []interface{}
