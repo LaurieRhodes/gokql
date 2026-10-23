@@ -6,6 +6,7 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"sync/atomic"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -578,6 +579,20 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 		if err != nil || high == nil {
 			return false, err
 		}
+		// `between (dt .. 3d)`: a timespan upper bound is an offset
+		// from a datetime lower bound (datetimes and timespans are
+		// both int64 ticks here, so the types decide).
+		span := atomic.LoadInt32(&e.SpanHigh)
+		if span == 0 {
+			span = 2
+			if inferExprType(eng, e.High, schema) == types.TypeTimespan && inferExprType(eng, e.Low, schema) == types.TypeDatetime {
+				span = 1
+			}
+			atomic.StoreInt32(&e.SpanHigh, span)
+		}
+		if span == 1 { // datetimes are Unix nanoseconds, timespans 100ns ticks
+			high = types.ToInt64(low) + types.ToInt64(high)*100
+		}
 		// Infer type from the value being tested
 		vt := inferValType(val)
 		inRange := types.CompareValues(val, low, vt) >= 0 && types.CompareValues(val, high, vt) <= 0
@@ -786,7 +801,7 @@ func evalBinaryOp(eng *Engine, left types.Value, op parser.BinaryOp, right types
 			if ri == 0 {
 				return nil, nil
 			}
-			return li % ri, nil
+			return euclidMod(li, ri), nil
 		}
 	case int32:
 		li := int32(types.ToInt64(left))
@@ -890,6 +905,9 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			}
 			return types.TypeDynamic
 		}
+		if t, ok := overrideReturnType(e.Name); ok {
+			return t
+		}
 		if t, ok := scalarReturnTypes[e.Name]; ok {
 			return t
 		}
@@ -904,12 +922,15 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 		case "bin", "floor", "bin_at":
 			return binResultType(eng, e.Args, schema)
 		case "abs", "round", "ceiling":
-			// Kusto.Language: the argument's type, except abs(int) is
-			// long (round and ceiling keep int).
+			// abs: the argument's type, except abs(int) is long.
 			if len(e.Args) == 0 {
 				return types.TypeReal
 			}
+			// The emulator: round/ceiling of int or long are real.
 			t := inferExprType(eng, e.Args[0], schema)
+			if e.Name != "abs" && t != types.TypeDecimal {
+				return types.TypeReal
+			}
 			if t == types.TypeInt && e.Name == "abs" {
 				return types.TypeLong
 			}
@@ -969,6 +990,12 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			"unicode_codepoints_from_string", "to_utf8", "repeat":
 			return types.TypeDynamic
 		case "extract", "extract_json", "extractjson":
+			// extract(re, g, s, typeof(T)) / extract_json(path, s, typeof(T))
+			if n := len(e.Args); (e.Name == "extract" && n == 4) || (e.Name != "extract" && n == 3) {
+				if t, ok := typeofArgOK(e.Args[n-1]); ok {
+					return t
+				}
+			}
 			return types.TypeString
 		case "toguid":
 			return types.TypeGUID
@@ -1318,7 +1345,10 @@ func evalDecimalOp(left types.Value, op parser.BinaryOp, right types.Value) (typ
 	case parser.OpDiv:
 		r, ok = a.Quo(b)
 	case parser.OpMod:
-		r, ok = a.Rem(b)
+		// ADX's remainder is never negative: modulo |b|.
+		if r, ok = a.Rem(b); ok && r.Sign() < 0 {
+			r, ok = r.Add(b.Abs())
+		}
 	}
 	if !ok {
 		return nil, true
@@ -1408,7 +1438,14 @@ func evalMixedNumeric(eng *Engine, left types.Value, op parser.BinaryOp, right t
 		case parser.OpDiv:
 			return lf / rf, true, nil // IEEE: x/0 is ±Inf, 0/0 NaN
 		case parser.OpMod:
-			return math.Mod(lf, rf), true, nil
+			if rf == 0 {
+				return nil, true, nil
+			}
+			m := math.Mod(lf, rf)
+			if m < 0 {
+				m += math.Abs(rf)
+			}
+			return m, true, nil
 		}
 		return nil, false, nil
 	}
@@ -1527,4 +1564,18 @@ func zeroValueOf(t types.KQLType) types.Value {
 		return "null"
 	}
 	return ""
+}
+
+// euclidMod is ADX's integer remainder: never negative, modulo |b|
+// (-14 % 12 and -14 % -12 are both 10; -90m % 1h is 30m).
+func euclidMod(a, b int64) int64 {
+	m := a % b
+	if m < 0 {
+		if b < 0 {
+			m -= b
+		} else {
+			m += b
+		}
+	}
+	return m
 }

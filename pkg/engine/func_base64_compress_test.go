@@ -72,8 +72,8 @@ func TestBase64DecodeToGuidInvalidReturnsNull(t *testing.T) {
 // error -- see this case's own doc comment, func_net.go.
 func TestBase64EncodeFromGuidInvalidReturnsNull(t *testing.T) {
 	result := queryResult(t, `print r = base64_encode_fromguid("abcd1231")`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("r = %v, want null", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("r = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
 }
 

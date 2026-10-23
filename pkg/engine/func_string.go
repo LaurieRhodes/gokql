@@ -775,17 +775,12 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if occ == 0 {
 			occ = 1
 		}
+		// length bounds where a match may start ([pos, pos+length)),
+		// not where it ends: indexof("abcdefg", "cde", 1, 2) is 2.
 		pos := start
 		for k := int64(0); k < occ; k++ {
-			end := n
-			if length >= 0 && pos+length < n {
-				end = pos + length
-			}
-			if pos > end {
-				return int64(-1), true, nil
-			}
-			idx := strings.Index(s[pos:end], lookup)
-			if idx < 0 {
+			idx := strings.Index(s[pos:], lookup)
+			if idx < 0 || length >= 0 && int64(idx) >= length {
 				return int64(-1), true, nil
 			}
 			if k == occ-1 {

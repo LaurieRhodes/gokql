@@ -419,7 +419,9 @@ func FormatValue(v Value, typ KQLType) string {
 
 	case TypeDatetime:
 		if nanos, ok := v.(int64); ok {
-			t := time.Unix(0, nanos).UTC()
+			// As ADX: 100ns ticks, trailing zeros trimmed (a timespan
+			// keeps all seven digits; a datetime does not).
+			t := time.Unix(0, nanos-nanos%100).UTC()
 			return t.Format(time.RFC3339Nano)
 		}
 		return fmt.Sprintf("%v", v)
@@ -446,8 +448,7 @@ func FormatValue(v Value, typ KQLType) string {
 				s = fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs)
 			}
 			if fracNanos > 0 {
-				frac := fmt.Sprintf(".%07d", fracNanos/100) // 100ns ticks
-				s += strings.TrimRight(frac, "0")
+				s += fmt.Sprintf(".%07d", fracNanos/100) // 100ns ticks, as ADX
 			}
 			if negative {
 				s = "-" + s

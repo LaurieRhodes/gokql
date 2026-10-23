@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -297,13 +298,15 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 			if err != nil || val == nil {
 				continue
 			}
-			key := fmtV(val)
-			if !seen[key] {
-				seen[key] = true
-				if len(values) >= maxSize {
-					break
+			for _, el := range aggElems(val, argType) {
+				key := elemKey(el)
+				if !seen[key] && len(values) < maxSize {
+					seen[key] = true
+					values = append(values, el)
 				}
-				values = append(values, valueForJSONArray(val, argType))
+			}
+			if len(values) >= maxSize {
+				break
 			}
 		}
 		b, _ := json.Marshal(values)
@@ -331,10 +334,14 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 			if err != nil || val == nil {
 				continue
 			}
+			for _, el := range aggElems(val, argType) {
+				if len(values) < maxSize {
+					values = append(values, el)
+				}
+			}
 			if len(values) >= maxSize {
 				break
 			}
-			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
 		return string(b), nil
@@ -372,10 +379,14 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 				values = append(values, nil)
 				continue
 			}
+			for _, el := range aggElems(val, argType) {
+				if len(values) < maxSize {
+					values = append(values, el)
+				}
+			}
 			if len(values) >= maxSize {
 				break
 			}
-			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
 		return string(b), nil
@@ -409,13 +420,15 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 			if err != nil || val == nil {
 				continue
 			}
-			key := fmtV(val)
-			if !seen[key] {
-				seen[key] = true
-				if len(values) >= maxSize {
-					break
+			for _, el := range aggElems(val, argType) {
+				key := elemKey(el)
+				if !seen[key] && len(values) < maxSize {
+					seen[key] = true
+					values = append(values, el)
 				}
-				values = append(values, valueForJSONArray(val, argType))
+			}
+			if len(values) >= maxSize {
+				break
 			}
 		}
 		b, _ := json.Marshal(values)
@@ -447,10 +460,14 @@ func computeAgg(eng *Engine, agg parser.Aggregation, rows []types.Row, schema *t
 			if err != nil || val == nil {
 				continue
 			}
+			for _, el := range aggElems(val, argType) {
+				if len(values) < maxSize {
+					values = append(values, el)
+				}
+			}
 			if len(values) >= maxSize {
 				break
 			}
-			values = append(values, valueForJSONArray(val, argType))
 		}
 		b, _ := json.Marshal(values)
 		return string(b), nil
@@ -1213,9 +1230,15 @@ func inferAggType(eng *Engine, funcName string, args []parser.Expr, schema *type
 		}
 		return types.TypeDynamic
 	case "arg_max", "arg_min", "any", "take_any":
-		// Return type depends on the second argument
+		// arg_max/arg_min: the second argument's type; any/take_any of
+		// one expression: that expression's.
 		if len(args) > 1 {
 			return inferExprType(eng, args[1], schema)
+		}
+		if len(args) == 1 && (funcName == "any" || funcName == "take_any") {
+			if _, star := args[0].(*parser.StarExpr); !star {
+				return inferExprType(eng, args[0], schema)
+			}
 		}
 		return types.TypeDynamic
 
@@ -1467,4 +1490,42 @@ func covarianceSum(xs, ys []float64) float64 {
 		sum += (xs[i] - meanX) * (ys[i] - meanY)
 	}
 	return sum
+}
+
+// aggElems is what one value contributes to make_list/make_set and
+// their variants: a dynamic array its elements (one level, nulls
+// inside it kept, an empty array nothing), anything else itself.
+func aggElems(val types.Value, argType types.KQLType) []interface{} {
+	if argType == types.TypeDynamic {
+		if str, ok := val.(string); ok {
+			t := strings.TrimSpace(str)
+			if strings.HasPrefix(t, "[") {
+				var raw []json.RawMessage
+				if json.Unmarshal([]byte(t), &raw) == nil {
+					out := make([]interface{}, len(raw))
+					for i, r := range raw {
+						var b bytes.Buffer
+						if json.Compact(&b, r) == nil {
+							r = b.Bytes()
+						}
+						out[i] = json.RawMessage(r)
+					}
+					return out
+				}
+			}
+		}
+	}
+	return []interface{}{valueForJSONArray(val, argType)}
+}
+
+// elemKey identifies an aggElems element for make_set's dedup.
+func elemKey(el interface{}) string {
+	if r, ok := el.(json.RawMessage); ok {
+		return "j" + string(r)
+	}
+	b, err := json.Marshal(el)
+	if err != nil {
+		return fmt.Sprintf("v%v", el)
+	}
+	return "j" + string(b)
 }

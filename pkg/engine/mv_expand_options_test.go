@@ -109,10 +109,10 @@ func TestMvExpandLegacyDefaultLimit(t *testing.T) {
 	}
 }
 
-// Cast-only: an element that is not a string does not become one.
-func TestMvExpandCastNonConformingIsNull(t *testing.T) {
-	r := queryResult(t, `print b = dynamic(["x", 5, true]) | mv-expand b to typeof(string)`)
-	assertRows(t, r.Rows, [][]interface{}{{"x"}, {nil}, {nil}})
+// to typeof(string) converts every element to its text (the emulator).
+func TestMvExpandCastToString(t *testing.T) {
+	r := queryResult(t, `print b = dynamic(["x", 5, true, 1.5]) | mv-expand b to typeof(string)`)
+	assertRows(t, r.Rows, [][]interface{}{{"x"}, {"5"}, {"true"}, {"1.5"}})
 }
 
 func TestMvExpandExpressionNamed(t *testing.T) {

@@ -9,7 +9,7 @@ package engine
 // value and of the row-identifier columns. The identifier columns
 // default to every column except the pivot column and the columns the
 // aggregation references. Output: identifier columns, then pivoted
-// columns in order of first appearance. A cell with no input rows is 0
+// columns ordered by name (cultureLess). A cell with no input rows is 0
 // for count/countif/dcount/sum/sumif (the reference examples show 0),
 // an empty array or bag for make_list/make_set/make_bag, and null
 // otherwise. With an OutputSchema, the output is exactly that schema;
@@ -23,6 +23,8 @@ package engine
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -103,7 +105,8 @@ func applyPivotPlugin(e *Engine, input *types.Table, args []string, outSchema *t
 	aggType := agg.Schema.Columns[aggIdx].Type
 	fill := pivotFill(aggName, aggType)
 
-	// Pivot columns in order of first appearance; row groups likewise.
+	// Pivot columns and row groups in order of first appearance
+	// (columns are reordered by name below).
 	var pivNames []string
 	pivPos := map[string]int{}
 	type group struct {
@@ -130,28 +133,37 @@ func applyPivotPlugin(e *Engine, input *types.Table, args []string, outSchema *t
 		groups[g].cells[p] = r[aggIdx]
 	}
 
+	// Pivot columns are ordered by name as the emulator orders them:
+	// as text, ignoring case, lowercase first on a tie (10, 9, a, b,
+	// B, c).
+	order := make([]int, len(pivNames))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool { return cultureLess(pivNames[order[i]], pivNames[order[j]]) })
+
 	schema := types.Schema{}
 	used := map[string]bool{}
 	for i := 0; i < nk; i++ {
 		schema.Columns = append(schema.Columns, agg.Schema.Columns[i])
-		used[strings.ToLower(agg.Schema.Columns[i].Name)] = true
+		used[agg.Schema.Columns[i].Name] = true
 	}
-	for _, pv := range pivNames {
-		name := pv
+	for _, p := range order {
+		name := pivNames[p]
 		if name == "" {
 			name = "Column1"
 		}
-		for used[strings.ToLower(name)] {
+		for used[name] {
 			name += "1"
 		}
-		used[strings.ToLower(name)] = true
+		used[name] = true
 		schema.Columns = append(schema.Columns, types.Column{Name: name, Type: aggType})
 	}
 	out := &types.Table{Schema: schema}
 	for _, g := range groups {
 		row := make(types.Row, 0, len(schema.Columns))
 		row = append(row, g.keys...)
-		for p := range pivNames {
+		for _, p := range order {
 			if v, ok := g.cells[p]; ok {
 				row = append(row, v)
 			} else {
@@ -169,7 +181,9 @@ func applyPivotPlugin(e *Engine, input *types.Table, args []string, outSchema *t
 // pivotFill is the value of a pivoted cell with no input rows.
 func pivotFill(aggName string, t types.KQLType) types.Value {
 	switch aggName {
-	case "count", "countif", "dcount", "dcountif", "sum", "sumif":
+	case "avg", "avgif":
+		return math.NaN() // the emulator: an empty average is NaN
+	case "count", "countif", "dcount", "dcountif", "sum", "sumif", "stdev", "stdevif", "stdevp", "variance", "varianceif", "variancep":
 		switch t {
 		case types.TypeLong:
 			return int64(0)
@@ -236,4 +250,15 @@ func applyNarrowPlugin(e *Engine, input *types.Table, args []string, _ *types.Sc
 		}
 	}
 	return out, nil
+}
+
+// cultureLess orders strings the way the emulator orders pivot column
+// names: case-insensitively, and on a case-insensitive tie lowercase
+// before uppercase.
+func cultureLess(a, b string) bool {
+	la, lb := strings.ToLower(a), strings.ToLower(b)
+	if la != lb {
+		return la < lb
+	}
+	return a > b // 'b' (0x62) sorts before 'B' (0x42)
 }

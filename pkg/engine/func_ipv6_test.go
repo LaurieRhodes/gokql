@@ -183,8 +183,8 @@ func TestIPv6CompareBasic(t *testing.T) {
 // unparseable string.
 func TestParseIPv6NullAndInvalidInput(t *testing.T) {
 	result := queryResult(t, `print a = parse_ipv6(dynamic(null))`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("parse_ipv6(null) = %v, want nil", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("parse_ipv6(null) = %v, want \"\" (a string is never null)", result.Rows[0][0])
 	}
 
 	result2 := queryResult(t, `print a = parse_ipv6("not an ip")`)

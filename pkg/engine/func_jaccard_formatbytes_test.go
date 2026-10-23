@@ -73,8 +73,8 @@ func TestFormatBytesWorkedExamples(t *testing.T) {
 // convention for invalid input elsewhere.
 func TestFormatBytesInvalidUnitReturnsNull(t *testing.T) {
 	result := queryResult(t, `print r = format_bytes(1024, 0, "NotAUnit")`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("r = %v, want null", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("r = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
 }
 
@@ -82,7 +82,7 @@ func TestFormatBytesInvalidUnitReturnsNull(t *testing.T) {
 // null.
 func TestFormatBytesNullPropagation(t *testing.T) {
 	result := queryResult(t, `print r = format_bytes(dynamic(null))`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("r = %v, want null", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("r = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
 }

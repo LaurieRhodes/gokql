@@ -39,8 +39,8 @@ func TestExtractWorkedExample(t *testing.T) {
 	if got := result.Rows[1][1]; got != "David" {
 		t.Errorf("row 1 UserName = %v, want David", got)
 	}
-	if result.Rows[1][2] != nil {
-		t.Errorf("row 1 EmailId (no match) = %v, want nil", result.Rows[1][2])
+	if result.Rows[1][2] != "" {
+		t.Errorf("row 1 EmailId (no match) = %v, want \"\" (a string is never null)", result.Rows[1][2])
 	}
 	if got := result.Rows[1][3]; got != "35" {
 		t.Errorf("row 1 Age = %v, want 35", got)
@@ -86,8 +86,8 @@ func TestExtractTypeLiteralWorkedExample(t *testing.T) {
 // explicit: "If there's no match, or the type conversion fails: null."
 func TestExtractNoMatchReturnsNull(t *testing.T) {
 	result := queryResult(t, `print r = extract("xyz([0-9]+)", 1, "no numbers here")`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("extract(no match) = %v, want nil", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("extract(no match) = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
 }
 

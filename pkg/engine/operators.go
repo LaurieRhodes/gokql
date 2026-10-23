@@ -1283,17 +1283,24 @@ func buildUnionSchema(tables []*types.Table, kind string) (types.Schema, [][]int
 // applyProjectAway removes specified columns from the output.
 
 func (e *Engine) applyProjectAway(input *types.Table, op *parser.ProjectAwayOp) (*types.Table, error) {
-	// Build set of columns to remove
-	removeSet := make(map[string]bool)
-	for _, col := range op.Columns {
-		removeSet[strings.ToLower(col)] = true
+	// Names are case-sensitive and may hold * wildcards; a plain name
+	// that matches no column is an error (as in ADX).
+	for _, p := range op.Columns {
+		if !strings.Contains(p, "*") && input.Schema.ColumnIndex(p) < 0 && !hasColumnExact(&input.Schema, p) {
+			return nil, fmt.Errorf("project-away: column %q not found", p)
+		}
 	}
-
-	// Build new schema excluding removed columns
 	var newCols []types.Column
 	var keepIndices []int
 	for i, col := range input.Schema.Columns {
-		if !removeSet[strings.ToLower(col.Name)] {
+		removed := false
+		for _, p := range op.Columns {
+			if wildcardMatch(p, col.Name) {
+				removed = true
+				break
+			}
+		}
+		if !removed {
 			newCols = append(newCols, col)
 			keepIndices = append(keepIndices, i)
 		}
@@ -2319,7 +2326,7 @@ func (e *Engine) applyGetSchema(input *types.Table) (*types.Table, error) {
 	outSchema := types.Schema{
 		Columns: []types.Column{
 			{Name: "ColumnName", Type: types.TypeString},
-			{Name: "ColumnOrdinal", Type: types.TypeLong},
+			{Name: "ColumnOrdinal", Type: types.TypeInt},
 			{Name: "DataType", Type: types.TypeString},
 			{Name: "ColumnType", Type: types.TypeString},
 		},
@@ -2349,7 +2356,7 @@ func (e *Engine) applyGetSchema(input *types.Table) (*types.Table, error) {
 	// schema to carry that provenance, which it doesn't today.
 	// Deferred -- functionality first, this exact edge case is rare in
 	// practice.
-	ordinal := int64(0)
+	ordinal := int32(0)
 	for _, col := range input.Schema.Columns {
 		if col.Name == timeReceivedColumnName {
 			continue
@@ -2537,4 +2544,13 @@ func naturalCompare(a, b string) int {
 		return 1
 	}
 	return 0
+}
+
+func hasColumnExact(s *types.Schema, name string) bool {
+	for _, c := range s.Columns {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }

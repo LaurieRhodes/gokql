@@ -87,11 +87,11 @@ func TestIPv6LookupAllMatches(t *testing.T) {
 	q := `let L = datatable(net:string, tag:string)['fe80::/10','linklocal', '2001:db8::/32','doc', '2001:db8:1::/48','doc-sub'];
 datatable(ip:string)['fe80::1','2001:db8:1::5','::1'] | evaluate ipv6_lookup(L, ip, net, true)`
 	assertCSVRows(t, ipLookupRows(t, q), []string{
-		"ip,net,tag",
-		"fe80::1,fe80::/10,linklocal",
-		"2001:db8:1::5,2001:db8::/32,doc",
-		"2001:db8:1::5,2001:db8:1::/48,doc-sub",
-		"::1,,",
+		"net,tag,ip", // ipv6_lookup: lookup columns first (the emulator)
+		"fe80::/10,linklocal,fe80::1",
+		"2001:db8::/32,doc,2001:db8:1::5",
+		"2001:db8:1::/48,doc-sub,2001:db8:1::5",
+		",,::1",
 	})
 }
 

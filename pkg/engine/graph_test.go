@@ -46,8 +46,8 @@ func TestMakeGraphWithNodeTable(t *testing.T) {
 	expectCell(t, tbl, 1, 1, "Server")   // b
 	expectCell(t, tbl, 2, 0, "z")
 	expectCell(t, tbl, 3, 0, "c")
-	if v := cellVal(t, tbl, 3, 1); v != nil {
-		t.Fatalf("edge-only node c: expected null Kind, got %v", v)
+	if v := cellVal(t, tbl, 3, 1); v != "" {
+		t.Fatalf("edge-only node c: expected empty Kind (strings are never null), got %v", v)
 	}
 }
 

@@ -76,8 +76,8 @@ func TestExtractJsonJSONPathSubsetWorkedExample(t *testing.T) {
 func TestExtractJsonDocPageOwnPathIsATypo(t *testing.T) {
 	result := queryResult(t, `let doc = '{"Details":{"Tags":["startup","auth","performance"]}}';
 		print r = extract_json("$.Tags[0]", doc)`)
-	if result.Rows[0][0] != nil {
-		t.Errorf(`extract_json("$.Tags[0]", doc) = %v, want null (Tags is nested under Details in this document, not root-level)`, result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf(`extract_json("$.Tags[0]", doc) = %v, want empty (a string is never null) (Tags is nested under Details in this document, not root-level)`, result.Rows[0][0])
 	}
 }
 
@@ -85,8 +85,8 @@ func TestExtractJsonDocPageOwnPathIsATypo(t *testing.T) {
 // match, no typeLiteral -> null, not an error or empty string.
 func TestExtractJsonNoMatch(t *testing.T) {
 	result := queryResult(t, `print r = extract_json("$.missing", '{"a":1}')`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("r = %v, want null", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("r = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
 }
 
@@ -94,8 +94,8 @@ func TestExtractJsonNoMatch(t *testing.T) {
 // JSON at all -> null, not an error.
 func TestExtractJsonInvalidJSON(t *testing.T) {
 	result := queryResult(t, `print r = extract_json("$.name", "not valid json")`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("r = %v, want null", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("r = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
 }
 
@@ -104,11 +104,11 @@ func TestExtractJsonInvalidJSON(t *testing.T) {
 // established convention elsewhere (extract(), parse_ipv6(), etc).
 func TestExtractJsonNullPropagation(t *testing.T) {
 	result := queryResult(t, `print a = extract_json(dynamic(null), '{"a":1}'), b = extract_json("$.a", dynamic(null))`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("a (null jsonPath) = %v, want null", result.Rows[0][0])
+	if result.Rows[0][0] != "" {
+		t.Errorf("a (null jsonPath) = %v, want empty (a string is never null)", result.Rows[0][0])
 	}
-	if result.Rows[0][1] != nil {
-		t.Errorf("b (null dataSource) = %v, want null", result.Rows[0][1])
+	if result.Rows[0][1] != "" {
+		t.Errorf("b (null dataSource) = %v, want empty (a string is never null)", result.Rows[0][1])
 	}
 }
 

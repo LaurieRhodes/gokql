@@ -156,13 +156,20 @@ func evalVectorFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		av, ok1 := memoFloatArray(eng, fc, 0, aVal)
 		bv, ok2 := memoFloatArray(eng, fc, 1, bVal)
 		if !ok1 || !ok2 {
-			return nil, true, nil
+			// As the emulator: a number on either side multiplies
+			// every element; non-numeric elements count as 0.
+			var ok bool
+			if av, ok = looseSeries(aVal, bVal); !ok {
+				return nil, true, nil
+			}
+			if bv, ok = looseSeries(bVal, aVal); !ok {
+				return nil, true, nil
+			}
 		}
-		if len(av) != len(bv) {
-			return nil, true, fmt.Errorf("series_dot_product: vector length mismatch (%d vs %d)", len(av), len(bv))
-		}
+		// Unequal lengths: the shorter one's (the emulator).
+		n := min(len(av), len(bv))
 		var dot float64
-		for i := range av {
+		for i := 0; i < n; i++ {
 			dot += av[i] * bv[i]
 		}
 		return dot, true, nil
@@ -339,4 +346,38 @@ func memoFloatArray(eng *Engine, fc *parser.FuncCall, arg int, val types.Value) 
 		memo.mu.Unlock()
 	}
 	return v, ok
+}
+
+// looseSeries reads a series_* operand the way the emulator does when
+// it is not a clean numeric array: an array's non-numeric elements
+// are 0, and a number is repeated to the other operand's length.
+func looseSeries(v, other types.Value) ([]float64, bool) {
+	switch x := v.(type) {
+	case int64, int32, float64:
+		n := 1
+		if arr, ok := parseJSONArray(other); ok {
+			n = len(arr)
+		}
+		out := make([]float64, n)
+		for i := range out {
+			out[i] = types.ToFloat64(x)
+		}
+		return out, true
+	}
+	arr, ok := parseJSONArray(v)
+	if !ok {
+		return nil, false
+	}
+	out := make([]float64, len(arr))
+	for i, el := range arr {
+		switch n := el.(type) {
+		case float64:
+			out[i] = n
+		case json.Number:
+			out[i], _ = n.Float64()
+		case int64:
+			out[i] = float64(n)
+		}
+	}
+	return out, true
 }

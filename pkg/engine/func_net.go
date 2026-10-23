@@ -18,6 +18,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cespare/xxhash/v2"
 
@@ -234,8 +235,8 @@ func evalNetFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 			return nil, true, nil
 		}
 		decoded, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%v", val))
-		if err != nil {
-			return nil, true, nil
+		if err != nil || !utf8.Valid(decoded) {
+			return "", true, nil // the emulator: invalid UTF-8 decodes to ""
 		}
 		return string(decoded), true, nil
 
@@ -2102,9 +2103,36 @@ func hasIPv4PrefixDelimited(text, prefix string) bool {
 		if idx > 0 && isAlnumByte(text[idx-1]) {
 			continue
 		}
-		return true
+		if completeIPv4At(text, idx) {
+			return true
+		}
 	}
 	return false
+}
+
+// completeIPv4At reports whether text holds a whole IPv4 address at
+// i: four dot-separated octets of at most 255, not followed by a
+// letter or digit (the emulator: "127.0.0.256" and "127.0.0" are not
+// addresses; "127.0.0.1.5" holds one).
+func completeIPv4At(text string, i int) bool {
+	for k := 0; k < 4; k++ {
+		if k > 0 {
+			if i >= len(text) || text[i] != '.' {
+				return false
+			}
+			i++
+		}
+		n, d := 0, 0
+		for i < len(text) && text[i] >= '0' && text[i] <= '9' && d < 4 {
+			n = n*10 + int(text[i]-'0')
+			i++
+			d++
+		}
+		if d == 0 || d > 3 || n > 255 {
+			return false
+		}
+	}
+	return i >= len(text) || !isAlnumByte(text[i])
 }
 
 // collectIPv4SearchTerms implements the shared variadic-or-dynamic-

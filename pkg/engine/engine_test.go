@@ -1198,12 +1198,12 @@ func TestJoinLeftouter(t *testing.T) {
 	tbl := queryResult(t, joinFixture+`T1 | join kind=leftouter (T2) on K | sort by K asc`)
 	expectRows(t, tbl, 3)
 	// Columns K, A, K1, B. Unmatched left row (K=1) keeps A but has
-	// null K1 and B.
+	// null K1 and empty B (the emulator: strings are never null).
 	expectColNames(t, tbl, "K", "A", "K1", "B")
 	expectCell(t, tbl, 0, 0, "1")
 	expectCell(t, tbl, 0, 1, "x")
-	if cellVal(t, tbl, 0, 2) != nil || cellVal(t, tbl, 0, 3) != nil {
-		t.Error("leftouter unmatched row should have nil K1 and B")
+	if cellVal(t, tbl, 0, 2) != nil || cellVal(t, tbl, 0, 3) != "" {
+		t.Error("leftouter unmatched row should have null K1 (long) and empty B (strings are never null)")
 	}
 	expectCell(t, tbl, 1, 3, "bb")
 	expectCell(t, tbl, 2, 3, "cc")
@@ -1310,8 +1310,8 @@ func TestLookupDefault(t *testing.T) {
 	expectColNames(t, tbl, "K", "V", "Name")
 	expectCell(t, tbl, 0, 2, "alpha")
 	expectCell(t, tbl, 1, 2, "beta")
-	if cellVal(t, tbl, 2, 2) != nil {
-		t.Error("lookup: unmatched row should have nil Name")
+	if cellVal(t, tbl, 2, 2) != "" {
+		t.Error("lookup: unmatched row should have empty Name (strings are never null)")
 	}
 }
 

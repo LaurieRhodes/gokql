@@ -213,7 +213,26 @@ func (e *Engine) applyIPLookup(name string, v6 bool, input *types.Table, args []
 			out.AddRow(row)
 		}
 	}
+	if v6 {
+		// ipv6_lookup puts the lookup table's columns first (the
+		// emulator; ipv4_lookup keeps the source's first).
+		out = rotateColumns(out, len(input.Schema.Columns))
+	}
 	return out, nil
+}
+
+// rotateColumns moves t's first n columns after the others.
+func rotateColumns(t *types.Table, n int) *types.Table {
+	if n <= 0 || n >= len(t.Schema.Columns) {
+		return t
+	}
+	cols := append(append([]types.Column(nil), t.Schema.Columns[n:]...), t.Schema.Columns[:n]...)
+	out := types.NewTable(t.Name, types.Schema{Columns: cols})
+	for _, r := range t.Rows {
+		row := make(types.Row, 0, len(r))
+		out.AddRow(append(append(row, r[n:]...), r[:n]...))
+	}
+	return out
 }
 
 func extraKeysEqual(sr, lr types.Row, si, li []int) bool {

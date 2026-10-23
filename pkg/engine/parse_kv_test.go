@@ -124,8 +124,8 @@ func TestParseKVMissingKeyLeftNull(t *testing.T) {
 	if got := result.Rows[0][srcIdx]; got != "1.2.3.4" {
 		t.Errorf("src = %v, want 1.2.3.4", got)
 	}
-	if got := result.Rows[0][dstIdx]; got != nil {
-		t.Errorf("dst = %v, want nil (key absent from source)", got)
+	if got := result.Rows[0][dstIdx]; got != "" {
+		t.Errorf("dst = %v, want empty (a string is never null) (key absent from source)", got)
 	}
 }
 

@@ -962,6 +962,10 @@ type BetweenExpr struct {
 	Low     Expr
 	High    Expr
 	Negated bool // true for !between
+	// SpanHigh caches, for the engine, whether High is a timespan
+	// offset from a datetime Low (`between (dt .. 3d)`): 0 unknown,
+	// 1 yes, 2 no. Accessed atomically.
+	SpanHigh int32
 }
 
 func (*BetweenExpr) exprNode() {}

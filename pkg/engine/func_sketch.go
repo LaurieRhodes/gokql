@@ -476,21 +476,29 @@ func isTypeofArg(e parser.Expr) bool {
 
 // typeofArg reads typeof(T) as a type; real when it is not one.
 func typeofArg(e parser.Expr) types.KQLType {
+	if t, ok := typeofArgOK(e); ok {
+		return t
+	}
+	return types.TypeReal
+}
+
+// typeofArgOK is the type a typeof(T) argument names.
+func typeofArgOK(e parser.Expr) (types.KQLType, bool) {
 	if lit, ok := e.(*parser.Literal); ok { // typeof(T) parses as the type name
 		if n, ok := lit.Value.(string); ok {
 			if t, err := types.ParseType(n); err == nil {
-				return t
+				return t, true
 			}
 		}
 	}
 	if fc, ok := e.(*parser.FuncCall); ok && fc.Name == "typeof" && len(fc.Args) == 1 {
 		if ref, ok := fc.Args[0].(*parser.ColumnRef); ok {
 			if t, err := types.ParseType(ref.Name); err == nil {
-				return t
+				return t, true
 			}
 		}
 	}
-	return types.TypeReal
+	return 0, false
 }
 
 func applyDcountIntersect(e *Engine, in *types.Table, args []string, _ *types.Schema) (*types.Table, error) {

@@ -118,20 +118,60 @@ func UniqueName(name string, taken func(string) bool) string {
 }
 
 // GraphResultName is ExprResultName inside graph-match / graph-
-// shortest-paths, where Kusto.Language names a function of a pattern
-// property by the property alone: strlen(a.name) → strlen_name, while
-// a bare a.name stays a_name. isVar reports pattern variable names.
+// shortest-paths, as the engine (the Kusto emulator) names results:
+//
+//	a.name (bare)                    → a_name
+//	strlen(a.name), abs(strlen(a.x)) → strlen_ (a pattern property
+//	                                   inside a function has no name)
+//	tostring(a.name)                 → none (ColumnN)
+//	labels(a), node_degree_out(a)    → labels_a, node_degree_out_a
+//	map(e, s), all(e, true)          → e_s, e_Column
+//
+// isVar reports pattern variable names. For a call the name is always
+// settled (ok); "" then means ColumnN.
 func GraphResultName(e Expr, isVar func(string) bool) (string, bool) {
 	fc, ok := e.(*FuncCall)
 	if !ok || len(fc.Args) == 0 {
 		return ExprResultName(e)
 	}
-	if ae, ok := fc.Args[0].(*AccessExpr); ok && len(ae.Path) == 1 && ae.Path[0].Name != "" {
-		if ref, ok := ae.Object.(*ColumnRef); ok && isVar(ref.Name) {
-			c := *fc
-			c.Args = append([]Expr{&ColumnRef{Name: ae.Path[0].Name}}, fc.Args[1:]...)
-			return callResultName(&c, scalarResultNames)
+	if ref, ok := fc.Args[0].(*ColumnRef); ok && isVar(ref.Name) {
+		switch fc.Name {
+		case "labels", "node_degree_in", "node_degree_out", "node_id":
+			return fc.Name + "_" + ref.Name, true
+		case "map", "all", "any":
+			n := "Column"
+			if len(fc.Args) > 1 {
+				if a, ok := ExprResultName(fc.Args[1]); ok && a != "" {
+					n = a
+				}
+			}
+			return ref.Name + "_" + n, true
 		}
 	}
-	return ExprResultName(e)
+	// A call's name is settled here: "" (with ok) means none, so
+	// the caller numbers it ColumnN.
+	n, ok := ExprResultName(blankPatternProps(fc, isVar))
+	if !ok {
+		n = ""
+	}
+	return n, true
+}
+
+// blankPatternProps copies a call with every pattern property v.p in
+// its arguments (at any depth) replaced by a column of no name.
+func blankPatternProps(e Expr, isVar func(string) bool) Expr {
+	switch x := e.(type) {
+	case *AccessExpr:
+		if ref, ok := x.Object.(*ColumnRef); ok && isVar(ref.Name) {
+			return &ColumnRef{Name: ""}
+		}
+	case *FuncCall:
+		c := *x
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = blankPatternProps(a, isVar)
+		}
+		return &c
+	}
+	return e
 }

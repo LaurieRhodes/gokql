@@ -46,10 +46,11 @@ reports | make-graph employee --> manager with_node_id=name
 where node_degree_out(manager) == 0
 project manager.name, employee.name, di_m=node_degree_in(manager), do_m=node_degree_out(manager), di_e=node_degree_in(employee), do_e=node_degree_out(employee)`,
 		`Jim | Alice | 1 | 0 | 3 | 1`)
-	// Unnamed graph function columns: ColumnN; a function of a pattern
-	// property is named after the property alone.
+	// Unnamed graph columns as the emulator names them: a pattern
+	// property inside a function has no name (strlen_), a graph
+	// function of a variable is <fn>_<var>.
 	tbl := queryResult(t, `datatable(s:string,d:string)["x","y"] | make-graph s --> d with_node_id=n | graph-match (a)-->(b) project strlen(a.n), tolower(b.n), a.n, node_degree_out(a)`)
-	if got := tableColumns(tbl); got != "strlen_n,Column1,a_n,Column2" {
+	if got := tableColumns(tbl); got != "strlen_,Column1,a_n,node_degree_out_a" {
 		t.Fatalf("columns %s", got)
 	}
 	queryError(t, `datatable(s:string,d:string)["x","y"] | make-graph s --> d | graph-match (a)-[e]->(b) project node_id()`)

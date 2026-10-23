@@ -12,7 +12,7 @@ func TestLookupSubqueryRightSide(t *testing.T) {
 	r := queryResult(t, lhT+` | lookup (`+lhT+` | where a > 1 | project a, c = b) on a`)
 	assertColumns(t, columnNames(&r.Schema), "a", "b", "c")
 	assertRows(t, r.Rows, [][]interface{}{
-		{int64(1), "x", nil}, {int64(2), "y", "y"}, {int64(3), "x", "x"},
+		{int64(1), "x", ""}, {int64(2), "y", "y"}, {int64(3), "x", "x"},
 	})
 }
 

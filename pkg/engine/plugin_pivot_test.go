@@ -17,20 +17,20 @@ func TestPivotReference(t *testing.T) {
 		want []string
 	}{
 		{`| project State, EventType | evaluate pivot(State)`, []string{
-			"EventType,ARKANSAS,ARIZONA", "Heavy Rain,1,0", "Lightning,0,1", "Flash Flood,0,3", "Heat,1,0"}},
+			"EventType,ARIZONA,ARKANSAS", "Heavy Rain,0,1", "Lightning,1,0", "Flash Flood,3,0", "Heat,0,1"}},
 		{`| project State, EventType, DeathsDirect | evaluate pivot(State, sum(DeathsDirect))`, []string{
-			"EventType,ARKANSAS,ARIZONA", "Heavy Rain,1,0", "Lightning,0,1", "Flash Flood,0,6", "Heat,3,0"}},
+			"EventType,ARIZONA,ARKANSAS", "Heavy Rain,0,1", "Lightning,1,0", "Flash Flood,6,0", "Heat,0,3"}},
 		{`| project State, EventType, DeathsDirect | evaluate pivot(State, sum(DeathsDirect), EventType)`, []string{
-			"EventType,ARKANSAS,ARIZONA", "Heavy Rain,1,0", "Lightning,0,1", "Flash Flood,0,6", "Heat,3,0"}},
+			"EventType,ARIZONA,ARKANSAS", "Heavy Rain,0,1", "Lightning,1,0", "Flash Flood,6,0", "Heat,0,3"}},
 		{`| evaluate pivot(State, sum(DeathsDirect), EventType, Source)`, []string{
-			"EventType,Source,ARKANSAS,ARIZONA", "Heavy Rain,EM,1,0", "Lightning,NP,0,1",
-			"Flash Flood,TS,0,2", "Flash Flood,BM,0,3", "Flash Flood,NP,0,1", "Heat,NP,3,0"}},
+			"EventType,Source,ARIZONA,ARKANSAS", "Heavy Rain,EM,0,1", "Lightning,NP,1,0",
+			"Flash Flood,TS,2,0", "Flash Flood,BM,3,0", "Flash Flood,NP,1,0", "Heat,NP,0,3"}},
 		{`| project State, EventType | evaluate pivot(State): (EventType:string, ARIZONA:long, ALASKA:long)`, []string{
 			"EventType,ARIZONA,ALASKA", "Heavy Rain,0,0", "Lightning,1,0", "Flash Flood,3,0", "Heat,0,0"}},
 		{`| project State, EventType, DeathsDirect | evaluate pivot(State, avg(DeathsDirect))`, []string{
-			"EventType,ARKANSAS,ARIZONA", "Heavy Rain,1,", "Lightning,,1", "Flash Flood,,2", "Heat,3,"}},
+			"EventType,ARIZONA,ARKANSAS", "Heavy Rain,NaN,1", "Lightning,1,NaN", "Flash Flood,2,NaN", "Heat,NaN,3"}},
 		{`| project State, EventType, DeathsDirect | evaluate pivot(State, make_list(DeathsDirect)) | where EventType == 'Heat'`, []string{
-			"EventType,ARKANSAS,ARIZONA", "Heat,[3],[]"}},
+			"EventType,ARIZONA,ARKANSAS", "Heat,[],[3]"}},
 	}
 	for _, c := range cases {
 		assertCSVRows(t, ipLookupRows(t, pivotData+c.q), c.want)

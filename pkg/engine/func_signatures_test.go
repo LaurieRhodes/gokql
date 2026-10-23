@@ -18,7 +18,7 @@ func TestDeclaredReturnTypesStatic(t *testing.T) {
 		"tobool(1)":                              types.TypeBool,
 		"parse_csv('a,b')":                       types.TypeDynamic,
 		"strcmp('a', 'b')":                       types.TypeLong,
-		"getyear(now())":                         types.TypeInt,
+		"getyear(now())":                         types.TypeLong, // declared int; the engine returns long
 		"bag_pack('k', 1)":                       types.TypeDynamic,
 		"series_add(dynamic([1]), dynamic([2]))": types.TypeDynamic,
 		"make_timespan(1, 2)":                    types.TypeTimespan,

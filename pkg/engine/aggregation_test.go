@@ -19,8 +19,8 @@ func TestAnyifSelectsMatchingRow(t *testing.T) {
 // produced."
 func TestAnyifReturnsNullWhenNoMatch(t *testing.T) {
 	tbl := queryResult(t, `datatable(EventType:string, EventNarrative:string) ["Rain","calm day"] | summarize anyif(EventType, EventNarrative has "strong wind")`)
-	if tbl.Rows[0][0] != nil {
-		t.Errorf("expected null when no row satisfies the predicate, got %v", tbl.Rows[0][0])
+	if tbl.Rows[0][0] != "" {
+		t.Errorf("expected empty when no row satisfies the predicate, got %v", tbl.Rows[0][0])
 	}
 }
 

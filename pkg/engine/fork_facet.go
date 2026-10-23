@@ -32,7 +32,10 @@ func (e *Engine) ExecuteAll(stmt parser.Statement) ([]*types.Table, error) {
 	if t != nil && !isNoResult(t) {
 		out = append(out, t)
 	}
-	return append(out, e.extraResults...), nil
+	for _, x := range e.extraResults {
+		out = append(out, stringNullsToEmpty(x))
+	}
+	return out, nil
 }
 
 func isMultiResultOp(op parser.Operator) bool {

@@ -172,17 +172,33 @@ func castElement(v types.Value, t types.KQLType) types.Value {
 		return v
 	}
 	switch t {
+	// As the emulator casts: to string, every element's text (arrays
+	// and bags as JSON); to long/int, reals truncate; to bool, a
+	// nonzero integer is true; to datetime, only date strings.
 	case types.TypeString:
-		if s, ok := v.(string); ok && !looksLikeJSONContainer(s) {
-			return s
+		switch x := v.(type) {
+		case string:
+			return x
+		case bool:
+			return strconv.FormatBool(x)
+		case float64:
+			return strconv.FormatFloat(x, 'g', -1, 64)
+		case int64:
+			return strconv.FormatInt(x, 10)
+		case int32:
+			return strconv.FormatInt(int64(x), 10)
 		}
-		return nil
+		return fmt.Sprint(v)
 	case types.TypeLong:
 		switch x := v.(type) {
 		case int64:
 			return x
 		case int32:
 			return int64(x)
+		case float64:
+			if !math.IsNaN(x) && !math.IsInf(x, 0) {
+				return int64(x)
+			}
 		}
 		return nil
 	case types.TypeInt:
@@ -193,6 +209,10 @@ func castElement(v types.Value, t types.KQLType) types.Value {
 			}
 		case int32:
 			return x
+		case float64:
+			if x >= math.MinInt32 && x <= math.MaxInt32 {
+				return int32(x)
+			}
 		}
 		return nil
 	case types.TypeReal:
@@ -206,14 +226,22 @@ func castElement(v types.Value, t types.KQLType) types.Value {
 		}
 		return nil
 	case types.TypeBool:
-		if b, ok := v.(bool); ok {
-			return b
+		switch x := v.(type) {
+		case bool:
+			return x
+		case int64:
+			return x != 0
+		case int32:
+			return x != 0
 		}
 		return nil
 	case types.TypeDatetime, types.TypeTimespan, types.TypeGUID:
 		s, ok := v.(string)
 		if !ok {
 			return nil
+		}
+		if _, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil && t == types.TypeDatetime {
+			return nil // "7" is not a date
 		}
 		out, err := types.ParseValue(s, t)
 		if err != nil {

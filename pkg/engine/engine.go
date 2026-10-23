@@ -346,6 +346,59 @@ func (e *Engine) getSharedDict(table, column string) (*sharedDict, error) {
 
 // Execute runs a parsed statement and returns the result table (if any).
 func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
+	outer := e.execDepth.Load() == 0
+	t, err := e.execute(stmt)
+	if outer && err == nil {
+		t = stringNullsToEmpty(t)
+	}
+	return t, err
+}
+
+// stringNullsToEmpty replaces null cells of string columns with "":
+// a KQL string is never null (an unmatched outer-join key, a missing
+// bag_unpack property, a failed extract all read as ""). Rows holding
+// such a cell are copied, since result rows may be shared with cached
+// tables.
+func stringNullsToEmpty(t *types.Table) *types.Table {
+	if t == nil {
+		return nil
+	}
+	var strCols []int
+	for i, c := range t.Schema.Columns {
+		if c.Type == types.TypeString {
+			strCols = append(strCols, i)
+		}
+	}
+	if len(strCols) == 0 {
+		return t
+	}
+	var rows []types.Row
+	for ri, r := range t.Rows {
+		var c types.Row
+		for _, ci := range strCols {
+			if ci < len(r) && r[ci] == nil {
+				if c == nil {
+					c = append(types.Row(nil), r...)
+				}
+				c[ci] = ""
+			}
+		}
+		if c != nil {
+			if rows == nil {
+				rows = append([]types.Row(nil), t.Rows...)
+			}
+			rows[ri] = c
+		}
+	}
+	if rows == nil {
+		return t
+	}
+	out := *t
+	out.Rows = rows
+	return &out
+}
+
+func (e *Engine) execute(stmt parser.Statement) (*types.Table, error) {
 	// Publish this engine's embedder to the ambient reference the
 	// scalar embed_text() path reads, for the duration of this
 	// statement. Same lockstep discipline as setLetContext, and same
