@@ -22,6 +22,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/LaurieRhodes/gokql/pkg/embed"
@@ -124,8 +127,8 @@ func evalVectorFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if aVal == nil || bVal == nil {
 			return nil, true, nil
 		}
-		av, ok1 := parseFloatArray(aVal)
-		bv, ok2 := parseFloatArray(bVal)
+		av, ok1 := memoFloatArray(eng, fc, 0, aVal)
+		bv, ok2 := memoFloatArray(eng, fc, 1, bVal)
 		if !ok1 || !ok2 {
 			return nil, true, nil
 		}
@@ -150,8 +153,8 @@ func evalVectorFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		if aVal == nil || bVal == nil {
 			return nil, true, nil
 		}
-		av, ok1 := parseFloatArray(aVal)
-		bv, ok2 := parseFloatArray(bVal)
+		av, ok1 := memoFloatArray(eng, fc, 0, aVal)
+		bv, ok2 := memoFloatArray(eng, fc, 1, bVal)
 		if !ok1 || !ok2 {
 			return nil, true, nil
 		}
@@ -179,6 +182,9 @@ func parseFloatArray(val types.Value) ([]float64, bool) {
 	// for any array a user supplies inline.
 	if s, ok := val.(string); ok {
 		if v, ok := decodeCompactVector(s); ok {
+			return v, true
+		}
+		if v, ok := scanJSONFloatArray(s); ok {
 			return v, true
 		}
 	}
@@ -224,4 +230,113 @@ func cosineSimilarity(a, b []float64) (float64, error) {
 		return 0, nil
 	}
 	return dot / (math.Sqrt(na) * math.Sqrt(nb)), nil
+}
+
+// scanJSONFloatArray parses a JSON array of plain numbers without
+// encoding/json (which decoded every element into an interface and
+// dominated similarity ranking over JSON-stored vectors). Anything
+// else -- null, strings, nesting, a stray character -- reports
+// ok=false and the caller takes the general decoder.
+func scanJSONFloatArray(s string) ([]float64, bool) {
+	return appendJSONFloats(make([]float64, 0, strings.Count(s, ",")+1), s)
+}
+
+// appendJSONFloats is scanJSONFloatArray appending to dst, so a caller
+// parsing many vectors can reuse one buffer.
+func appendJSONFloats(dst []float64, s string) ([]float64, bool) {
+	i, n := 0, len(s)
+	skip := func() {
+		for i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+			i++
+		}
+	}
+	skip()
+	if i >= n || s[i] != '[' {
+		return nil, false
+	}
+	i++
+	out := dst
+	skip()
+	if i < n && s[i] == ']' {
+		i++
+		skip()
+		return out, i == n
+	}
+	for {
+		skip()
+		start := i
+		for i < n {
+			c := s[i]
+			if (c >= '0' && c <= '9') || c == '-' || c == '.' || c == 'e' || c == 'E' || c == '+' {
+				i++
+				continue
+			}
+			break
+		}
+		if i == start || s[start] == '+' {
+			return nil, false
+		}
+		f, err := strconv.ParseFloat(s[start:i], 64)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, f)
+		skip()
+		if i >= n {
+			return nil, false
+		}
+		if s[i] == ']' {
+			i++
+			skip()
+			return out, i == n
+		}
+		if s[i] != ',' {
+			return nil, false
+		}
+		i++
+	}
+}
+
+// vecMemo remembers the last vector parsed for one argument of one
+// call site, so an argument that is the same on every row (the query
+// vector) is decoded once per query rather than once per row.
+type vecMemo struct {
+	mu sync.Mutex
+	s  string
+	v  []float64
+	ok bool
+}
+
+type vecMemoKey struct {
+	fc  *parser.FuncCall
+	arg int
+}
+
+// memoFloatArray is parseFloatArray with a one-entry memo per call
+// site and argument. Vectors are only read, never modified, so the
+// shared slice is safe.
+func memoFloatArray(eng *Engine, fc *parser.FuncCall, arg int, val types.Value) ([]float64, bool) {
+	s, isStr := val.(string)
+	if !isStr || len(s) < 64 {
+		return parseFloatArray(val)
+	}
+	if eng == nil {
+		return parseFloatArray(val)
+	}
+	m, _ := eng.vecMemos.LoadOrStore(vecMemoKey{fc, arg}, &vecMemo{})
+	memo := m.(*vecMemo)
+	memo.mu.Lock()
+	if memo.v != nil && memo.s == s {
+		v, ok := memo.v, memo.ok
+		memo.mu.Unlock()
+		return v, ok
+	}
+	memo.mu.Unlock()
+	v, ok := parseFloatArray(val)
+	if ok {
+		memo.mu.Lock()
+		memo.s, memo.v, memo.ok = s, v, ok
+		memo.mu.Unlock()
+	}
+	return v, ok
 }

@@ -86,3 +86,27 @@ func BenchmarkGraphShapes(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkAdhoc profiles one query, $GOKQL_ADHOC_Q, against the
+// database $GOKQL_ADHOC_DB (skips when unset).
+func BenchmarkAdhoc(b *testing.B) {
+	dir, q := os.Getenv("GOKQL_ADHOC_DB"), os.Getenv("GOKQL_ADHOC_Q")
+	if dir == "" || q == "" {
+		b.Skip("GOKQL_ADHOC_DB / GOKQL_ADHOC_Q not set")
+	}
+	cat, err := catalog.Open(dir)
+	if err != nil {
+		b.Skipf("db not present: %v", err)
+	}
+	stmt, err := parser.Parse(q)
+	if err != nil {
+		b.Fatal(err)
+	}
+	eng := New(cat)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := eng.Execute(stmt); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

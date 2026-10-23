@@ -161,6 +161,11 @@ type Engine struct {
 	// maintenance runs statements on background goroutines.
 	execDepth atomic.Int32
 
+	// vecMemos caches parsed vector arguments per call site for the
+	// statement being executed (func_vector.go); cleared when the
+	// outermost Execute returns, so nothing outlives its query.
+	vecMemos sync.Map
+
 	// udfDepth guards user-function recursion (evalUserFunc);
 	// stmtEmbedder is the statement-scoped embedding memo
 	// (beginEmbedderScope). Per engine: the evaluator is threaded with
@@ -358,7 +363,14 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 			return nil, fmt.Errorf("refresh catalog: %w", err)
 		}
 	}
-	defer e.execDepth.Add(-1)
+	defer func() {
+		if e.execDepth.Add(-1) == 0 {
+			e.vecMemos.Range(func(k, _ any) bool {
+				e.vecMemos.Delete(k)
+				return true
+			})
+		}
+	}()
 
 	defer e.beginEmbedderScope()()
 

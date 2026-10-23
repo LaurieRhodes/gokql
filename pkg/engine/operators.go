@@ -5,8 +5,10 @@ import (
 	"math"
 	"math/rand"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -202,6 +204,14 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 		exprs[i] = a.Expr
 	}
 	re := newRowEvaluator(&input.Schema, input.Rows, exprs...)
+	if len(input.Rows) >= parallelExtendMinRows && parallelExtendable(exprs) {
+		rows, err := e.extendParallel(input, assignments, existingIdx, appendCount, re)
+		if err != nil {
+			return nil, err
+		}
+		result.Rows = rows
+		return result, nil
+	}
 	for ri, row := range input.Rows {
 		newRow := make(types.Row, len(input.Schema.Columns)+appendCount)
 		copy(newRow, row)
@@ -229,6 +239,113 @@ func (e *Engine) applyExtend(input *types.Table, op *parser.ExtendOp) (*types.Ta
 		result.AddRow(newRow)
 	}
 	return result, nil
+}
+
+// parallelExtendMinRows is the input size from which an extend worth
+// parallelising (see parallelExtendable) is split across CPUs.
+const parallelExtendMinRows = 4096
+
+// parallelPureFuncs are functions safe to evaluate concurrently: pure
+// functions of their arguments with no engine or row-order state.
+var parallelPureFuncs = map[string]bool{
+	"series_cosine_similarity": true, "series_dot_product": true,
+	"todouble": true, "toreal": true, "tolong": true, "toint": true, "tostring": true,
+	"round": true, "abs": true, "sqrt": true, "exp": true, "log": true, "strlen": true,
+	"array_length": true, "iff": true, "iif": true, "isnull": true, "isnotnull": true,
+}
+
+// parallelExtendable reports whether an extend's expressions are worth
+// and safe to evaluate in parallel: built only from columns, literals,
+// operators and parallelPureFuncs, with at least one vector function
+// (per-row cost high enough to pay for the split).
+func parallelExtendable(exprs []parser.Expr) bool {
+	expensive := false
+	var ok func(x parser.Expr) bool
+	ok = func(x parser.Expr) bool {
+		switch v := x.(type) {
+		case nil:
+			return true
+		case *parser.ColumnRef, *parser.Literal:
+			return true
+		case *parser.BinaryExpr:
+			return ok(v.Left) && ok(v.Right)
+		case *parser.UnaryExpr:
+			return ok(v.Expr)
+		case *parser.FuncCall:
+			if !parallelPureFuncs[v.Name] {
+				return false
+			}
+			if v.Name == "series_cosine_similarity" || v.Name == "series_dot_product" {
+				expensive = true
+			}
+			for _, a := range v.Args {
+				if !ok(a) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	for _, x := range exprs {
+		if !ok(x) {
+			return false
+		}
+	}
+	return expensive
+}
+
+// extendParallel is applyExtend's row loop split across CPUs; row
+// order is preserved.
+func (e *Engine) extendParallel(input *types.Table, assignments []parser.Assignment, existingIdx []int,
+	appendCount int, re *rowEvaluator) ([]types.Row, error) {
+	n := len(input.Rows)
+	out := make([]types.Row, n)
+	workers := runtime.NumCPU()
+	chunk := (n + workers - 1) / workers
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		lo, hi := w*chunk, (w+1)*chunk
+		if hi > n {
+			hi = n
+		}
+		if lo >= hi {
+			break
+		}
+		wg.Add(1)
+		go func(w, lo, hi int) {
+			defer wg.Done()
+			width := len(input.Schema.Columns)
+			for ri := lo; ri < hi; ri++ {
+				row := input.Rows[ri]
+				newRow := make(types.Row, width+appendCount)
+				copy(newRow, row)
+				appendPos := width
+				for i, assign := range assignments {
+					val, err := re.eval(e, assign.Expr, ri, row)
+					if err != nil {
+						errs[w] = fmt.Errorf("extend %q: %w", assign.Name, err)
+						return
+					}
+					if existingIdx[i] >= 0 {
+						newRow[existingIdx[i]] = val
+					} else {
+						newRow[appendPos] = val
+						appendPos++
+					}
+				}
+				out[ri] = newRow
+			}
+		}(w, lo, hi)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // columnNamer hands out ColumnN names for unnamed expressions: N counts
