@@ -245,38 +245,55 @@ func findKeyword(s string, kw string) int {
 // and the table name is a bare identifier, matching every other table
 // reference in this parser.
 func parseDatabaseTableRef(source string) *DatabaseTableRef {
-	const prefix = "database("
-	lower := keywordFold(source)
-	if !strings.HasPrefix(lower, prefix) {
+	cluster, db, table, ok := SplitQualifiedName(source)
+	if !ok || db == "" || table == "" || strings.ContainsAny(table, " \t.()*") {
 		return nil
 	}
-	closeIdx := strings.Index(source, ")")
-	if closeIdx < 0 {
-		return nil
-	}
-	inner := strings.TrimSpace(source[len(prefix):closeIdx])
-	if len(inner) < 2 {
-		return nil
-	}
-	if !((inner[0] == '"' && inner[len(inner)-1] == '"') ||
-		(inner[0] == '\'' && inner[len(inner)-1] == '\'')) {
-		return nil
-	}
-	alias := inner[1 : len(inner)-1]
-	if alias == "" {
-		return nil
-	}
+	return &DatabaseTableRef{Alias: db, TableName: table, Cluster: cluster}
+}
 
-	rest := source[closeIdx+1:]
-	if !strings.HasPrefix(rest, ".") {
-		return nil
-	}
-	tableName := strings.TrimSpace(rest[1:])
-	if tableName == "" || strings.ContainsAny(tableName, " \t.()") {
-		return nil
-	}
+// ParseDatabaseTableRef is parseDatabaseTableRef for the engine: a
+// table name of the form [cluster('C').]database('D').T.
+func ParseDatabaseTableRef(source string) *DatabaseTableRef { return parseDatabaseTableRef(source) }
 
-	return &DatabaseTableRef{Alias: alias, TableName: tableName}
+// SplitQualifiedName splits [cluster('C').]database('D').Rest into its
+// parts (quotes ' or "); Rest may be a wildcard pattern. ok is false
+// when s does not start with cluster( or database(.
+func SplitQualifiedName(s string) (cluster, db, rest string, ok bool) {
+	s = strings.TrimSpace(s)
+	call := func(s, name string) (arg, rest string, ok bool) {
+		if !strings.HasPrefix(keywordFold(s), name+"(") {
+			return "", "", false
+		}
+		in := strings.TrimSpace(s[len(name)+1:])
+		if in == "" || (in[0] != '\'' && in[0] != '"') {
+			return "", "", false
+		}
+		end := strings.IndexByte(in[1:], in[0])
+		if end < 0 {
+			return "", "", false
+		}
+		arg = in[1 : end+1]
+		after := strings.TrimSpace(in[end+2:])
+		if !strings.HasPrefix(after, ")") {
+			return "", "", false
+		}
+		return arg, strings.TrimSpace(after[1:]), true
+	}
+	if c, r, ok := call(s, "cluster"); ok {
+		if !strings.HasPrefix(r, ".") {
+			return "", "", "", false
+		}
+		cluster, s = c, strings.TrimSpace(r[1:])
+		if cluster == "" {
+			return "", "", "", false
+		}
+	}
+	d, r, ok := call(s, "database")
+	if !ok || d == "" || !strings.HasPrefix(r, ".") {
+		return "", "", "", false
+	}
+	return cluster, d, strings.TrimSpace(r[1:]), true
 }
 
 // parseStoredFunctionCall recognizes FuncName() — a bare identifier

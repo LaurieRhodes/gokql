@@ -194,6 +194,18 @@ func (e *Engine) searchTables(patterns []string) ([]string, error) {
 	var names []string
 	seen := map[string]bool{}
 	for _, p := range patterns {
+		if qn, ok, err := e.expandQualified(p); ok {
+			if err != nil {
+				return nil, fmt.Errorf("search: %w", err)
+			}
+			for _, n := range qn {
+				if !seen[n] {
+					seen[n] = true
+					names = append(names, n)
+				}
+			}
+			continue
+		}
 		if !strings.Contains(p, "*") {
 			if !seen[p] {
 				seen[p] = true
@@ -246,6 +258,17 @@ func (e *Engine) applySearch(op *parser.SearchOp) (*types.Table, error) {
 		}
 		legs = append(legs, hits)
 		kept = append(kept, name)
+	}
+	qualified := false
+	for _, n := range kept {
+		if strings.HasPrefix(n, "database(") || strings.HasPrefix(n, "cluster(") {
+			qualified = true
+		}
+	}
+	if qualified {
+		for i := range kept {
+			kept[i] = e.labelFor(kept[i], true)
+		}
 	}
 	return withSearchTable(legs, kept), nil
 }

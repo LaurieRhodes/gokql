@@ -1029,7 +1029,36 @@ func (e *Engine) applyUnion(input *types.Table, op *parser.UnionOp) (*types.Tabl
 	}
 	resolved := input != nil
 
+	qualified := false
 	for _, src := range op.Sources {
+		// database('x').T, database('*').T*, cluster('c').database(...)...
+		if names, ok, err := e.expandQualified(src.Source); ok && src.SourceDB == nil {
+			if err != nil {
+				if op.IsFuzzy {
+					continue
+				}
+				return nil, fmt.Errorf("union: %w", err)
+			}
+			if len(names) == 0 && !op.IsFuzzy {
+				return nil, fmt.Errorf("union: no tables match %q", src.Source)
+			}
+			qualified = true
+			for _, n := range names {
+				t, err := e.executeQuery(&parser.Query{Source: n, Operators: src.Operators})
+				if err != nil {
+					if op.IsFuzzy {
+						continue
+					}
+					return nil, fmt.Errorf("union source %q: %w", n, err)
+				}
+				legs = append(legs, unionLeg{name: n, table: t})
+				resolved = true
+			}
+			continue
+		}
+		if src.SourceDB != nil {
+			qualified = true
+		}
 		// Wildcard: union T*, matching catalog tables and view lambdas.
 		if len(src.Operators) == 0 && strings.Contains(src.Source, "*") {
 			names := e.unionWildcardNames(src.Source)
@@ -1077,6 +1106,15 @@ func (e *Engine) applyUnion(input *types.Table, op *parser.UnionOp) (*types.Tabl
 	}
 	if !resolved {
 		return nil, fmt.Errorf("union: none of the sources could be resolved")
+	}
+	if qualified {
+		// Across databases every leg names its database, as in ADX.
+		for i := range legs {
+			if i == 0 && input != nil {
+				continue
+			}
+			legs[i].name = e.labelFor(legs[i].name, true)
+		}
 	}
 
 	tables := make([]*types.Table, len(legs))

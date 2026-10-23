@@ -1070,6 +1070,10 @@ func parseCommand(input string) (Statement, error) {
 		return st, err
 	}
 
+	if lower == ".show databases" {
+		return &ShowDatabasesCmd{}, nil
+	}
+
 	// .show database
 	if lower == ".show database" {
 		return &ShowDatabaseCmd{}, nil
@@ -4219,11 +4223,11 @@ func parseSearchOp(s string, piped bool) (*SearchOp, error) {
 		if !strings.HasPrefix(rest, "(") {
 			return nil, fmt.Errorf("search: expected '(' after 'in'")
 		}
-		closeIdx := strings.IndexByte(rest, ')')
+		closeIdx := findMatchingParen(rest, 0)
 		if closeIdx < 0 {
 			return nil, fmt.Errorf("search: unmatched '(' in 'in (...)'")
 		}
-		for _, t := range strings.Split(rest[1:closeIdx], ",") {
+		for _, t := range splitRespectingParens(rest[1:closeIdx], ',') {
 			if t = strings.TrimSpace(t); t != "" {
 				op.Tables = append(op.Tables, t)
 			}

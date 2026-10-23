@@ -602,6 +602,8 @@ func (e *Engine) execute(stmt parser.Statement) (*types.Table, error) {
 		return e.applyDeleteRecords(s)
 	case *parser.UpdatePolicyCmd:
 		return e.applyUpdatePolicyCmd(s)
+	case *parser.ShowDatabasesCmd:
+		return e.applyShowDatabases()
 	case *parser.ExecuteScriptCmd:
 		return e.applyExecuteScript(s)
 	case *parser.IngestInlineCmd:
@@ -1001,6 +1003,13 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	// produced their input table, so this only needs to intervene at
 	// the source and hand off what's left, not thread pushdown
 	// awareness through every operator itself.
+	if q.SourceDB == nil && q.Source != "" && (strings.HasPrefix(q.Source, "database(") || strings.HasPrefix(q.Source, "cluster(")) {
+		// A qualified name passed as a plain source (union and find
+		// legs, wildcard expansions).
+		if ref := parser.ParseDatabaseTableRef(q.Source); ref != nil {
+			q = &parser.Query{SourceDB: ref, Operators: q.Operators}
+		}
+	}
 	if q.SourceDB != nil {
 		result, remaining, err := e.resolveFederatedTable(q.SourceDB, q.Operators)
 		if err != nil {

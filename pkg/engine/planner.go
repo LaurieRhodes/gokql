@@ -319,6 +319,12 @@ func (c *columnCollector) collectExpr(expr parser.Expr) {
 	case *parser.UnaryExpr:
 		c.collectExpr(e.Expr)
 	case *parser.FuncCall:
+		// ingestion_time() and the cursor functions read the hidden
+		// write-time column.
+		switch e.Name {
+		case "ingestion_time", "cursor_after", "cursor_before_or_at":
+			c.addColumn(timeReceivedColumnName)
+		}
 		// column_ifexists("Name", default) reads column Name, which
 		// appears only as a string constant.
 		if isColumnIfExists(e.Name) {

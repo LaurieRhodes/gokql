@@ -67,6 +67,9 @@ type StoredFunctionCall struct {
 type DatabaseTableRef struct {
 	Alias     string
 	TableName string
+	// Cluster is the cluster('name') prefix, "" when absent (this
+	// cluster). See engine/cluster.go.
+	Cluster string
 }
 
 // TableFunc represents a table-valued function call like csv("path") or json("path").

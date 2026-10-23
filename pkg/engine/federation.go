@@ -64,6 +64,16 @@ type federationAlias struct {
 
 type federationConfig struct {
 	Aliases []federationAlias `json:"aliases"`
+	// Cluster names the cluster this scope's databases form, as
+	// current_cluster_endpoint() and cluster('name') see it
+	// ("localhost" when unset). See cluster.go.
+	Cluster string `json:"cluster,omitempty"`
+	// Principal is what current_principal() reports.
+	Principal string `json:"principal,omitempty"`
+	// Clusters are other clusters: each is the primary scope directory
+	// of another cluster, whose own .okql-federation.json lists its
+	// databases.
+	Clusters []federationAlias `json:"clusters,omitempty"`
 }
 
 // loadFederationConfig reads the federation config from inside dbPath.
@@ -166,6 +176,9 @@ func splitPushableFederationOps(operators []parser.Operator) (pushable, remainin
 // operator like JoinOp changes what's available to reference
 // afterward, in ways a later where/project might depend on.
 func (e *Engine) resolveFederatedTable(ref *parser.DatabaseTableRef, operators []parser.Operator) (*types.Table, []parser.Operator, error) {
+	if ref.Cluster != "" && !e.isThisCluster(ref.Cluster) {
+		return e.resolveOtherClusterTable(ref, operators)
+	}
 	// database("<this database>").T is T itself
 	if db := e.Catalog.Database; db != nil && db.Name != "" && strings.EqualFold(db.Name, ref.Alias) {
 		t, err := e.executeQuery(&parser.Query{Source: ref.TableName})

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,45 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 			return nil, true, nil
 		}
 		return row[idx], true, nil
+
+	case "cursor_current":
+		// A database cursor, as ADX's: the .NET ticks of the query's
+		// now(). Rows written later compare after it (cursor_after).
+		if len(fc.Args) != 0 {
+			return nil, true, fmt.Errorf("cursor_current requires 0 arguments")
+		}
+		return strconv.FormatInt(eng.nowNanos()/100+dotnetTicksAtUnixEpoch, 10), true, nil
+
+	case "cursor_after", "cursor_before_or_at":
+		// cursor_after(c): the row was written after cursor c (from
+		// cursor_current()); cursor_before_or_at(c): at or before it.
+		// Uses the row's _TimeReceived; false for rows without one.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("%s requires 1 argument (a cursor)", fc.Name)
+		}
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		idx := schema.ColumnIndex(timeReceivedColumnName)
+		if idx < 0 || row[idx] == nil {
+			return false, true, nil
+		}
+		at := types.ToInt64(row[idx])
+		cursor := fmt.Sprintf("%v", v)
+		if v == nil || cursor == "" {
+			// An empty cursor stands before everything.
+			return fc.Name == "cursor_after", true, nil
+		}
+		ticks, err := strconv.ParseInt(strings.TrimSpace(cursor), 10, 64)
+		if err != nil {
+			return nil, true, fmt.Errorf("%s: %q is not a cursor (cursor_current() produces one)", fc.Name, cursor)
+		}
+		cut := (ticks - dotnetTicksAtUnixEpoch) * 100
+		if fc.Name == "cursor_after" {
+			return at > cut, true, nil
+		}
+		return at <= cut, true, nil
 
 	case "ago":
 		if len(fc.Args) != 1 {

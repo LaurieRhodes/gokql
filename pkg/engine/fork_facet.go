@@ -71,6 +71,11 @@ func (e *Engine) applyFork(input *types.Table, op *parser.ForkOp) (*types.Table,
 				name = "GenericResult"
 			}
 		}
+		if i > 0 {
+			// The first result passes the query's own _TimeReceived
+			// hiding; the others leave here.
+			t = hideTimeReceivedUnlessExplicit(t, b.Operators)
+		}
 		results = append(results, withName(t, name))
 	}
 	e.extraResults = append(e.extraResults, results[1:]...)
@@ -102,6 +107,9 @@ func (e *Engine) applyFacet(input *types.Table, op *parser.FacetOp) (*types.Tabl
 			return nil, fmt.Errorf("facet by %s: %w", name, err)
 		}
 		results = append(results, withName(t, name))
+	}
+	for i := 1; i < len(results); i++ {
+		results[i] = hideTimeReceivedUnlessExplicit(results[i], op.With)
 	}
 	e.extraResults = append(e.extraResults, results[1:]...)
 	return results[0], nil

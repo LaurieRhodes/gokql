@@ -681,6 +681,50 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		}
 		return x >= c-d && x <= c+d, true, nil
 
+	case "current_cluster_endpoint":
+		// This cluster's name from .okql-federation.json ("localhost",
+		// as the emulator answers, when unset). See cluster.go.
+		if eng == nil {
+			return "localhost", true, nil
+		}
+		return eng.clusterName(), true, nil
+
+	case "current_principal":
+		if eng != nil {
+			if p := eng.federation().Principal; p != "" {
+				return p, true, nil
+			}
+		}
+		return "<null identity>", true, nil
+
+	case "current_principal_details":
+		p := "<null identity>"
+		if eng != nil && eng.federation().Principal != "" {
+			p = eng.federation().Principal
+		}
+		var buf strings.Builder
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(map[string]interface{}{"Type": "LocalUser", "DisplayName": p, "FQN": p})
+		return strings.TrimSpace(buf.String()), true, nil
+
+	case "current_principal_is_member_of":
+		// No groups locally: true only when the principal itself is named.
+		p := "<null identity>"
+		if eng != nil && eng.federation().Principal != "" {
+			p = eng.federation().Principal
+		}
+		for _, a := range fc.Args {
+			v, err := evalExpr(eng, a, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if s, ok := v.(string); ok && strings.EqualFold(s, p) {
+				return true, true, nil
+			}
+		}
+		return false, true, nil
+
 	case "current_database":
 		if eng != nil && eng.Catalog != nil && eng.Catalog.Database != nil && eng.Catalog.Database.Name != "" {
 			return eng.Catalog.Database.Name, true, nil

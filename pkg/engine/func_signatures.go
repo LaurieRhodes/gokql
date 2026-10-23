@@ -66,6 +66,7 @@ var scalarReturnTypes = map[string]types.KQLType{
 	"current_database":                   types.TypeString,
 	"current_node_id":                    types.TypeString,
 	"current_principal":                  types.TypeString,
+	"current_principal_details":          types.TypeDynamic,
 	"current_principal_is_member_of":     types.TypeBool,
 	"cursor_after":                       types.TypeBool,
 	"cursor_before_or_at":                types.TypeBool,

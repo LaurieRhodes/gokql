@@ -460,6 +460,12 @@ Not present in any prior version of this document.
 | -------------------------------- | ------ | ---------------------------------------------------------------------------------- |
 | `database('alias').Table` syntax    | ✅      | Real-ADX-conformant cross-database source reference                                  |
 | Operator pushdown across the boundary | ✅      | where/project*/extend/take/sample/count/distinct/sort/top/summarize/getschema/parse/serialize/mv-expand pushed to the remote engine; longest pushable prefix computed automatically |
+| A scope as a cluster                  | ✅      | `.okql-federation.json` in the primary scope lists its databases (`aliases`, read-only), and may name the cluster (`cluster`, default `localhost`), the principal (`principal`) and other clusters (`clusters`: name → the primary scope directory of another cluster, whose own config lists its databases). See `engine/cluster.go` |
+| `cluster('c').database('d').T`        | ✅      | `c` is this cluster's name or one listed under `clusters`; read-only like any alias |
+| `database('*')` and wildcards         | ✅      | `union`, `find in (...)` and `search in (...)` accept `database('*').*`, `database('d').T*`, `cluster('c').database('*').*`. Source labels are qualified (`database("d").T`, with `cluster("c").` for another cluster) whenever a qualified table is involved, and then local tables are qualified too, as ADX does |
+| `.show databases`                     | ✅      | This cluster's databases: name, path, IsCurrent, access mode (ReadWrite / ReadOnly / Unavailable), table count |
+| `current_cluster_endpoint()`, `current_principal()`, `current_principal_details()`, `current_principal_is_member_of()` | ✅ | From the config (`localhost` and `<null identity>` by default, as the emulator answers) |
+| `cursor_current()`, `cursor_after()`, `cursor_before_or_at()` | ✅ | A cursor is the .NET ticks of the query's `now()`; `cursor_after(c)` selects rows whose `_TimeReceived` is later, so a session can save a cursor and later read only what was written since. `cursor_after('')` is every row |
 
 ---
 

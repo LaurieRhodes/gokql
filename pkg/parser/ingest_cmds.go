@@ -218,3 +218,9 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// ShowDatabasesCmd: .show databases — the databases of this cluster
+// (the local scope and its federation aliases).
+type ShowDatabasesCmd struct{}
+
+func (*ShowDatabasesCmd) statementNode() {}

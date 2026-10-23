@@ -12,6 +12,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -77,8 +78,11 @@ func (e *Engine) applyFind(op *parser.FindOp) (*types.Table, error) {
 		sourceCol = op.WithSource
 	}
 
-	tableNames := op.Tables
-	if len(tableNames) == 0 {
+	tableNames, qualified, err := e.expandTableSpecs(op.Tables)
+	if err != nil {
+		return nil, fmt.Errorf("find: %w", err)
+	}
+	if len(op.Tables) == 0 {
 		tableNames = e.Catalog.ListTables()
 	}
 
@@ -94,8 +98,15 @@ func (e *Engine) applyFind(op *parser.FindOp) (*types.Table, error) {
 		// A catalog table is reported by its name; a let-bound table
 		// as find_arg<position> (the emulator).
 		var schema types.Schema
-		label := tableName
-		if tableDef := e.Catalog.GetTable(tableName); tableDef != nil {
+		label := e.labelFor(tableName, qualified)
+		var preloaded *types.Table
+		if strings.HasPrefix(tableName, "database(") || strings.HasPrefix(tableName, "cluster(") {
+			t, err := e.executeQuery(&parser.Query{Source: tableName})
+			if err != nil {
+				return nil, fmt.Errorf("find: %w", err)
+			}
+			schema, preloaded = t.Schema, t
+		} else if tableDef := e.Catalog.GetTable(tableName); tableDef != nil {
 			schema = tableDef.Schema
 		} else if t, ok := e.letContext.LookupTable(tableName); ok {
 			schema, label = t.Schema, fmt.Sprintf("find_arg%d", ti)
@@ -142,9 +153,13 @@ func (e *Engine) applyFind(op *parser.FindOp) (*types.Table, error) {
 		}
 
 		{
-			data, err := e.executeQuery(&parser.Query{Source: tableName})
-			if err != nil {
-				return nil, fmt.Errorf("find: scanning %q: %w", tableName, err)
+			data := preloaded
+			if data == nil {
+				var err error
+				data, err = e.executeQuery(&parser.Query{Source: tableName})
+				if err != nil {
+					return nil, fmt.Errorf("find: scanning %q: %w", tableName, err)
+				}
 			}
 
 			// Pad data.Schema/each row with a null-valued column for
