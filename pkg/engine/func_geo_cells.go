@@ -172,7 +172,7 @@ func evalGeoCells(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row ty
 		}
 		return jsonStringArray(out), true, nil
 	}
-	return nil, false, nil
+	return evalGeoH3(eng, fc, schema, row)
 }
 
 func geoInt(v types.Value) (int64, bool) {
