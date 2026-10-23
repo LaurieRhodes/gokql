@@ -537,7 +537,6 @@ func (e *Engine) buildGraphFromModelInto(def *graphModelDef, stats *[]graphStepS
 	}
 	g := &Graph{
 		NodeRows:      make(map[string]types.Row),
-		Adjacency:     make(map[string][]int),
 		NodeIdIdx:     -1,
 		withNodeIdIdx: -1,
 		hasNodeTable:  true,
@@ -704,7 +703,7 @@ func (e *Engine) buildGraphFromModelInto(def *graphModelDef, stats *[]graphStepS
 			if src == nil || tgt == nil {
 				continue
 			}
-			srcKey := addNode(src)
+			addNode(src)
 			addNode(tgt)
 			erow := make(types.Row, edgeWidth)
 			for c, v := range row {
@@ -712,7 +711,6 @@ func (e *Engine) buildGraphFromModelInto(def *graphModelDef, stats *[]graphStepS
 			}
 			g.Edges = append(g.Edges, GraphEdge{Source: src, Target: tgt, Row: erow})
 			g.edgeLabels = append(g.edgeLabels, rowLabels(r, row))
-			g.Adjacency[srcKey] = append(g.Adjacency[srcKey], len(g.Edges)-1)
 		}
 	}
 	return g, nil
@@ -765,7 +763,7 @@ func (e *Engine) loadGraphSnapshot(info *graphSnapshotInfo) (*Graph, error) {
 	}
 	g := &Graph{
 		NodeSchema: nodeSchema, EdgeSchema: edgeSchema,
-		NodeRows: make(map[string]types.Row), Adjacency: make(map[string][]int),
+		NodeRows:  make(map[string]types.Row),
 		NodeIdIdx: -1, withNodeIdIdx: -1, hasNodeTable: true, NodeIdName: "NodeId",
 		nodeLabels: make(map[string][]string), isModel: true,
 		idType: idType, idTypeSet: true, coercedIds: false,
@@ -839,8 +837,6 @@ func (e *Engine) loadGraphSnapshot(info *graphSnapshotInfo) (*Graph, error) {
 			}
 			g.Edges = append(g.Edges, GraphEdge{Source: src, Target: tgt, Row: row})
 			g.edgeLabels = append(g.edgeLabels, parseLabels(r[labI]))
-			sk := graphKey(src)
-			g.Adjacency[sk] = append(g.Adjacency[sk], len(g.Edges)-1)
 		}
 	}
 	return g, nil

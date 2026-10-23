@@ -28,7 +28,6 @@ package engine
 
 import (
 	"github.com/LaurieRhodes/gokql/pkg/parser"
-	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
 // detectFixedEndpoints inspects preds for equality conjuncts pinning
@@ -72,19 +71,13 @@ func detectFixedEndpoints(preds []matchPredicate, endPos int) (startVal, endVal 
 	return startVal, endVal, startVal != "" && endVal != ""
 }
 
-// reachabilityToTarget BFS's the REVERSED graph from targetKey, up to
-// maxHops deep, returning each reached node's minimum distance back to
-// the target. A node absent from the map is unreachable to the target
-// within maxHops at all.
-func reachabilityToTarget(g *Graph, targetKey string, direction parser.EdgeDirection, maxHops int) map[string]int {
+// reachabilityToTarget BFS's the REVERSED graph from node ordinal
+// target, up to maxHops deep, returning each node's minimum distance
+// back to the target by ordinal (-1: unreachable within maxHops).
+func reachabilityToTarget(g *Graph, target int32, direction parser.EdgeDirection, maxHops int) []int32 {
 	// Reachability over the reversed graph under `direction` is
 	// reachability-TO the target under `direction` in the forward
-	// graph: a forward edge under `direction` is a reverse edge under
-	// the opposite direction, so BFS-ing backward from the target
-	// using the FLIPPED direction directly gives forward distance-to-
-	// target, without needing a separate reverse-adjacency structure
-	// beyond what neighbors() already builds internally for backward/
-	// undirected edges.
+	// graph, so BFS backward from the target with the FLIPPED direction.
 	flipped := direction
 	switch direction {
 	case parser.EdgeForward:
@@ -93,36 +86,33 @@ func reachabilityToTarget(g *Graph, targetKey string, direction parser.EdgeDirec
 		flipped = parser.EdgeForward
 	} // EdgeAny stays EdgeAny — undirected reachability is symmetric
 
-	var radj map[string][]int
-	if flipped != parser.EdgeForward {
-		radj = g.reverseAdjacency()
+	ix := g.idx()
+	dist := make([]int32, len(g.NodeIDs))
+	for i := range dist {
+		dist[i] = -1
 	}
-	neighbors := func(key string, fn func(next types.Value)) {
-		if flipped != parser.EdgeBackward {
-			for _, ei := range g.Adjacency[key] {
-				fn(g.Edges[ei].Target)
-			}
+	visit := func(nx int32, depth int, next []int32) []int32 {
+		if nx < 0 || dist[nx] >= 0 {
+			return next
 		}
-		if flipped != parser.EdgeForward {
-			for _, ei := range radj[key] {
-				fn(g.Edges[ei].Source)
-			}
-		}
+		dist[nx] = int32(depth)
+		return append(next, nx)
 	}
-
-	dist := map[string]int{targetKey: 0}
-	frontier := []string{targetKey}
+	dist[target] = 0
+	frontier := []int32{target}
 	for depth := 1; depth <= maxHops && len(frontier) > 0; depth++ {
-		var next []string
-		for _, key := range frontier {
-			neighbors(key, func(nx types.Value) {
-				nk := graphKey(nx)
-				if _, seen := dist[nk]; seen {
-					return
+		var next []int32
+		for _, o := range frontier {
+			if flipped != parser.EdgeBackward {
+				for _, ei := range ix.outEdges(o) {
+					next = visit(ix.dst[ei], depth, next)
 				}
-				dist[nk] = depth
-				next = append(next, nk)
-			})
+			}
+			if flipped != parser.EdgeForward {
+				for _, ei := range ix.inEdges(o) {
+					next = visit(ix.src[ei], depth, next)
+				}
+			}
 		}
 		frontier = next
 	}

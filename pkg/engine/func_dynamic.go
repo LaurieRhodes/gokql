@@ -991,6 +991,13 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		if err != nil {
 			return nil, true, err
 		}
+		if ss, ok := setVal.(string); ok {
+			if vs, ok := valueVal.(string); ok {
+				if found, ok := flatStringArrayHas(ss, vs); ok {
+					return found, true, nil
+				}
+			}
+		}
 		arr, ok := parseJSONArray(setVal)
 		if !ok {
 			return false, true, nil
@@ -1722,3 +1729,37 @@ var _ = strings.Join // ensure import
 // array_strcat is Kusto.Language's alias of strcat_array (the
 // generated signature table lists documented names only).
 func init() { scalarReturnTypes["array_strcat"] = types.TypeString }
+
+// flatStringArrayHas answers set_has_element for a JSON array whose
+// elements are all plain strings (no escapes) without decoding it,
+// as labels() arrays are. ok=false: not that shape; decode instead.
+func flatStringArrayHas(arr, v string) (found, ok bool) {
+	if len(arr) < 2 || arr[0] != '[' || arr[len(arr)-1] != ']' || strings.IndexByte(arr, '\\') >= 0 {
+		return false, false
+	}
+	body := strings.TrimSpace(arr[1 : len(arr)-1])
+	for body != "" {
+		if body[0] != '"' {
+			return false, false
+		}
+		end := strings.IndexByte(body[1:], '"')
+		if end < 0 {
+			return false, false
+		}
+		if body[1:1+end] == v {
+			found = true
+		}
+		body = strings.TrimSpace(body[end+2:])
+		if body == "" {
+			break
+		}
+		if body[0] != ',' {
+			return false, false
+		}
+		body = strings.TrimSpace(body[1:])
+		if body == "" {
+			return false, false
+		}
+	}
+	return found, true
+}

@@ -41,6 +41,9 @@ func (g *Graph) setNodeProperty(name string, typ types.KQLType, vals []types.Val
 	g.elemMu.Lock()
 	g.elemSchemas = nil
 	g.elemMu.Unlock()
+	g.rowsMu.Lock()
+	g.rowsByOrd = nil
+	g.rowsMu.Unlock()
 }
 
 // markComponents assigns each node a zero-based component index,
@@ -48,13 +51,10 @@ func (g *Graph) setNodeProperty(name string, typ types.KQLType, vals []types.Val
 // strong: mutually reachable nodes (Tarjan's algorithm, iterative).
 func markComponents(g *Graph, op *parser.GraphMarkComponentsOp) {
 	n := len(g.NodeIDs)
-	index := make(map[string]int, n)
-	for i, id := range g.NodeIDs {
-		index[graphKey(id)] = i
-	}
+	ix := g.idx()
 	comp := make([]int, n)
 	if op.Kind == "strong" {
-		comp = strongComponents(g, index)
+		comp = strongComponents(g, ix)
 	} else {
 		parent := make([]int, n)
 		for i := range parent {
@@ -68,8 +68,11 @@ func markComponents(g *Graph, op *parser.GraphMarkComponentsOp) {
 			}
 			return x
 		}
-		for _, e := range g.Edges {
-			a, b := find(index[graphKey(e.Source)]), find(index[graphKey(e.Target)])
+		for ei := range g.Edges {
+			if ix.src[ei] < 0 || ix.dst[ei] < 0 {
+				continue
+			}
+			a, b := find(int(ix.src[ei])), find(int(ix.dst[ei]))
 			if a != b {
 				if a < b {
 					parent[b] = a
@@ -98,12 +101,15 @@ func markComponents(g *Graph, op *parser.GraphMarkComponentsOp) {
 
 // strongComponents labels nodes by strongly connected component
 // (arbitrary labels; markComponents renumbers them).
-func strongComponents(g *Graph, index map[string]int) []int {
+func strongComponents(g *Graph, ix *graphIndex) []int {
 	n := len(g.NodeIDs)
 	adj := make([][]int, n)
-	for _, e := range g.Edges {
-		a, b := index[graphKey(e.Source)], index[graphKey(e.Target)]
-		adj[a] = append(adj[a], b)
+	for ei := range g.Edges {
+		a, b := ix.src[ei], ix.dst[ei]
+		if a < 0 || b < 0 {
+			continue
+		}
+		adj[a] = append(adj[a], int(b))
 	}
 	const unvisited = -1
 	order := make([]int, n)

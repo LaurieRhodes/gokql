@@ -62,32 +62,32 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, p
 		return nil
 	}
 
-	// Reverse adjacency, built once, only if this edge ever traverses
-	// backward or undirected.
-	var radj map[string][]int
-	if dir != parser.EdgeForward {
-		radj = g.reverseAdjacency()
-	}
-	neighbors := func(key string, fn func(ei int, next types.Value)) {
+	ix := g.idx()
+	neighbors := func(o int32, fn func(ei int, nx int32)) {
 		if dir != parser.EdgeBackward {
-			for _, ei := range g.Adjacency[key] {
-				fn(ei, g.Edges[ei].Target)
+			for _, ei := range ix.outEdges(o) {
+				if nx := ix.dst[ei]; nx >= 0 {
+					fn(int(ei), nx)
+				}
 			}
 		}
 		if dir != parser.EdgeForward {
-			for _, ei := range radj[key] {
-				fn(ei, g.Edges[ei].Source)
+			for _, ei := range ix.inEdges(o) {
+				if nx := ix.src[ei]; nx >= 0 {
+					fn(int(ei), nx)
+				}
 			}
 		}
 	}
 
-	type frontierNode struct {
-		key string
-		id  types.Value
-	}
-
-	for _, startID := range g.NodeIDs {
-		plan.writeNode(g, row, 0, startID)
+	// Per-start visited marks: stamp[o] == gen means visited in this
+	// search, so starting over costs nothing.
+	stamp := make([]int32, len(g.NodeIDs))
+	var gen int32
+	for so := range g.NodeIDs {
+		start := int32(so)
+		startID := g.NodeIDs[so]
+		plan.writeNodeOrd(g, row, 0, start)
 		keep, err := checkPreds(0)
 		if err != nil {
 			return nil, err
@@ -96,16 +96,16 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, p
 			continue
 		}
 
-		startKey := graphKey(startID)
-		visited := map[string]bool{startKey: true}
-		pathTo := map[string][]int{startKey: nil}
-		frontier := []frontierNode{{startKey, startID}}
+		gen++
+		stamp[start] = gen
+		pathTo := map[int32][]int{start: nil}
+		frontier := []int32{start}
 
 		if spec.MinHops == 0 { // zero-length: the start node itself
 			if err := plan.writePath(g, row, 0, startID, nil); err != nil {
 				return nil, err
 			}
-			plan.writeNode(g, row, endVar, startID)
+			plan.writeNodeOrd(g, row, endVar, start)
 			keep, err := checkPreds(1)
 			if err != nil {
 				return nil, err
@@ -118,29 +118,28 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, p
 		}
 
 		for depth := 1; depth <= spec.MaxHops && len(frontier) > 0; depth++ {
-			var next []frontierNode
+			var next []int32
 			for _, cur := range frontier {
-				curPath := pathTo[cur.key]
-				neighbors(cur.key, func(ei int, nx types.Value) {
-					nk := graphKey(nx)
-					if visited[nk] {
+				curPath := pathTo[cur]
+				neighbors(cur, func(ei int, nx int32) {
+					if stamp[nx] == gen {
 						return
 					}
-					visited[nk] = true
+					stamp[nx] = gen
 					p := make([]int, len(curPath)+1)
 					copy(p, curPath)
 					p[len(curPath)] = ei
-					pathTo[nk] = p
-					next = append(next, frontierNode{nk, nx})
+					pathTo[nx] = p
+					next = append(next, nx)
 				})
 			}
 
 			if depth >= spec.MinHops {
 				for _, item := range next {
-					if listErr := plan.writePath(g, row, 0, startID, pathTo[item.key]); listErr != nil {
+					if listErr := plan.writePath(g, row, 0, startID, pathTo[item]); listErr != nil {
 						return nil, listErr
 					}
-					plan.writeNode(g, row, endVar, item.id)
+					plan.writeNodeOrd(g, row, endVar, item)
 					keep, checkErr := checkPreds(1)
 					if checkErr != nil {
 						return nil, checkErr

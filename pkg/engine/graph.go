@@ -26,9 +26,9 @@ type Graph struct {
 	Edges []GraphEdge
 
 	// Node bookkeeping. Keys are formatted node id values (graphKey).
-	NodeIDs   []types.Value        // deterministic node order (first-seen)
-	NodeRows  map[string]types.Row // node key → node row in NodeSchema (nil = edge-only node)
-	Adjacency map[string][]int     // node key → outgoing edge indices into Edges
+	// Traversal uses the integer index (graph_index.go) instead.
+	NodeIDs  []types.Value        // deterministic node order (first-seen)
+	NodeRows map[string]types.Row // node key → node row in NodeSchema (nil = edge-only node)
 
 	SourceIdx, TargetIdx int // column indices in EdgeSchema
 	NodeIdIdx            int // first node table's id column index in NodeSchema (if hasNodeTable)
@@ -50,10 +50,17 @@ type Graph struct {
 	// node key → labels, and per-edge labels parallel to Edges.
 	nodeLabels map[string][]string
 	edgeLabels [][]string
-	isModel    bool
+	// Pre-rendered labels() JSON (GQL views): by node ordinal / edge.
+	nodeLabelsJS []string
+	edgeLabelsJS []string
+	isModel      bool
 
-	radjOnce sync.Once
-	radj     map[string][]int // node key → incoming edge indices (lazy)
+	idxOnce sync.Once
+	index   *graphIndex // traversal index (lazy; shared by derived graphs)
+
+	rowsMu      sync.Mutex
+	rowsByOrd   []types.Row // NodeRows by ordinal (lazy)
+	labelsByOrd [][]string  // nodeLabels by ordinal (lazy)
 
 	elemMu      sync.Mutex
 	elemSchemas map[elemSchemaKey]*types.Schema
@@ -73,22 +80,56 @@ func (g *Graph) gqlLabeled() *Graph {
 	g.gqlOnce.Do(func() {
 		v := &Graph{
 			EdgeSchema: g.EdgeSchema, NodeSchema: g.NodeSchema, Edges: g.Edges, NodeIDs: g.NodeIDs,
-			NodeRows: g.NodeRows, Adjacency: g.Adjacency, SourceIdx: g.SourceIdx, TargetIdx: g.TargetIdx,
+			NodeRows: g.NodeRows, index: g.idx(), SourceIdx: g.SourceIdx, TargetIdx: g.TargetIdx,
 			NodeIdIdx: g.NodeIdIdx, hasNodeTable: g.hasNodeTable, NodeIdName: g.NodeIdName,
 			withNodeIdIdx: g.withNodeIdIdx, coercedIds: g.coercedIds, idType: g.idType, idTypeSet: g.idTypeSet,
 		}
+		// Label values repeat heavily: parse each distinct one once and
+		// share the result (label slices are read-only).
+		// Their JSON form, which labels() returns, is rendered once too.
+		type parsed struct {
+			ls []string
+			js string
+		}
+		seen := map[string]parsed{}
+		parse := func(val types.Value) parsed {
+			str, ok := val.(string)
+			if !ok {
+				ls := labelValues(val)
+				return parsed{ls, labelsJSON(ls)}
+			}
+			if p, ok := seen[str]; ok {
+				return p
+			}
+			ls := labelValues(str)
+			p := parsed{ls, labelsJSON(ls)}
+			seen[str] = p
+			return p
+		}
 		if i := g.NodeSchema.ColumnIndex("Label"); i >= 0 && g.hasNodeTable {
 			v.nodeLabels = make(map[string][]string, len(g.NodeRows))
-			for k, row := range g.NodeRows {
+			js := make([]string, len(g.NodeIDs))
+			rows := g.nodeRowsByOrd()
+			for o, row := range rows {
+				js[o] = "[]"
 				if row != nil {
-					v.nodeLabels[k] = labelValues(row[i])
+					p := parse(row[i])
+					js[o] = p.js
 				}
 			}
+			for k, row := range g.NodeRows {
+				if row != nil {
+					v.nodeLabels[k] = parse(row[i]).ls
+				}
+			}
+			v.nodeLabelsJS = js
 		}
 		if i := g.EdgeSchema.ColumnIndex("Label"); i >= 0 {
 			v.edgeLabels = make([][]string, len(g.Edges))
+			v.edgeLabelsJS = make([]string, len(g.Edges))
 			for ei, e := range g.Edges {
-				v.edgeLabels[ei] = labelValues(e.Row[i])
+				p := parse(e.Row[i])
+				v.edgeLabels[ei], v.edgeLabelsJS[ei] = p.ls, p.js
 			}
 		}
 		g.gqlView = v
@@ -125,18 +166,6 @@ func labelValues(v types.Value) []string {
 type GraphEdge struct {
 	Source, Target types.Value
 	Row            types.Row
-}
-
-// reverseAdjacency returns node key → incoming edge indices, built once.
-func (g *Graph) reverseAdjacency() map[string][]int {
-	g.radjOnce.Do(func() {
-		g.radj = make(map[string][]int, len(g.Adjacency))
-		for ei, edge := range g.Edges {
-			k := graphKey(edge.Target)
-			g.radj[k] = append(g.radj[k], ei)
-		}
-	})
-	return g.radj
 }
 
 // derivedNodeIdType is the declared type of the synthetic NodeId column
@@ -192,9 +221,14 @@ func (g *Graph) nodeElemRow(id types.Value) types.Row {
 	if !g.hasNodeTable {
 		return types.Row{g.derivedNodeIdValue(id)}
 	}
-	if row := g.NodeRows[graphKey(id)]; row != nil {
-		return row
+	if o, ok := g.ordOf(id); ok {
+		return g.nodeElemRowOrd(o)
 	}
+	return g.edgeOnlyNodeRow(id)
+}
+
+// edgeOnlyNodeRow is the property row of a node known only from edges.
+func (g *Graph) edgeOnlyNodeRow(id types.Value) types.Row {
 	row := make(types.Row, len(g.NodeSchema.Columns))
 	if g.NodeIdIdx >= 0 {
 		row[g.NodeIdIdx] = id
@@ -211,20 +245,20 @@ func (g *Graph) nodeLabelsJSON(id types.Value) string {
 	if g.nodeLabels == nil {
 		return "[]"
 	}
+	if o, ok := g.ordOf(id); ok {
+		return g.nodeLabelsJSONOrd(o)
+	}
 	return labelsJSON(g.nodeLabels[graphKey(id)])
 }
 
 func (g *Graph) edgeLabelsJSON(ei int) string {
+	if g.edgeLabelsJS != nil {
+		return g.edgeLabelsJS[ei]
+	}
 	if ei >= len(g.edgeLabels) {
 		return "[]"
 	}
 	return labelsJSON(g.edgeLabels[ei])
-}
-
-// graphKey formats a node id value as a map key. Type-tagged via
-// typedKey (join.go) so string "1" and long 1 are distinct nodes.
-func graphKey(v types.Value) string {
-	return typedKey(v)
 }
 
 // pipeState carries the intermediate result between pipeline operators.
@@ -485,7 +519,6 @@ func buildGraph(edges *types.Table, op *parser.MakeGraphOp, nodeTables []*types.
 	g := &Graph{
 		EdgeSchema:    edges.Schema,
 		NodeRows:      make(map[string]types.Row),
-		Adjacency:     make(map[string][]int),
 		SourceIdx:     srcIdx,
 		TargetIdx:     tgtIdx,
 		NodeIdName:    "NodeId",
@@ -560,41 +593,53 @@ func buildGraph(edges *types.Table, op *parser.MakeGraphOp, nodeTables []*types.
 		}
 	}
 
-	addNode := func(id types.Value) string {
-		key := graphKey(id)
-		if _, seen := g.NodeRows[key]; !seen {
-			g.NodeRows[key] = nil
-			g.NodeIDs = append(g.NodeIDs, id)
+	// Nodes get first-seen ordinals as they are met; keys are built in
+	// a reused buffer, so only a new node allocates one. The traversal
+	// index falls out of the build instead of being recomputed.
+	ords := make(map[string]int32)
+	var ids []types.Value
+	var rows []types.Row
+	var keyBuf []byte
+	addNode := func(id types.Value) int32 {
+		keyBuf = appendGraphKey(keyBuf[:0], id)
+		if o, seen := ords[string(keyBuf)]; seen {
+			return o
 		}
-		return key
+		o := int32(len(ids))
+		ords[string(keyBuf)] = o
+		ids = append(ids, id)
+		rows = append(rows, nil)
+		return o
 	}
 
+	g.Edges = make([]GraphEdge, 0, len(edges.Rows))
+	srcOrd := make([]int32, 0, len(edges.Rows))
+	dstOrd := make([]int32, 0, len(edges.Rows))
 	for _, row := range edges.Rows {
 		src := identity(row[srcIdx])
 		tgt := identity(row[tgtIdx])
 		if src == nil || tgt == nil {
 			continue
 		}
-		srcKey := addNode(src)
-		addNode(tgt)
+		srcOrd = append(srcOrd, addNode(src))
+		dstOrd = append(dstOrd, addNode(tgt))
 		g.Edges = append(g.Edges, GraphEdge{Source: src, Target: tgt, Row: row})
-		g.Adjacency[srcKey] = append(g.Adjacency[srcKey], len(g.Edges)-1)
 	}
 
 	width := len(g.NodeSchema.Columns)
-	var tableOrder []types.Value
+	var tableOrder []int32
 	for _, src := range sources {
 		for _, row := range src.table.Rows {
 			id := identity(row[src.idIdx])
 			if id == nil {
 				continue
 			}
-			key := addNode(id)
-			merged := g.NodeRows[key]
+			o := addNode(id)
+			merged := rows[o]
 			if merged == nil {
 				merged = make(types.Row, width)
-				g.NodeRows[key] = merged
-				tableOrder = append(tableOrder, id)
+				rows[o] = merged
+				tableOrder = append(tableOrder, o)
 			}
 			for c, v := range row {
 				if u := src.colMap[c]; merged[u] == nil {
@@ -608,16 +653,43 @@ func buildGraph(edges *types.Table, op *parser.MakeGraphOp, nodeTables []*types.
 	}
 
 	// Node order, as ADX lists nodes: node-table rows first, then the
-	// nodes known only from edges, each in first-seen order.
+	// nodes known only from edges, each in first-seen order. Ordinals
+	// are renumbered to that order.
+	n := len(ids)
+	newOf := make([]int32, n)
 	if g.hasNodeTable {
 		order := tableOrder
-		for _, id := range g.NodeIDs {
-			if g.NodeRows[graphKey(id)] == nil {
-				order = append(order, id)
+		for o := 0; o < n; o++ {
+			if rows[o] == nil {
+				order = append(order, int32(o))
 			}
 		}
-		g.NodeIDs = order
+		for newO, oldO := range order {
+			newOf[oldO] = int32(newO)
+		}
+	} else {
+		for o := range newOf {
+			newOf[o] = int32(o)
+		}
 	}
+	g.NodeIDs = make([]types.Value, n)
+	byOrd := make([]types.Row, n)
+	for o := 0; o < n; o++ {
+		g.NodeIDs[newOf[o]] = ids[o]
+		byOrd[newOf[o]] = rows[o]
+	}
+	g.NodeRows = make(map[string]types.Row, n)
+	for k, o := range ords {
+		g.NodeRows[k] = rows[o]
+		ords[k] = newOf[o]
+	}
+	for ei := range srcOrd {
+		srcOrd[ei], dstOrd[ei] = newOf[srcOrd[ei]], newOf[dstOrd[ei]]
+	}
+	ix := &graphIndex{ords: ords, src: srcOrd, dst: dstOrd}
+	ix.outOff, ix.out = csr(n, srcOrd)
+	g.index = ix
+	g.rowsByOrd = byOrd
 
 	return g, nil
 }
@@ -657,8 +729,8 @@ func (e *Engine) applyGraphToTable(g *Graph, op *parser.GraphToTableOp) (*types.
 			schema.Columns = append([]types.Column{hashCol(op.NodeIdColumn)}, schema.Columns...)
 		}
 		nodes = types.NewTable(op.NodesAs, schema)
-		for _, id := range g.NodeIDs {
-			row := g.nodeElemRow(id)
+		for o, id := range g.NodeIDs {
+			row := g.nodeElemRowOrd(int32(o))
 			if op.NodeIdColumn != "" {
 				row = append(types.Row{idHash(id)}, row...)
 			}
@@ -721,7 +793,7 @@ func (g *Graph) cloneForNodeUpdate() *Graph {
 		Edges:         g.Edges,
 		NodeIDs:       g.NodeIDs,
 		NodeRows:      make(map[string]types.Row, len(g.NodeRows)),
-		Adjacency:     g.Adjacency,
+		index:         g.idx(),
 		SourceIdx:     g.SourceIdx,
 		TargetIdx:     g.TargetIdx,
 		NodeIdIdx:     g.NodeIdIdx,

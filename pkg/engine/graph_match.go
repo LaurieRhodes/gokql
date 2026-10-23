@@ -111,10 +111,11 @@ type gmVar struct {
 type gmElem struct {
 	spec        parser.GraphMatchEdge
 	left, right int
-	offset      int // first column in the match schema (-1 = anonymous)
-	pathOff     int // hidden graph-path column (-1 = anonymous)
-	pos         int // plan position at which it becomes bound
-	labelsOff   int // hidden labels column (-1 = not used)
+	offset      int  // first column in the match schema (-1 = anonymous)
+	skipList    bool // variable-length edge never read: no JSON edge list
+	pathOff     int  // hidden graph-path column (-1 = anonymous)
+	pos         int  // plan position at which it becomes bound
+	labelsOff   int  // hidden labels column (-1 = not used)
 }
 
 // gmStep traverses one edge element from an already bound variable.
@@ -186,12 +187,14 @@ func (p *graphPath) nodes() []types.Value {
 	out := make([]types.Value, 0, len(p.edges)+1)
 	cur := p.start
 	out = append(out, cur)
+	ix := p.g.idx()
+	co, _ := p.g.ordOf(cur)
 	for _, ei := range p.edges {
 		e := p.g.Edges[ei]
-		if graphKey(e.Source) == graphKey(cur) {
-			cur = e.Target
+		if ix.src[ei] == co {
+			cur, co = e.Target, ix.dst[ei]
 		} else {
-			cur = e.Source
+			cur, co = e.Source, ix.src[ei]
 		}
 		out = append(out, cur)
 	}
@@ -241,6 +244,65 @@ func walkFuncCalls(expr parser.Expr, fn func(*parser.FuncCall)) (complete bool) 
 		return false
 	}
 }
+
+// graphMatchReads reports whether the where clause or project items may
+// read column name (a bare reference, name.x, or name[...]). Any
+// expression shape the walk does not know counts as a read.
+func graphMatchReads(op *parser.GraphMatchOp, name string) bool {
+	found := false
+	var visit func(x parser.Expr) (parser.Expr, error)
+	visit = func(x parser.Expr) (parser.Expr, error) {
+		switch r := x.(type) {
+		case *parser.FuncCall:
+			// These read the hidden path / labels columns, not the
+			// JSON edge list: their variable argument is no read.
+			if graphPathArgFuncs[r.Name] && len(r.Args) > 0 {
+				if c, ok := r.Args[0].(*parser.ColumnRef); ok && c.Name == name {
+					for _, a := range r.Args[1:] {
+						if _, err := rewriteExpr(a, visit); err != nil {
+							found = true
+						}
+					}
+					return r, nil // handled: do not descend
+				}
+			}
+		case *parser.ColumnRef:
+			if r.Name == name || strings.HasPrefix(r.Name, name+".") {
+				found = true
+			}
+		case *parser.Literal, *parser.BinaryExpr, *parser.UnaryExpr,
+			*parser.AccessExpr, *parser.InExpr, *parser.HasAnyAllExpr, *parser.BetweenExpr:
+		default:
+			found = true
+		}
+		return nil, nil
+	}
+	check := func(x parser.Expr) {
+		if x != nil && !found {
+			if _, err := rewriteExpr(x, visit); err != nil {
+				found = true
+			}
+		}
+	}
+	check(op.Where)
+	if op.Project != nil {
+		for _, it := range op.Project.Items {
+			if it.Expr == nil {
+				if it.Name == name || strings.HasPrefix(it.Name, name+".") {
+					found = true
+				}
+				continue
+			}
+			check(it.Expr)
+		}
+	}
+	return found
+}
+
+// graphPathArgFuncs take an edge variable whose path (not its JSON
+// edge list) they read.
+var graphPathArgFuncs = map[string]bool{"labels": true, "map": true, "all": true, "any": true,
+	"__gql_path_nodes": true, "__gql_path_edges": true}
 
 // graphUses is what a graph-match's expressions need from the walk:
 // the edge variables map/all/any iterate (paths), the variables
@@ -453,6 +515,14 @@ func (e *Engine) buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan
 	// Hidden graph paths and labels only for the variables that
 	// map/all/any and labels() use.
 	uses := collectGraphUses(op)
+	// A variable-length edge nothing reads needs no JSON edge list
+	// (rendering it per partial path dominated long-path matches).
+	for i := range plan.elems {
+		el := &plan.elems[i]
+		if el.spec.VarLength && el.spec.Name != "" && !uses.all && !graphMatchReads(op, el.spec.Name) {
+			el.skipList = true
+		}
+	}
 	for i := range plan.elems {
 		el := &plan.elems[i]
 		if el.spec.Name == "" || !(uses.all || uses.paths[el.spec.Name]) {
@@ -538,6 +608,21 @@ func (plan *gmPlan) writeNode(g *Graph, row types.Row, v int, id types.Value) {
 	}
 }
 
+// writeNodeOrd is writeNode for node ordinal o.
+func (plan *gmPlan) writeNodeOrd(g *Graph, row types.Row, v int, o int32) {
+	off := plan.vars[v].offset
+	if off < 0 {
+		return
+	}
+	copy(row[off:], g.nodeElemRowOrd(o))
+	if lo := plan.vars[v].labelsOff; lo >= 0 {
+		row[lo] = g.nodeLabelsJSONOrd(o)
+	}
+	if no := plan.vars[v].nodeOff; no >= 0 {
+		row[no] = &graphNodeRef{g: g, id: g.NodeIDs[o]}
+	}
+}
+
 // writePath fills edge element el's columns: the edge's columns for a
 // fixed edge, the JSON edge array for a variable-length one, plus the
 // hidden graph path. edges are in written order, starting at start.
@@ -564,6 +649,9 @@ func (plan *gmPlan) writePath(g *Graph, row types.Row, el int, start types.Value
 	}
 	if !elem.spec.VarLength {
 		copy(row[elem.offset:], g.Edges[edges[0]].Row)
+		return nil
+	}
+	if elem.skipList {
 		return nil
 	}
 	list := make([]map[string]interface{}, len(edges))
@@ -627,7 +715,7 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 	}
 
 	matches := types.NewTable("", plan.schema)
-	err = e.walkGraphMatch(g, plan, preds, op.Cycles, func(row types.Row, _ []string, _ int) error {
+	err = e.walkGraphMatch(g, plan, preds, op.Cycles, func(row types.Row, _ []int32, _ int) error {
 		if len(matches.Rows) >= maxGraphMatches {
 			return fmt.Errorf("graph-match: result exceeds %d rows; narrow the pattern or where clause", maxGraphMatches)
 		}
@@ -710,41 +798,38 @@ func (plan *gmPlan) projectWithGraphNames(p *parser.ProjectOp) *parser.ProjectOp
 }
 
 // walkGraphMatch enumerates the bindings of plan that satisfy preds,
-// calling emit with the (reused) row buffer, the node keys bound to
+// calling emit with the (reused) row buffer, the node ordinals bound to
 // each pattern variable and the match's total hop count.
 func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, cycles string,
-	emitFn func(row types.Row, bindKey []string, hops int) error) error {
+	emitFn func(row types.Row, bindOrd []int32, hops int) error) error {
 	uniqueEdges := cycles != "all"
 	noCycles := cycles == "none"
+	ix := g.idx()
 
 	row := make(types.Row, len(plan.schema.Columns)) // reused buffer
 	usedEdges := make([]bool, len(g.Edges))
-	bindKey := make([]string, len(plan.vars))
-	bindId := make([]types.Value, len(plan.vars))
-	var visits map[string]int
+	bindOrd := make([]int32, len(plan.vars))
+	var visits []int32
 	if noCycles {
-		visits = make(map[string]int)
+		visits = make([]int32, len(g.NodeIDs))
 	}
 
-	var radj map[string][]int
-	for _, st := range plan.steps {
-		if st.dir != parser.EdgeForward {
-			radj = g.reverseAdjacency()
-			break
-		}
-	}
-	neighbors := func(key string, dir parser.EdgeDirection, fn func(ei int, next types.Value) error) error {
+	neighbors := func(o int32, dir parser.EdgeDirection, fn func(ei int, next int32) error) error {
 		if dir != parser.EdgeBackward {
-			for _, ei := range g.Adjacency[key] {
-				if err := fn(ei, g.Edges[ei].Target); err != nil {
-					return err
+			for _, ei := range ix.outEdges(o) {
+				if nx := ix.dst[ei]; nx >= 0 {
+					if err := fn(int(ei), nx); err != nil {
+						return err
+					}
 				}
 			}
 		}
 		if dir != parser.EdgeForward {
-			for _, ei := range radj[key] {
-				if err := fn(ei, g.Edges[ei].Source); err != nil {
-					return err
+			for _, ei := range ix.inEdges(o) {
+				if nx := ix.src[ei]; nx >= 0 {
+					if err := fn(int(ei), nx); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -771,14 +856,15 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 	// edge between two distinct variables whose end is pinned to a
 	// literal that is verified to be a REAL node — a false match would
 	// prune correct paths, so this fails closed on any uncertainty.
-	var reachDist map[string]int
+	var reachDist []int32
 	var reachMaxHops int
 	if len(plan.steps) == 1 && !plan.steps[0].toBound {
 		if _, endVal, ok := detectFixedEndpoints(preds, 1); ok {
-			targetKey := graphKey(endVal)
-			if _, isRealNode := g.NodeRows[targetKey]; isRealNode {
-				reachMaxHops = plan.elems[0].spec.MaxHops
-				reachDist = reachabilityToTarget(g, targetKey, plan.steps[0].dir, reachMaxHops)
+			if _, isRealNode := g.NodeRows[graphKey(endVal)]; isRealNode {
+				if target, ok := g.ordOf(endVal); ok {
+					reachMaxHops = plan.elems[0].spec.MaxHops
+					reachDist = reachabilityToTarget(g, target, plan.steps[0].dir, reachMaxHops)
+				}
 			}
 		}
 	}
@@ -787,7 +873,7 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 	var walk func(stepIdx int) error
 	walk = func(stepIdx int) error {
 		if stepIdx == len(plan.steps) {
-			return emitFn(row, bindKey, len(collected))
+			return emitFn(row, bindOrd, len(collected))
 		}
 		st := plan.steps[stepIdx]
 		spec := plan.elems[st.elem].spec
@@ -796,23 +882,23 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 
 		// handoff binds the arrival node and the edge element, checks
 		// the predicates due at pos and continues with the next step.
-		handoff := func(key string, id types.Value) error {
-			if st.toBound && key != bindKey[st.to] {
+		handoff := func(o int32) error {
+			if st.toBound && o != bindOrd[st.to] {
 				return nil
 			}
 			path := collected[base:]
-			start := bindId[st.from]
+			start := g.NodeIDs[bindOrd[st.from]]
 			if st.reversed {
 				rev := make([]int, len(path))
 				for i, ei := range path {
 					rev[len(path)-1-i] = ei
 				}
 				path = rev
-				start = id
+				start = g.NodeIDs[o]
 			}
 			if !st.toBound {
-				bindKey[st.to], bindId[st.to] = key, id
-				plan.writeNode(g, row, st.to, id)
+				bindOrd[st.to] = o
+				plan.writeNodeOrd(g, row, st.to, o)
 			}
 			if err := plan.writePath(g, row, st.elem, start, path); err != nil {
 				return err
@@ -824,32 +910,31 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 			return walk(stepIdx + 1)
 		}
 
-		var expand func(depth int, key string, id types.Value) error
-		expand = func(depth int, key string, id types.Value) error {
+		var expand func(depth int, o int32) error
+		expand = func(depth int, o int32) error {
 			if depth >= spec.MinHops {
-				if err := handoff(key, id); err != nil {
+				if err := handoff(o); err != nil {
 					return err
 				}
 			}
 			if depth == spec.MaxHops {
 				return nil
 			}
-			return neighbors(key, st.dir, func(ei int, next types.Value) error {
+			return neighbors(o, st.dir, func(ei int, nx int32) error {
 				if uniqueEdges && usedEdges[ei] {
 					return nil
 				}
-				nk := graphKey(next)
 				if reachDist != nil {
-					d, reachable := reachDist[nk]
-					if !reachable || depth+1+d > reachMaxHops {
+					d := reachDist[nx]
+					if d < 0 || depth+1+int(d) > reachMaxHops {
 						return nil // provably cannot reach the pinned target in budget
 					}
 				}
 				terminalOnly := false
-				if noCycles && visits[nk] > 0 {
+				if noCycles && visits[nx] > 0 {
 					// Already visited: only acceptable as the arrival at
 					// an already bound endpoint, never passed through.
-					if !st.toBound || nk != bindKey[st.to] || depth+1 < spec.MinHops {
+					if !st.toBound || nx != bindOrd[st.to] || depth+1 < spec.MinHops {
 						return nil
 					}
 					terminalOnly = true
@@ -858,14 +943,14 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 				collected = append(collected, ei)
 				var err error
 				if terminalOnly {
-					err = handoff(nk, next)
+					err = handoff(nx)
 				} else {
 					if noCycles {
-						visits[nk]++
+						visits[nx]++
 					}
-					err = expand(depth+1, nk, next)
+					err = expand(depth+1, nx)
 					if noCycles {
-						visits[nk]--
+						visits[nx]--
 					}
 				}
 				collected = collected[:len(collected)-1]
@@ -873,13 +958,13 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 				return err
 			})
 		}
-		return expand(0, bindKey[st.from], bindId[st.from])
+		return expand(0, bindOrd[st.from])
 	}
 
-	for _, id := range g.NodeIDs {
-		key := graphKey(id)
-		bindKey[0], bindId[0] = key, id
-		plan.writeNode(g, row, 0, id)
+	for o := range g.NodeIDs {
+		o := int32(o)
+		bindOrd[0] = o
+		plan.writeNodeOrd(g, row, 0, o)
 		keep, err := checkPreds(0)
 		if err != nil {
 			return err
@@ -888,11 +973,11 @@ func (e *Engine) walkGraphMatch(g *Graph, plan *gmPlan, preds []matchPredicate, 
 			continue
 		}
 		if noCycles {
-			visits[key]++
+			visits[o]++
 		}
 		err = walk(0)
 		if noCycles {
-			visits[key]--
+			visits[o]--
 		}
 		if err != nil {
 			return err
@@ -931,16 +1016,16 @@ func (e *Engine) applyGraphShortestPaths(g *Graph, op *parser.GraphMatchOp, plan
 		hops int
 		rows []types.Row
 	}
-	byPair := make(map[string]*best)
-	var order []string
+	byPair := make(map[int64]*best)
+	var order []int64
 	all := op.Shortest == "all"
 	total := 0
 	cycles := op.Cycles
 	if cycles == "" {
 		cycles = "none"
 	}
-	err := e.walkGraphMatch(g, plan, preds, cycles, func(row types.Row, bindKey []string, hops int) error {
-		pair := bindKey[first] + "\x00" + bindKey[last]
+	err := e.walkGraphMatch(g, plan, preds, cycles, func(row types.Row, bindOrd []int32, hops int) error {
+		pair := int64(bindOrd[first])<<32 | int64(uint32(bindOrd[last]))
 		b := byPair[pair]
 		if b == nil {
 			b = &best{hops: hops}
@@ -1226,15 +1311,17 @@ func evalGraphNodeFunc(fc *parser.FuncCall, schema *types.Schema, row types.Row)
 	default:
 		return nil, true, fmt.Errorf("%s() expects at most one argument", fc.Name)
 	}
-	key := graphKey(ref.id)
-	switch fc.Name {
-	case "node_id":
+	if fc.Name == "node_id" {
 		return fmt.Sprintf("%v", ref.id), true, nil
-	case "node_degree_in":
-		return int64(len(ref.g.reverseAdjacency()[key])), true, nil
-	default:
-		return int64(len(ref.g.Adjacency[key])), true, nil
 	}
+	o, ok := ref.g.ordOf(ref.id)
+	if !ok {
+		return int64(0), true, nil
+	}
+	if fc.Name == "node_degree_in" {
+		return int64(len(ref.g.idx().inEdges(o))), true, nil
+	}
+	return int64(len(ref.g.idx().outEdges(o))), true, nil
 }
 
 // evalGQLPath is __gql_path_nodes(e) / __gql_path_edges(e), used by
