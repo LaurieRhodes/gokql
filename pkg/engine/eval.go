@@ -293,17 +293,43 @@ func evalToScalarOnce(e *Engine, ex *parser.ToScalarExpr) (types.Value, types.KQ
 		return columnNamesOf(e, ex.QueryText)
 	}
 	stmt, err := parser.Parse(ex.QueryText)
-	if err != nil {
-		return nil, types.TypeDynamic, fmt.Errorf("toscalar(%s): %w", ex.QueryText, err)
+	var result *types.Table
+	if err == nil {
+		result, err = e.Execute(stmt)
 	}
-	result, err := e.Execute(stmt)
 	if err != nil {
+		// toscalar() of a scalar expression (`toscalar(2)`,
+		// `toscalar(new_guid())`) is that value.
+		if v, t, ok := evalToScalarScalar(e, ex.QueryText); ok {
+			return v, t, nil
+		}
 		return nil, types.TypeDynamic, fmt.Errorf("toscalar(%s): %w", ex.QueryText, err)
 	}
 	if result == nil || len(result.Rows) == 0 || len(result.Schema.Columns) == 0 {
 		return nil, types.TypeDynamic, nil
 	}
 	return result.Rows[0][0], result.Schema.Columns[0].Type, nil
+}
+
+// evalToScalarScalar evaluates toscalar()'s argument as a scalar
+// expression, for arguments that are not tabular.
+func evalToScalarScalar(e *Engine, text string) (types.Value, types.KQLType, bool) {
+	if strings.Contains(text, "|") {
+		return nil, types.TypeDynamic, false
+	}
+	expr, err := parser.ParseExpr(text)
+	if err != nil {
+		return nil, types.TypeDynamic, false
+	}
+	expr, err = substituteToScalars(e, expr)
+	if err != nil {
+		return nil, types.TypeDynamic, false
+	}
+	v, err := evalExpr(e, expr, &types.Schema{}, types.Row{})
+	if err != nil {
+		return nil, types.TypeDynamic, false
+	}
+	return v, inferExprType(e, expr, &types.Schema{}), true
 }
 
 // evalInSubqueryOnce executes "X in (subquery)"'s tabular argument via
@@ -357,6 +383,11 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 		// just the innermost context's own local map.
 		if val, ok := eng.lets().LookupScalar(e.Name); ok {
 			return val, nil
+		}
+		// A parameterless scalar function may be named without
+		// parentheses: `let x = () {42}; print x`.
+		if fn, ok := eng.lets().LookupFunction(e.Name); ok && !fn.Tabular && len(fn.Params) == 0 {
+			return evalExpr(eng, &parser.FuncCall{Name: e.Name}, schema, row)
 		}
 		return nil, fmt.Errorf("column %q not found", e.Name)
 
@@ -838,6 +869,9 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 		// type.
 		if t, ok := eng.lets().LookupScalarType(e.Name); ok {
 			return t
+		}
+		if fn, ok := eng.lets().LookupFunction(e.Name); ok && !fn.Tabular && len(fn.Params) == 0 {
+			return inferExprType(eng, &parser.FuncCall{Name: e.Name}, schema)
 		}
 		return types.TypeString
 	case *parser.FuncCall:

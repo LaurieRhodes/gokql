@@ -1202,6 +1202,9 @@ func (*PrecomputedTable) statementNode() {}
 type FunctionDef struct {
 	Params []FunctionParam
 	Body   Expr // scalar body; nil when Tabular
+	// Lets are a scalar body's local bindings (let pi = pi(); expr),
+	// evaluated in order, each visible to the next and to Body.
+	Lets []LocalLet
 
 	// Tabular is set for a function whose body is a tabular
 	// expression (let f = (p:int) { T | where x > p }). Like a stored
@@ -1213,6 +1216,12 @@ type FunctionDef struct {
 }
 
 func (*FunctionDef) statementNode() {}
+
+// LocalLet is one scalar binding inside a scalar function body.
+type LocalLet struct {
+	Name string
+	Expr Expr
+}
 
 // FunctionParam is a typed parameter — shared by BOTH the existing
 // query-scoped `let` function mechanism (FunctionDef, above) and

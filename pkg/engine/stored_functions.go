@@ -372,9 +372,12 @@ func (e *Engine) resolveStoredFunction(call *parser.StoredFunctionCall) (*types.
 	var declared []parser.FunctionParam
 	var bodyText string
 	if letFn, ok := e.letContext.LookupFunction(name); ok {
-		if !letFn.Tabular {
+		if !letFn.Tabular && (letFn.BodyText == "" || len(letFn.Lets) > 0) {
 			return nil, fmt.Errorf("%s() is a scalar function and cannot be used as a tabular source", name)
 		}
+		// A body that only calls another function (scalar-looking at
+		// definition, let foo2 = (n:long) { foo1(1, n) }) runs as a
+		// tabular body; a genuinely scalar one fails to parse as one.
 		declared, bodyText = letFn.Params, letFn.BodyText
 	} else {
 		fn, everDefined, err := e.lookupStoredFunction(name)

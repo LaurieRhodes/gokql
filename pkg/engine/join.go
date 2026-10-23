@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -27,67 +28,113 @@ import (
 //   - leftanti: left rows with NO match (only left columns in output)
 //   - leftsemi: left rows WITH a match (only left columns in output)
 func (e *Engine) applyJoin(left *types.Table, op *parser.JoinOp) (*types.Table, error) {
-	// Step 1: Execute right-side subquery
+	jp, err := e.prepareJoin(left, op)
+	if err != nil {
+		return nil, err
+	}
+	result := types.NewTable(left.Name, jp.schema)
+	err = jp.emit(left, func(r types.Row) error {
+		result.AddRow(r)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// joinPrep is a join with its right side executed and hashed, ready
+// to probe with left rows.
+type joinPrep struct {
+	op              *parser.JoinOp
+	right           *types.Table
+	leftKeyIdxs     []int
+	rightKeyIdxs    []int
+	rightOutputIdxs []int
+	rightIndex      map[string][]int
+	schema          types.Schema
+	// alloc, when set, supplies output rows instead of make.
+	alloc func() types.Row
+}
+
+func (jp *joinPrep) joined(leftRow, rightRow types.Row) types.Row {
+	if jp.alloc != nil {
+		return buildJoinRowInto(jp.alloc(), leftRow, rightRow, jp.rightOutputIdxs)
+	}
+	return buildJoinRow(leftRow, rightRow, jp.rightOutputIdxs)
+}
+
+func (e *Engine) prepareJoin(left *types.Table, op *parser.JoinOp) (*joinPrep, error) {
 	right, err := e.executeQuery(op.Right)
 	if err != nil {
 		return nil, fmt.Errorf("join right side: %w", err)
 	}
-
-	// Step 2: Resolve join column indices
-	leftKeyIdxs := make([]int, len(op.OnClauses))
-	rightKeyIdxs := make([]int, len(op.OnClauses))
+	jp := &joinPrep{op: op, right: right,
+		leftKeyIdxs:  make([]int, len(op.OnClauses)),
+		rightKeyIdxs: make([]int, len(op.OnClauses)),
+	}
 	for i, clause := range op.OnClauses {
-		leftKeyIdxs[i] = left.Schema.ColumnIndex(clause.LeftColumn)
-		if leftKeyIdxs[i] < 0 {
+		jp.leftKeyIdxs[i] = left.Schema.ColumnIndex(clause.LeftColumn)
+		if jp.leftKeyIdxs[i] < 0 {
 			return nil, fmt.Errorf("join: left column %q not found", clause.LeftColumn)
 		}
-		rightKeyIdxs[i] = right.Schema.ColumnIndex(clause.RightColumn)
-		if rightKeyIdxs[i] < 0 {
+		jp.rightKeyIdxs[i] = right.Schema.ColumnIndex(clause.RightColumn)
+		if jp.rightKeyIdxs[i] < 0 {
 			return nil, fmt.Errorf("join: right column %q not found", clause.RightColumn)
 		}
 	}
-
-	// Step 3: Build output schema
-	outputSchema, rightOutputIdxs := buildJoinSchema(&left.Schema, &right.Schema, op)
-
-	// Step 4: Build hash table from right side
-	// Key: concatenated string of join column values
-	// Value: list of right-side row indices
-	rightIndex := make(map[string][]int)
+	jp.schema, jp.rightOutputIdxs = buildJoinSchema(&left.Schema, &right.Schema, op)
+	// Key: concatenated join column values; value: right row indices.
+	jp.rightIndex = make(map[string][]int)
 	for i, row := range right.Rows {
-		key := joinKey(row, rightKeyIdxs)
-		rightIndex[key] = append(rightIndex[key], i)
+		key := joinKey(row, jp.rightKeyIdxs)
+		jp.rightIndex[key] = append(jp.rightIndex[key], i)
 	}
+	return jp, nil
+}
 
-	// Step 5: Probe and emit
-	result := types.NewTable(left.Name, outputSchema)
+// outputRows is the number of rows emit will produce for kinds whose
+// output can multiply (inner and the outer joins), or -1.
+func (jp *joinPrep) outputRows(left *types.Table) int {
+	switch jp.op.Kind {
+	case parser.JoinInner, parser.JoinLeftOuter, parser.JoinRightOuter, parser.JoinFullOuter:
+	default:
+		return -1
+	}
+	n := 0
+	for _, leftRow := range left.Rows {
+		if m, ok := jp.rightIndex[joinKey(leftRow, jp.leftKeyIdxs)]; ok {
+			n += len(m)
+		} else if jp.op.Kind == parser.JoinLeftOuter || jp.op.Kind == parser.JoinFullOuter {
+			n++
+		}
+	}
+	return n
+}
 
+// emit probes the hash table with left's rows and passes each output
+// row, in output order, to out.
+func (jp *joinPrep) emit(left *types.Table, out func(types.Row) error) error {
+	op, right := jp.op, jp.right
+	leftKeyIdxs, rightKeyIdxs, rightOutputIdxs, rightIndex := jp.leftKeyIdxs, jp.rightKeyIdxs, jp.rightOutputIdxs, jp.rightIndex
 	switch op.Kind {
 	case parser.JoinInner:
 		for _, leftRow := range left.Rows {
 			key := joinKey(leftRow, leftKeyIdxs)
 			if matches, ok := rightIndex[key]; ok {
 				for _, ri := range matches {
-					outRow := buildJoinRow(leftRow, right.Rows[ri], rightOutputIdxs)
-					result.AddRow(outRow)
+					if err := out(jp.joined(leftRow, right.Rows[ri])); err != nil {
+						return err
+					}
 				}
 			}
 		}
 
 	case parser.JoinInnerUnique:
-		// Real ADX's own default (verified against Microsoft's docs
-		// before implementing this: "innerunique (default) — Inner
-		// join with left side deduplication... All deduplicated rows
-		// from the left table that match rows from the right table").
-		// Left rows are deduplicated by join key FIRST — keeping the
-		// first-encountered row for each distinct key, dropping the
-		// rest — and only then joined, inner-style, against every
-		// matching right row. This is NOT the same as deduplicating
-		// the final output: a left key with 3 duplicate rows and a
-		// right key with 2 matches produces 2 output rows here (one
-		// left representative x two right matches), not 6 (which
-		// plain JoinInner over the same undeduplicated left rows would
-		// produce) and not 1 (which full output dedup would produce).
+		// ADX's default: left rows are deduplicated by join key first
+		// (the first row per key is kept), then inner-joined against
+		// every matching right row. A left key with 3 rows and 2 right
+		// matches gives 2 rows, not 6 and not 1.
 		seenLeftKey := make(map[string]bool, len(left.Rows))
 		for _, leftRow := range left.Rows {
 			key := joinKey(leftRow, leftKeyIdxs)
@@ -97,137 +144,105 @@ func (e *Engine) applyJoin(left *types.Table, op *parser.JoinOp) (*types.Table, 
 			seenLeftKey[key] = true
 			if matches, ok := rightIndex[key]; ok {
 				for _, ri := range matches {
-					outRow := buildJoinRow(leftRow, right.Rows[ri], rightOutputIdxs)
-					result.AddRow(outRow)
+					if err := out(jp.joined(leftRow, right.Rows[ri])); err != nil {
+						return err
+					}
 				}
 			}
 		}
 
 	case parser.JoinLeftOuter:
-		nullRight := make([]types.Value, len(rightOutputIdxs))
 		for _, leftRow := range left.Rows {
 			key := joinKey(leftRow, leftKeyIdxs)
 			if matches, ok := rightIndex[key]; ok {
 				for _, ri := range matches {
-					outRow := buildJoinRow(leftRow, right.Rows[ri], rightOutputIdxs)
-					result.AddRow(outRow)
+					if err := out(jp.joined(leftRow, right.Rows[ri])); err != nil {
+						return err
+					}
 				}
 			} else {
-				outRow := make(types.Row, len(leftRow)+len(nullRight))
+				outRow := make(types.Row, len(leftRow)+len(rightOutputIdxs))
 				copy(outRow, leftRow)
-				copy(outRow[len(leftRow):], nullRight)
-				result.AddRow(outRow)
+				if err := out(outRow); err != nil {
+					return err
+				}
 			}
 		}
 
 	case parser.JoinLeftAnti:
 		for _, leftRow := range left.Rows {
-			key := joinKey(leftRow, leftKeyIdxs)
-			if _, ok := rightIndex[key]; !ok {
-				result.AddRow(leftRow)
+			if _, ok := rightIndex[joinKey(leftRow, leftKeyIdxs)]; !ok {
+				if err := out(leftRow); err != nil {
+					return err
+				}
 			}
 		}
 
 	case parser.JoinLeftSemi:
 		for _, leftRow := range left.Rows {
-			key := joinKey(leftRow, leftKeyIdxs)
-			if _, ok := rightIndex[key]; ok {
-				result.AddRow(leftRow)
+			if _, ok := rightIndex[joinKey(leftRow, leftKeyIdxs)]; ok {
+				if err := out(leftRow); err != nil {
+					return err
+				}
 			}
 		}
 
-	case parser.JoinRightOuter:
-		// Track which right rows were matched
+	case parser.JoinRightOuter, parser.JoinFullOuter:
 		rightMatched := make([]bool, len(right.Rows))
-		nullLeft := make([]types.Value, len(left.Schema.Columns))
+		nLeft := len(left.Schema.Columns)
 		for _, leftRow := range left.Rows {
 			key := joinKey(leftRow, leftKeyIdxs)
 			if matches, ok := rightIndex[key]; ok {
 				for _, ri := range matches {
 					rightMatched[ri] = true
-					outRow := buildJoinRow(leftRow, right.Rows[ri], rightOutputIdxs)
-					result.AddRow(outRow)
+					if err := out(jp.joined(leftRow, right.Rows[ri])); err != nil {
+						return err
+					}
 				}
-			}
-		}
-		// Emit unmatched right rows
-		for ri, row := range right.Rows {
-			if !rightMatched[ri] {
-				outRow := make(types.Row, len(nullLeft)+len(rightOutputIdxs))
-				copy(outRow, nullLeft)
-				for oi, ri2 := range rightOutputIdxs {
-					outRow[len(nullLeft)+oi] = row[ri2]
-				}
-				result.AddRow(outRow)
-			}
-		}
-
-	case parser.JoinRightAnti:
-		rightMatched := make(map[string]bool)
-		for _, leftRow := range left.Rows {
-			key := joinKey(leftRow, leftKeyIdxs)
-			if _, ok := rightIndex[key]; ok {
-				rightMatched[key] = true
-			}
-		}
-		for _, rightRow := range right.Rows {
-			key := joinKey(rightRow, rightKeyIdxs)
-			if !rightMatched[key] {
-				result.AddRow(rightRow)
-			}
-		}
-
-	case parser.JoinRightSemi:
-		rightMatched := make(map[string]bool)
-		for _, leftRow := range left.Rows {
-			key := joinKey(leftRow, leftKeyIdxs)
-			if _, ok := rightIndex[key]; ok {
-				rightMatched[key] = true
-			}
-		}
-		// Every right row that has a match, as leftsemi keeps every
-		// matching left row.
-		for _, rightRow := range right.Rows {
-			if rightMatched[joinKey(rightRow, rightKeyIdxs)] {
-				result.AddRow(rightRow)
-			}
-		}
-
-	case parser.JoinFullOuter:
-		rightMatched := make([]bool, len(right.Rows))
-		nullRight := make([]types.Value, len(rightOutputIdxs))
-		nullLeft := make([]types.Value, len(left.Schema.Columns))
-		for _, leftRow := range left.Rows {
-			key := joinKey(leftRow, leftKeyIdxs)
-			if matches, ok := rightIndex[key]; ok {
-				for _, ri := range matches {
-					rightMatched[ri] = true
-					outRow := buildJoinRow(leftRow, right.Rows[ri], rightOutputIdxs)
-					result.AddRow(outRow)
-				}
-			} else {
-				outRow := make(types.Row, len(leftRow)+len(nullRight))
+			} else if op.Kind == parser.JoinFullOuter {
+				outRow := make(types.Row, len(leftRow)+len(rightOutputIdxs))
 				copy(outRow, leftRow)
-				copy(outRow[len(leftRow):], nullRight)
-				result.AddRow(outRow)
+				if err := out(outRow); err != nil {
+					return err
+				}
 			}
 		}
+		// Unmatched right rows, with nulls on the left.
 		for ri, row := range right.Rows {
 			if !rightMatched[ri] {
-				outRow := make(types.Row, len(nullLeft)+len(rightOutputIdxs))
-				copy(outRow, nullLeft)
+				outRow := make(types.Row, nLeft+len(rightOutputIdxs))
 				for oi, ri2 := range rightOutputIdxs {
-					outRow[len(nullLeft)+oi] = row[ri2]
+					outRow[nLeft+oi] = row[ri2]
 				}
-				result.AddRow(outRow)
+				if err := out(outRow); err != nil {
+					return err
+				}
+			}
+		}
+
+	case parser.JoinRightAnti, parser.JoinRightSemi:
+		rightMatched := make(map[string]bool)
+		for _, leftRow := range left.Rows {
+			key := joinKey(leftRow, leftKeyIdxs)
+			if _, ok := rightIndex[key]; ok {
+				rightMatched[key] = true
+			}
+		}
+		// rightsemi keeps every matching right row, as leftsemi keeps
+		// every matching left row; rightanti the others.
+		want := op.Kind == parser.JoinRightSemi
+		for _, rightRow := range right.Rows {
+			if rightMatched[joinKey(rightRow, rightKeyIdxs)] == want {
+				if err := out(rightRow); err != nil {
+					return err
+				}
 			}
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported join kind: %s", op.Kind)
+		return fmt.Errorf("unsupported join kind: %s", op.Kind)
 	}
-
-	return result, nil
+	return nil
 }
 
 // buildJoinSchema constructs the output schema for a join and the
@@ -306,15 +321,33 @@ func joinKey(row types.Row, keyIdxs []int) string {
 // string "<nil>"); note nil keys still match each other, preserving
 // existing join behavior.
 func typedKey(v types.Value) string {
-	if v == nil {
+	// Fast paths produce exactly what the Sprintf fallback would.
+	switch x := v.(type) {
+	case nil:
 		return "\x00nil"
+	case string:
+		return "string\x01" + x
+	case int64:
+		return "int64\x01" + strconv.FormatInt(x, 10)
+	case int32:
+		return "int32\x01" + strconv.FormatInt(int64(x), 10)
+	case int:
+		return "int\x01" + strconv.Itoa(x)
+	case float64:
+		return "float64\x01" + strconv.FormatFloat(x, 'g', -1, 64)
+	case bool:
+		return "bool\x01" + strconv.FormatBool(x)
 	}
 	return fmt.Sprintf("%T\x01%v", v, v)
 }
 
 // buildJoinRow creates an output row from a left row and matching right row.
 func buildJoinRow(leftRow, rightRow types.Row, rightOutputIdxs []int) types.Row {
-	out := make(types.Row, len(leftRow)+len(rightOutputIdxs))
+	return buildJoinRowInto(make(types.Row, len(leftRow)+len(rightOutputIdxs)), leftRow, rightRow, rightOutputIdxs)
+}
+
+// buildJoinRowInto fills out (len(leftRow)+len(rightOutputIdxs) long).
+func buildJoinRowInto(out, leftRow, rightRow types.Row, rightOutputIdxs []int) types.Row {
 	copy(out, leftRow)
 	for i, ri := range rightOutputIdxs {
 		out[len(leftRow)+i] = rightRow[ri]

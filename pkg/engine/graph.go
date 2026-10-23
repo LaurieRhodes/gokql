@@ -291,6 +291,15 @@ func (e *Engine) applyPipelineState(st pipeState, ops []parser.Operator) (*types
 	}
 	for i := 0; i < len(ops); i++ {
 		if st.graph == nil {
+			if _, isJoin := ops[i].(*parser.JoinOp); isJoin {
+				t, n, err := e.applyJoinPipeline(st.table, ops[i:])
+				if err != nil {
+					return nil, err
+				}
+				st = pipeState{table: t}
+				i += n - 1
+				continue
+			}
 			if ob, isOrder := ops[i].(*parser.OrderByOp); isOrder && i+1 < len(ops) {
 				if tk, isTake := ops[i+1].(*parser.TakeOp); isTake && tk.CountExpr == nil {
 					t, err := e.applyTopN(st.table, ob, tk.Count)

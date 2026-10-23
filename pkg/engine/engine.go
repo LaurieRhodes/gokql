@@ -638,6 +638,23 @@ func (e *Engine) executeCompound(cs *parser.CompoundStatement) (*types.Table, er
 			ctx.Tables[let.Name] = v.Table
 
 		case *parser.ScalarExpr:
+			// `let m = s;` where s names a tabular or graph let in
+			// scope: an alias of that table, not a column reference.
+			if ref, ok := v.Expr.(*parser.ColumnRef); ok {
+				if _, isScalar := ctx.LookupScalar(ref.Name); !isScalar {
+					if t, ok := ctx.LookupTable(ref.Name); ok {
+						ctx.Tables[let.Name] = t
+						break
+					}
+					if g, ok := ctx.LookupGraph(ref.Name); ok {
+						if ctx.Graphs == nil {
+							ctx.Graphs = make(map[string]*Graph)
+						}
+						ctx.Graphs[let.Name] = g
+						break
+					}
+				}
+			}
 			// A bare call of a tabular function (stored or let-bound)
 			// parses as a scalar call; bind it as the query it is.
 			// (FuncCall names are lowercased; the raw text keeps the
@@ -909,6 +926,13 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 		// parentheses, as in ADX: `G | graph-match ...`.
 		if fn, ever, err := e.lookupStoredFunction(q.Source); err == nil && ever && !fn.Deleted &&
 			strings.TrimSpace(strings.Trim(strings.TrimSpace(fn.Parameters), "()")) == "" {
+			call := *q
+			call.SourceFuncCall = &parser.StoredFunctionCall{Name: q.Source}
+			call.Source = ""
+			return e.executeQuery(&call)
+		}
+		// Likewise a parameterless let-bound tabular function.
+		if fn, ok := e.letContext.LookupFunction(q.Source); ok && fn.Tabular && len(fn.Params) == 0 {
 			call := *q
 			call.SourceFuncCall = &parser.StoredFunctionCall{Name: q.Source}
 			call.Source = ""

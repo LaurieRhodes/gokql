@@ -219,3 +219,13 @@ func TestToInt64StringParsing(t *testing.T) {
 		t.Errorf("ToFloat64(\"3.14\") = %v, want 3.14", got)
 	}
 }
+
+func TestParseISODateMatchesLayout(t *testing.T) {
+	for _, s := range []string{"2017-01-01", "2024-02-29", "2023-02-29", "2017-13-01", "2017-00-10", "2017-04-31", "0001-01-01", "9999-12-31", "2017-1-01", "2017-01-0a"} {
+		want, werr := time.Parse("2006-01-02", s)
+		got, ok := parseISODate(s)
+		if ok != (werr == nil) || (ok && got != want.UnixNano()) {
+			t.Errorf("%s: got %v %v, layout %v %v", s, got, ok, want.UnixNano(), werr)
+		}
+	}
+}

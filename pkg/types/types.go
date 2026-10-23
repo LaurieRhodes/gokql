@@ -298,6 +298,9 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 		// was separately fixed to stop rejecting it at the tokenizing
 		// stage -- both layers needed the same fix to actually work
 		// end to end.
+		if ns, ok := parseISODate(s); ok {
+			return ns, nil
+		}
 		for _, layout := range []string{
 			time.RFC3339Nano,
 			time.RFC3339,
@@ -792,4 +795,34 @@ func hexLiteral(s string) (string, bool) {
 		return s[2:], true
 	}
 	return "", false
+}
+
+// parseISODate parses exactly "yyyy-MM-dd" (as the "2006-01-02" layout
+// does, invalid days rejected) without trying the layouts before it.
+func parseISODate(s string) (int64, bool) {
+	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
+		return 0, false
+	}
+	num := func(a, b int) (int, bool) {
+		n := 0
+		for i := a; i < b; i++ {
+			c := s[i]
+			if c < '0' || c > '9' {
+				return 0, false
+			}
+			n = n*10 + int(c-'0')
+		}
+		return n, true
+	}
+	y, ok1 := num(0, 4)
+	m, ok2 := num(5, 7)
+	d, ok3 := num(8, 10)
+	if !ok1 || !ok2 || !ok3 || m < 1 || m > 12 || d < 1 {
+		return 0, false
+	}
+	t := time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC)
+	if t.Day() != d { // 2017-02-30 normalises to March: invalid
+		return 0, false
+	}
+	return t.UnixNano(), true
 }

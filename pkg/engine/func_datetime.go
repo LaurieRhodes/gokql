@@ -85,7 +85,10 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		if n, ok := val.(int64); ok {
 			return n, true, nil
 		}
-		s := fmt.Sprintf("%v", val)
+		s, isStr := val.(string)
+		if !isStr {
+			s = fmt.Sprintf("%v", val)
+		}
 		parsed, parseErr := types.ParseValue(s, types.TypeDatetime)
 		if parseErr != nil {
 			return nil, true, fmt.Errorf("cannot parse %q as datetime", s)

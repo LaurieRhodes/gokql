@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -710,29 +711,62 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		key    string
 		byVals []types.Value // evaluated by-expression values for first row in group
 		rows   []types.Row
+		counts []int64 // per slot, when countOnly
 	}
 	groups := make(map[string]*groupEntry)
 	groupOrder := make([]string, 0)
 
+	// A summarize of count() and countif() only keeps a counter per
+	// group instead of the group's rows.
+	countOnly := true
+	for _, slot := range slots {
+		if slot.pick != nil || slot.pctValues != nil || slot.argStarCols != nil ||
+			!(slot.agg.Function == "count" || slot.agg.Function == "countif" && len(slot.agg.Args) == 1) {
+			countOnly = false
+			break
+		}
+	}
+
+	byVals := make([]types.Value, len(op.ByExprs))
+	keyParts := make([]string, len(op.ByExprs))
 	for _, row := range input.Rows {
 		// Evaluate all by-expressions for this row
-		byVals := make([]types.Value, len(op.ByExprs))
-		keyParts := make([]string, len(op.ByExprs))
 		for i, byExpr := range op.ByExprs {
 			val, err := evalExpr(e, byExpr.Expr, &input.Schema, row)
 			if err != nil {
 				return nil, fmt.Errorf("summarize by %s: %w", byExpr.Name, err)
 			}
 			byVals[i] = val
-			keyParts[i] = fmt.Sprintf("%v", val)
+			keyParts[i] = groupKeyPart(val)
 		}
-		key := strings.Join(keyParts, "\x00")
-
-		if g, exists := groups[key]; exists {
-			g.rows = append(g.rows, row)
+		var key string
+		if len(keyParts) == 1 {
+			key = keyParts[0]
 		} else {
+			key = strings.Join(keyParts, "\x00")
+		}
+
+		g, exists := groups[key]
+		if !exists {
 			groupOrder = append(groupOrder, key)
-			groups[key] = &groupEntry{key: key, byVals: byVals, rows: []types.Row{row}}
+			g = &groupEntry{key: key, byVals: append([]types.Value(nil), byVals...)}
+			if countOnly {
+				g.counts = make([]int64, len(slots))
+			}
+			groups[key] = g
+		}
+		if !countOnly {
+			g.rows = append(g.rows, row)
+			continue
+		}
+		for k, slot := range slots {
+			if slot.agg.Function == "count" {
+				g.counts[k]++
+			} else if v, err := evalExpr(e, slot.agg.Args[0], &input.Schema, row); err == nil {
+				if b, ok := v.(bool); ok && b {
+					g.counts[k]++
+				}
+			}
 		}
 	}
 
@@ -750,7 +784,15 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 		outRow := make(types.Row, len(outSchema.Columns))
 
 		// Aggregation values
-		for _, slot := range slots {
+		for k, slot := range slots {
+			if countOnly {
+				if g.counts != nil {
+					outRow[slot.colIndices[0]] = g.counts[k]
+				} else {
+					outRow[slot.colIndices[0]] = int64(0) // ungrouped, no input
+				}
+				continue
+			}
 			if slot.pick != nil {
 				var best types.Row
 				switch slot.agg.Function {
@@ -836,6 +878,23 @@ func (e *Engine) applySummarize(input *types.Table, op *parser.SummarizeOp) (*ty
 	}
 
 	return byColumnsFirst(result, len(op.ByExprs)), nil
+}
+
+// groupKeyPart is fmt.Sprintf("%v", v), with fast paths.
+func groupKeyPart(v types.Value) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	case nil:
+		return "<nil>"
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // --- Aggregation ---

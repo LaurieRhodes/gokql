@@ -1216,6 +1216,10 @@ func (p *exprParser) parsePostfixAccess(expr Expr) (Expr, error) {
 		// Dot access: .property (".." is between's range, not access)
 		if p.pos < len(p.input) && p.input[p.pos] == '.' && !strings.HasPrefix(p.input[p.pos:], "..") {
 			p.pos++ // skip '.'
+			// `.[expr]` is bracket access spelled after a dot.
+			if p.pos < len(p.input) && p.input[p.pos] == '[' {
+				continue
+			}
 			if p.pos >= len(p.input) || !isIdentStart(p.input[p.pos]) {
 				return nil, fmt.Errorf("expected property name after '.'")
 			}

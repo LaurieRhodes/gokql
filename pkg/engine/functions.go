@@ -243,6 +243,22 @@ func evalUserFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row ty
 		paramRow[i] = val
 	}
 
+	// Local lets: each evaluated in the parameter scope extended by the
+	// lets before it, then visible to the body like a parameter.
+	for _, l := range fn.Lets {
+		v, err := evalExpr(eng, l.Expr, &paramSchema, paramRow)
+		if err != nil {
+			return nil, true, fmt.Errorf("function %s: let %s: %w", fc.Name, l.Name, err)
+		}
+		t := inferExprType(eng, l.Expr, &paramSchema)
+		if i := paramSchema.ColumnIndex(l.Name); i >= 0 {
+			paramSchema.Columns[i].Type, paramRow[i] = t, v
+			continue
+		}
+		paramSchema.Columns = append(paramSchema.Columns, types.Column{Name: l.Name, Type: t})
+		paramRow = append(paramRow, v)
+	}
+
 	// Evaluate the body in the isolated parameter scope
 	eng.udfDepth++
 	val, err := evalExpr(eng, fn.Body, &paramSchema, paramRow)

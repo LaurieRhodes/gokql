@@ -393,7 +393,7 @@ func parseLetStatement(input string) (*LetStatement, error) {
 		return nil, fmt.Errorf("expected '=' in let statement, got '=='")
 	}
 
-	name := strings.TrimSpace(rest[:eqIdx])
+	name := unquoteBracketName(strings.TrimSpace(rest[:eqIdx]))
 	if name == "" {
 		return nil, fmt.Errorf("expected name before '=' in let statement")
 	}
@@ -404,7 +404,13 @@ func parseLetStatement(input string) (*LetStatement, error) {
 	}
 
 	if inner, ok := unwrapMaterialize(valueStr); ok {
-		valueStr = inner
+		// materialize() only accepts a tabular argument, so a bare
+		// name inside it (`let m = materialize(s)`) is a table.
+		query, err := parseQuery(inner)
+		if err != nil {
+			return nil, fmt.Errorf("let %s: %w", name, err)
+		}
+		return &LetStatement{Name: name, Value: query}, nil
 	}
 
 	// view lambda: let V = view () { T | ... }. A parameterless view
@@ -464,6 +470,18 @@ func parseLetStatement(input string) (*LetStatement, error) {
 		return nil, fmt.Errorf("let %s: %w", name, err)
 	}
 	return &LetStatement{Name: name, Value: &ScalarExpr{Expr: expr, Raw: valueStr}}, nil
+}
+
+// unquoteBracketName turns a bracket-quoted identifier (`['a b']`,
+// `["a b"]`) into its bare name; other text is returned unchanged.
+func unquoteBracketName(s string) string {
+	if len(s) >= 4 && s[0] == '[' && s[len(s)-1] == ']' {
+		inner := s[1 : len(s)-1]
+		if q := inner[0]; (q == '\'' || q == '"') && inner[len(inner)-1] == q && len(inner) >= 2 {
+			return inner[1 : len(inner)-1]
+		}
+	}
+	return s
 }
 
 // splitViewLambda recognises "view (params) { body }" and returns the
@@ -662,6 +680,9 @@ func tryParseFunctionDef(s string) (*FunctionDef, bool, error) {
 		return nil, true, err
 	}
 
+	if lets, expr, ok := parseScalarBodyWithLets(body); ok {
+		return &FunctionDef{Params: params, Body: expr, Lets: lets, ParamsText: paramStr, BodyText: body}, true, nil
+	}
 	if isTabularFunctionBody(body, params) {
 		stmt, err := Parse(body)
 		if err != nil {
@@ -676,7 +697,62 @@ func tryParseFunctionDef(s string) (*FunctionDef, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("function body: %w", err)
 	}
-	return &FunctionDef{Params: params, Body: bodyExpr}, true, nil
+	// The body text is kept: a body that only calls a tabular function
+	// (let g = (n:long) { f(1, n) }) is resolved as tabular when used as
+	// a source.
+	return &FunctionDef{Params: params, Body: bodyExpr, ParamsText: paramStr, BodyText: body}, true, nil
+}
+
+// parseScalarBodyWithLets recognises a scalar function body with local
+// bindings: one or more `let name = scalar;` statements followed by a
+// scalar expression (let pi = pi(); iff(x < pi, ...)). A tabular let or
+// final statement leaves the body to the tabular path.
+func parseScalarBodyWithLets(body string) ([]LocalLet, Expr, bool) {
+	stmts := splitStatements(body)
+	var parts []string
+	for _, st := range stmts {
+		if t := strings.TrimSpace(st); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	if len(parts) < 2 {
+		return nil, nil, false
+	}
+	scalar := func(text string) (Expr, bool) {
+		if isTabularSource(text) || isTabularExpression(text) || strings.HasPrefix(text, "(") && strings.HasSuffix(text, "}") {
+			return nil, false
+		}
+		x, err := ParseExpr(text)
+		if err != nil {
+			return nil, false
+		}
+		return x, true
+	}
+	var lets []LocalLet
+	for _, st := range parts[:len(parts)-1] {
+		if !strings.HasPrefix(keywordFold(st), "let ") {
+			return nil, nil, false
+		}
+		rest := strings.TrimSpace(st[len("let "):])
+		eq := strings.IndexByte(rest, '=')
+		if eq <= 0 || (eq+1 < len(rest) && rest[eq+1] == '=') {
+			return nil, nil, false
+		}
+		name := strings.TrimSpace(rest[:eq])
+		if !isIdentifier(name) {
+			return nil, nil, false
+		}
+		x, ok := scalar(strings.TrimSpace(rest[eq+1:]))
+		if !ok {
+			return nil, nil, false
+		}
+		lets = append(lets, LocalLet{Name: name, Expr: x})
+	}
+	last, ok := scalar(parts[len(parts)-1])
+	if !ok {
+		return nil, nil, false
+	}
+	return lets, last, true
 }
 
 // isTabularFunctionBody decides whether a function body is tabular:
@@ -693,6 +769,9 @@ func IsTabularFunctionBody(body, paramsText string) bool {
 func isTabularFunctionBody(body string, params []FunctionParam) bool {
 	if isTabularSource(body) || isTabularExpression(body) {
 		return true
+	}
+	if _, _, ok := parseScalarBodyWithLets(body); ok {
+		return false
 	}
 	if len(splitStatements(body)) > 1 {
 		return true
@@ -1739,7 +1818,7 @@ func parseQuery(input string) (Statement, error) {
 		return query, nil
 	}
 
-	query := &Query{Source: source}
+	query := &Query{Source: unquoteBracketName(source)}
 
 	// Remaining segments are operators
 	for i := 1; i < len(segments); i++ {
@@ -1796,8 +1875,8 @@ func parseOperator(seg string) (Operator, error) {
 	if strings.HasPrefix(lower, "as ") {
 		// hint.materialized=true caches the bound result; a binding is
 		// already evaluated once here, so the hint has no effect.
-		name := stripHints(seg[3:])
-		if name == "" || !isValidIdentifier(name) {
+		name := unquoteBracketName(stripHints(seg[3:]))
+		if name == "" || (!isValidIdentifier(name) && name == stripHints(seg[3:])) {
 			return nil, fmt.Errorf("as: expected a valid name, got %q", name)
 		}
 		return &AsOp{Name: name}, nil
