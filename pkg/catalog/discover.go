@@ -21,7 +21,6 @@ package catalog
 // with kql.* extension identities recover exact KQL types.
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -202,14 +201,22 @@ func readExtentFooter(dir, path string) (info footerInfo) {
 		return
 	}
 
-	data, err := os.ReadFile(path)
+	// Only the footer is needed: read it in place rather than loading
+	// the file (a whole database's extents were read at every start).
+	f, err := os.Open(path)
 	if err != nil {
 		info.err = err
 		return
 	}
-	info.size = int64(len(data))
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		info.err = err
+		return
+	}
+	info.size = st.Size()
 
-	vf, err := vortex.Open(bytes.NewReader(data), int64(len(data)))
+	vf, err := vortex.Open(f, info.size)
 	if err != nil {
 		info.err = fmt.Errorf("open vortex: %w", err)
 		return
