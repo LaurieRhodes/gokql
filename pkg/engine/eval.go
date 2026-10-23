@@ -439,20 +439,44 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 					}
 				}
 			}
-		} else {
-			// Check against literal value list
-			for _, valExpr := range e.Values {
+		}
+		values := e.Values
+		if e.TableRef != "" {
+			if _, isTable := eng.lets().LookupTable(e.TableRef); !isTable {
+				// A scalar let (a dynamic array, typically): in (L).
+				values = []parser.Expr{&parser.ColumnRef{Name: e.TableRef}}
+			}
+		}
+		if e.TableRef == "" || len(values) > 0 {
+			// The value list; a dynamic array contributes its elements:
+			// in (dynamic(["a", "b"])).
+			match := func(valStr string) bool {
+				if e.CaseInsensitive {
+					return strings.EqualFold(colStr, valStr)
+				}
+				return colStr == valStr
+			}
+			for _, valExpr := range values {
 				val, err := evalExpr(eng, valExpr, schema, row)
 				if err != nil {
 					return nil, err
 				}
-				valStr := fmtV(val)
-				if e.CaseInsensitive {
-					found = strings.EqualFold(colStr, valStr)
-				} else {
-					found = colStr == valStr
+				if inferExprType(eng, valExpr, schema) == types.TypeDynamic {
+					if arr, ok := parseJSONArray(val); ok {
+						for _, el := range arr {
+							if el != nil && match(fmtV(el)) {
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
+						continue
+					}
 				}
-				if found {
+				if match(fmtV(val)) {
+					found = true
 					break
 				}
 			}

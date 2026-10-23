@@ -7,6 +7,7 @@ replace github.com/LaurieRhodes/vortex-go => ../vortex-go
 require (
 	github.com/LaurieRhodes/vortex-go v0.1.0
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/golang/geo v0.0.0-20261022062553-461c194586d4
 	github.com/parquet-go/parquet-go v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
 )

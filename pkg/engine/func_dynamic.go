@@ -305,7 +305,11 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		if len(fc.Args)%2 != 0 {
 			return nil, true, fmt.Errorf("pack requires even number of arguments (key, value pairs)")
 		}
-		result := make(map[string]interface{})
+		// Keys keep their argument order (a repeated key keeps its
+		// first position, last value); values keep their KQL form, a
+		// dynamic value embedded as JSON.
+		var keys []string
+		vals := map[string][]byte{}
 		for i := 0; i < len(fc.Args); i += 2 {
 			keyVal, err := evalExpr(eng, fc.Args[i], schema, row)
 			if err != nil {
@@ -316,10 +320,27 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 				return nil, true, err
 			}
 			key := fmt.Sprintf("%v", keyVal)
-			result[key] = valVal
+			if _, seen := vals[key]; !seen {
+				keys = append(keys, key)
+			}
+			vb, err := json.Marshal(valueForJSONArray(valVal, inferExprType(eng, fc.Args[i+1], schema)))
+			if err != nil {
+				vb = []byte("null")
+			}
+			vals[key] = vb
 		}
-		b, _ := json.Marshal(result)
-		return string(b), true, nil
+		var b strings.Builder
+		b.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(jsonString(k))
+			b.WriteByte(':')
+			b.Write(vals[k])
+		}
+		b.WriteByte('}')
+		return b.String(), true, nil
 
 	case "pack_array":
 		// pack_array(v1, v2, ...) — create array from values

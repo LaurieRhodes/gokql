@@ -56,7 +56,7 @@ func evalGeoFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 		}
 		return haversineDistance(lon1, lat1, lon2, lat2, geoSphereRadius), true, nil
 	}
-	return nil, false, nil
+	return evalGeoS2(eng, fc, schema, row)
 }
 
 func geoCoord(v types.Value) (float64, bool) {

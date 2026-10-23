@@ -410,6 +410,16 @@ func evalSketchFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		}
 		return dynamicScalar(v, t.kqlType()), true, nil
 	case "percentiles_array_tdigest":
+		// (digest, p1 [, p2 ...] | dynamic array [, typeof(T)]): a
+		// trailing typeof(T) is the result element type, not a
+		// percentile.
+		outType := t.kqlType()
+		if n := len(fc.Args); n >= 3 {
+			if isTypeofArg(fc.Args[n-1]) {
+				outType = typeofArg(fc.Args[n-1])
+				args = args[:n-1]
+			}
+		}
 		var ps []float64
 		if len(args) == 2 {
 			if arr, ok := parseJSONArray(args[1]); ok {
@@ -429,7 +439,7 @@ func evalSketchFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 			if v == nil {
 				parts[i] = "null"
 			} else {
-				parts[i] = dynamicScalar(v, t.kqlType())
+				parts[i] = dynamicScalar(v, outType)
 			}
 		}
 		return "[" + strings.Join(parts, ",") + "]", true, nil
@@ -448,6 +458,20 @@ func evalSketchFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		return r / n * 100, true, nil
 	}
 	return nil, false, nil
+}
+
+// isTypeofArg reports whether e is a typeof(T) argument.
+func isTypeofArg(e parser.Expr) bool {
+	if fc, ok := e.(*parser.FuncCall); ok && fc.Name == "typeof" {
+		return true
+	}
+	if lit, ok := e.(*parser.Literal); ok && lit.Type == types.TypeString {
+		if n, ok := lit.Value.(string); ok {
+			_, err := types.ParseType(n)
+			return err == nil
+		}
+	}
+	return false
 }
 
 // typeofArg reads typeof(T) as a type; real when it is not one.

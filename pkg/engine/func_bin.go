@@ -16,6 +16,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"math/bits"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -59,6 +60,12 @@ func evalBin(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.R
 		var fixed int64
 		if want == 3 {
 			fixed = types.ToInt64(vals[2])
+		} else if valType == types.TypeDatetime {
+			// Datetime bins are aligned to 0001-01-01 (.NET ticks), not
+			// 1970: bin(datetime(2007-01-03), 7d) is Monday
+			// 2007-01-01. The origin itself overflows int64
+			// nanoseconds, so only its offset modulo the size is used.
+			fixed = datetimeBinOrigin(size)
 		}
 		return fixed + floorDivInt64(types.ToInt64(vals[0])-fixed, size)*size, true, nil
 	}
@@ -109,4 +116,21 @@ func floorDivInt64(a, b int64) int64 {
 		q--
 	}
 	return q
+}
+
+// datetimeBinOrigin is 0001-01-01T00:00:00Z in Unix nanoseconds
+// (-62135596800 s, a whole number of days), reduced modulo size into
+// [0, size). Sizes that divide a day give 0.
+func datetimeBinOrigin(size int64) int64 {
+	const day = int64(86400e9)
+	if day%size == 0 {
+		return 0
+	}
+	// (-62135596800 * 1e9) mod size = size - ((62135596800 * 1e9) mod size)
+	hi, lo := bits.Mul64(62135596800, 1e9)
+	_, rem := bits.Div64(hi%uint64(size), lo, uint64(size))
+	if rem == 0 {
+		return 0
+	}
+	return size - int64(rem)
 }
