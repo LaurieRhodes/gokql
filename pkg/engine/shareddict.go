@@ -226,55 +226,11 @@ func dictionariesActiveExtentFiles(dbPath string) ([]string, error) {
 // this scope) or no matching rows is not an error — it returns a
 // valid, empty dictionary.
 func loadTableDict(e *Engine, tableName, columnName string) (*sharedDict, error) {
-	dbPath := e.Catalog.DatabasePath()
-	files, err := dictionariesActiveExtentFiles(dbPath)
+	all, err := e.dictionaryEntries()
 	if err != nil {
-		return nil, fmt.Errorf("glob %s extents: %w", dictionariesTableName, err)
+		return nil, err
 	}
-	if len(files) == 0 {
-		return &sharedDict{codeOf: make(map[string]uint32)}, nil
-	}
-
-	schema := dictionariesSchema()
-	type entry struct {
-		code  int64
-		value string
-	}
-	var entries []entry
-	cols := []string{"TableName", "ColumnName", "Code", "Value"}
-	for _, relPath := range files {
-		// The direct glob above finds every _Dictionaries_*.vtx file,
-		// including the zero-row schema-shell extent persistDiscoverySchema
-		// writes when the table is first bootstrapped — the catalog's
-		// own extent list would have excluded that automatically, but
-		// bypassing the catalog (the whole point of this function, see
-		// dictionariesActiveExtentFiles) means doing that filtering
-		// here instead. A zero-row Vortex extent genuinely has no data
-		// segments for any column, so scanning it for actual rows
-		// errors rather than yielding an empty result — ScanExtentInfo
-		// already tolerates exactly this (it swallows the same
-		// underlying scan failure and reports RowCount: 0), so use it
-		// as a cheap pre-check rather than hitting the same error via
-		// ScanExtent directly.
-		info, err := e.ScanExtentInfo(relPath)
-		if err != nil {
-			return nil, fmt.Errorf("stat %s: %w", relPath, err)
-		}
-		if info.RowCount == 0 {
-			continue
-		}
-		data, err := e.ScanExtent(dictionariesTableName, relPath, &schema, cols, nil, 0)
-		if err != nil {
-			return nil, fmt.Errorf("scan %s: %w", dictionariesTableName, err)
-		}
-		for _, row := range data.Rows {
-			if fmt.Sprintf("%v", row[0]) != tableName || fmt.Sprintf("%v", row[1]) != columnName {
-				continue
-			}
-			code, _ := row[2].(int64)
-			entries = append(entries, entry{code: code, value: fmt.Sprintf("%v", row[3])})
-		}
-	}
+	entries := append([]dictEntry(nil), all[tableName+"\x00"+columnName]...)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].code < entries[j].code })
 
 	sd := &sharedDict{
@@ -411,5 +367,101 @@ func dictCodePType(dictSize int) vortex.PType {
 		return vortex.PTypeU16
 	default:
 		return vortex.PTypeU32
+	}
+}
+
+// dictEntry is one _Dictionaries row's code and value.
+type dictEntry struct {
+	code  int64
+	value string
+}
+
+// dictRawCache is _Dictionaries read once, grouped by table and column,
+// valid while the set of _Dictionaries extent files is unchanged.
+type dictRawCache struct {
+	files []string
+	byKey map[string][]dictEntry // "table\x00column" -> entries
+}
+
+// dictionaryEntries returns every _Dictionaries entry grouped by table
+// and column. Each column's dictionary used to be loaded by reading
+// every _Dictionaries extent in full, so a query over a table with k
+// dictionary columns read the whole table k times; now it is read once
+// per engine and reused until another write adds or replaces a file.
+func (e *Engine) dictionaryEntries() (map[string][]dictEntry, error) {
+	files, err := dictionariesActiveExtentFiles(e.Catalog.DatabasePath())
+	if err != nil {
+		return nil, fmt.Errorf("glob %s extents: %w", dictionariesTableName, err)
+	}
+	e.dictRawMu.Lock()
+	defer e.dictRawMu.Unlock()
+	if c := e.dictRaw; c != nil && sameStrings(c.files, files) {
+		return c.byKey, nil
+	}
+	byKey := map[string][]dictEntry{}
+	schema := dictionariesSchema()
+	cols := []string{"TableName", "ColumnName", "Code", "Value"}
+	for _, relPath := range files {
+		// A zero-row schema shell has no data segments to scan;
+		// ScanExtentInfo reports it as RowCount 0 (see the shell note in
+		// compact.go).
+		info, err := e.ScanExtentInfo(relPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat %s: %w", relPath, err)
+		}
+		if info.RowCount == 0 {
+			continue
+		}
+		data, err := e.ScanExtent(dictionariesTableName, relPath, &schema, cols, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("scan %s: %w", dictionariesTableName, err)
+		}
+		for _, row := range data.Rows {
+			code, _ := row[2].(int64)
+			k := fmt.Sprintf("%v", row[0]) + "\x00" + fmt.Sprintf("%v", row[1])
+			byKey[k] = append(byKey[k], dictEntry{code: code, value: fmt.Sprintf("%v", row[3])})
+		}
+	}
+	e.dictRaw = &dictRawCache{files: append([]string(nil), files...), byKey: byKey}
+	return byKey, nil
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// revalidateDicts drops the cached shared dictionaries when the
+// _Dictionaries files changed since they were read: another process
+// may have extended a dictionary, and a stale one decodes its new
+// codes wrongly (a long-lived engine returned no rows for a value
+// another writer had added). Called once per top-level statement; one
+// directory listing.
+func (e *Engine) revalidateDicts() {
+	if e.Catalog == nil || !e.Catalog.IsDiscovery() {
+		return
+	}
+	files, err := dictionariesActiveExtentFiles(e.Catalog.DatabasePath())
+	if err != nil {
+		return
+	}
+	e.dictRawMu.Lock()
+	changed := e.dictFilesSeen != nil && !sameStrings(e.dictFilesSeen, files)
+	e.dictFilesSeen = append([]string(nil), files...)
+	if changed {
+		e.dictRaw = nil
+	}
+	e.dictRawMu.Unlock()
+	if changed {
+		e.dictCacheMu.Lock()
+		e.dictCache = make(map[string]*sharedDict)
+		e.dictCacheMu.Unlock()
 	}
 }

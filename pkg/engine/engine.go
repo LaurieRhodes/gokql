@@ -161,6 +161,12 @@ type Engine struct {
 	// maintenance runs statements on background goroutines.
 	execDepth atomic.Int32
 
+	// dictRaw caches _Dictionaries grouped by table and column
+	// (shareddict.go dictionaryEntries).
+	dictRawMu     sync.Mutex
+	dictRaw       *dictRawCache
+	dictFilesSeen []string // _Dictionaries files when the caches were last validated
+
 	// vecMemos caches parsed vector arguments per call site for the
 	// statement being executed (func_vector.go); cleared when the
 	// outermost Execute returns, so nothing outlives its query.
@@ -362,6 +368,7 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 			e.execDepth.Add(-1)
 			return nil, fmt.Errorf("refresh catalog: %w", err)
 		}
+		e.revalidateDicts()
 	}
 	defer func() {
 		if e.execDepth.Add(-1) == 0 {
