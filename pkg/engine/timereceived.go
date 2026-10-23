@@ -404,7 +404,13 @@ func stampTimeReceived(schema types.Schema, rows []types.Row) {
 	}
 	now := time.Now().UTC().UnixNano()
 	for i := range rows {
-		if idx < len(rows[i]) && rows[i][idx] == nil {
+		// A row built at the data width (no _TimeReceived slot) is
+		// padded to the schema; it used to be skipped, and the
+		// missing value was stored as 0 (1970-01-01).
+		for len(rows[i]) <= idx {
+			rows[i] = append(rows[i], nil)
+		}
+		if rows[i][idx] == nil {
 			rows[i][idx] = now
 		}
 	}

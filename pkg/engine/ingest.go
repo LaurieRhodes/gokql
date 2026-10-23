@@ -69,6 +69,9 @@ func (e *Engine) ingestInline(tableName string, data string) (*types.Table, erro
 	}
 
 	// Build extent data for writing
+	// New rows get their _TimeReceived (it was left unset here, and
+	// read back as 1970-01-01 while nulls were stored as 0).
+	stampTimeReceived(table.Schema, rows)
 	extData := types.NewTable(tableName, table.Schema)
 	for _, row := range rows {
 		extData.AddRow(row)

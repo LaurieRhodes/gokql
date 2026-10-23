@@ -289,6 +289,9 @@ func (e *Engine) runColumnarTopN(tableDef *catalog.Table, plan *colTopNPlan, all
 	// Zone pruning from the numeric predicate subset.
 	var zonePreds []vortex.ColumnPredicate
 	for _, p := range plan.preds {
+		if p.op == parser.OpNEQ {
+			continue // null != v is true; zone stats cover valid values only
+		}
 		switch {
 		case p.i64Val != nil:
 			zonePreds = append(zonePreds, vortex.ColumnPredicate{Column: p.col, Op: kqlToVortexOp(p.op), Value: *p.i64Val})

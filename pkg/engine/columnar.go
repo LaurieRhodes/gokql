@@ -49,6 +49,16 @@ type colVec struct {
 	// backing with the decoded dictionary, so value() never copies.
 	dictCodes []int
 	dictVals  []string
+
+	// valid is the null mask of a numeric or bool column (nil: no
+	// nulls in the chunk). A false entry is null whatever the slot
+	// holds.
+	valid []bool
+}
+
+// isNull reports whether row i of a numeric or bool vector is null.
+func (c *colVec) isNull(i int) bool {
+	return c.valid != nil && i < len(c.valid) && !c.valid[i]
 }
 
 // decodeColumnVec decodes a Vortex array into its typed slice form.
@@ -88,6 +98,12 @@ func decodeColumnVec(e *Engine, tableName, colName string, arr *vortex.Array, kt
 	if err != nil {
 		return nil, err
 	}
+	switch kt {
+	case types.TypeLong, types.TypeDatetime, types.TypeTimespan, types.TypeInt, types.TypeReal, types.TypeBool:
+		if c.valid, err = encoding.Validity(arr); err != nil {
+			return nil, err
+		}
+	}
 	return c, nil
 }
 
@@ -107,6 +123,9 @@ func (c *colVec) value(i int) types.Value {
 }
 
 func (c *colVec) rawValue(i int) types.Value {
+	if c.isNull(i) {
+		return nil
+	}
 	switch {
 	case c.i64 != nil:
 		if i < len(c.i64) {
@@ -217,6 +236,10 @@ func applyPredicateVec(pred vortex.ColumnPredicate, c *colVec, sel []bool) bool 
 			if !sel[i] {
 				continue
 			}
+			if c.isNull(i) {
+				sel[i] = pred.Op == vortex.OpNEQ // null != v is true; other comparisons are null
+				continue
+			}
 			cmp := 0
 			if x < v {
 				cmp = -1
@@ -238,6 +261,10 @@ func applyPredicateVec(pred vortex.ColumnPredicate, c *colVec, sel []bool) bool 
 			if !sel[i] {
 				continue
 			}
+			if c.isNull(i) {
+				sel[i] = pred.Op == vortex.OpNEQ // null != v is true; other comparisons are null
+				continue
+			}
 			cmp := 0
 			if int64(x) < v {
 				cmp = -1
@@ -257,6 +284,10 @@ func applyPredicateVec(pred vortex.ColumnPredicate, c *colVec, sel []bool) bool 
 		}
 		for i, x := range c.f64 {
 			if !sel[i] {
+				continue
+			}
+			if c.isNull(i) {
+				sel[i] = pred.Op == vortex.OpNEQ // null != v is true; other comparisons are null
 				continue
 			}
 			cmp := 0

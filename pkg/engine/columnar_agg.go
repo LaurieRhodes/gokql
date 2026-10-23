@@ -305,17 +305,17 @@ func kqlCmpMatches(op parser.BinaryOp, cmp int) bool {
 }
 
 // evalExactPred narrows sel by one predicate, with exact row-engine
-// semantics. A nil (missing) column vector fails every comparison: the
-// row engine would see nil cells, and nil fails all binary comparisons
-// here (the pred value is never nil, so the nil==nil case cannot arise).
+// semantics. A null cell, or a column missing from the chunk, passes
+// only != (null != v is true; every other comparison is null).
 func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
 	if p.match != nil {
 		evalStringPred(p, c, sel, memo)
 		return
 	}
 	if c == nil {
+		keep := p.op == parser.OpNEQ
 		for i := range sel {
-			sel[i] = false
+			sel[i] = sel[i] && keep
 		}
 		return
 	}
@@ -324,6 +324,10 @@ func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
 		v := *p.i64Val
 		for i, x := range c.i64 {
 			if !sel[i] {
+				continue
+			}
+			if c.isNull(i) {
+				sel[i] = p.op == parser.OpNEQ
 				continue
 			}
 			cmp := 0
@@ -342,6 +346,10 @@ func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
 			if !sel[i] {
 				continue
 			}
+			if c.isNull(i) {
+				sel[i] = p.op == parser.OpNEQ
+				continue
+			}
 			cmp := 0
 			if int64(x) < v {
 				cmp = -1
@@ -356,6 +364,10 @@ func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
 		v := *p.f64Val
 		for i, x := range c.f64 {
 			if !sel[i] {
+				continue
+			}
+			if c.isNull(i) {
+				sel[i] = p.op == parser.OpNEQ
 				continue
 			}
 			cmp := 0
@@ -541,11 +553,10 @@ func distinctNumKey(c *colVec, row int) (uint64, bool) {
 
 // accumulate folds one cell into an accumulator with the row engine's
 // semantics (ToFloat64 for sum/avg, typed compare for min/max).
-// Storage never yields nil numerics, so no nil-skip is needed; a nil
-// vector (column missing from the chunk) contributes nothing, exactly
-// as the row engine skips nil cells.
+// A null cell, or a nil vector (column missing from the chunk),
+// contributes nothing, exactly as the row engine skips nil cells.
 func accumulate(a *aggAccum, fn string, isMax bool, c *colVec, row int) {
-	if c == nil {
+	if c == nil || c.isNull(row) {
 		return
 	}
 	switch fn {
@@ -1080,6 +1091,9 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 	// ANDed, so pruning on any subset stays sound).
 	var zonePreds []vortex.ColumnPredicate
 	for _, p := range plan.preds {
+		if p.op == parser.OpNEQ {
+			continue // null != v is true; zone stats cover valid values only
+		}
 		switch {
 		case p.i64Val != nil:
 			zonePreds = append(zonePreds, vortex.ColumnPredicate{Column: p.col, Op: kqlToVortexOp(p.op), Value: *p.i64Val})
@@ -1246,7 +1260,7 @@ func kqlToVortexOp(op parser.BinaryOp) vortex.CompareOp {
 // appendKeyPart writes one by-column value in the exact form
 // fmt.Sprintf("%v", boxedValue) would produce for that value's type.
 func appendKeyPart(b []byte, c *colVec, row int) []byte {
-	if c == nil {
+	if c == nil || c.isNull(row) {
 		return append(b, "<nil>"...)
 	}
 	switch {

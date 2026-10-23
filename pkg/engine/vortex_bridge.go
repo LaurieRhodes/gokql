@@ -53,20 +53,22 @@ func kqlTypeToVortexDType(kt types.KQLType) *vortex.DType {
 	case types.TypeDecimal:
 		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLDecimal,
 			StorageDType: &vortex.DType{Kind: vortex.DTypeUtf8}}
+	// Numeric, bool, datetime and timespan columns are nullable: a chunk
+	// with nulls carries a validity child (nullValidity).
 	case types.TypeLong:
-		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64}
+		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64, Nullable: true}
 	case types.TypeInt:
-		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI32}
+		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI32, Nullable: true}
 	case types.TypeReal:
-		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeF64}
+		return &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeF64, Nullable: true}
 	case types.TypeBool:
-		return &vortex.DType{Kind: vortex.DTypeBool}
+		return &vortex.DType{Kind: vortex.DTypeBool, Nullable: true}
 	case types.TypeDatetime:
-		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLDatetime,
-			StorageDType: &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64}}
+		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLDatetime, Nullable: true,
+			StorageDType: &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64, Nullable: true}}
 	case types.TypeTimespan:
-		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLTimespan,
-			StorageDType: &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64}}
+		return &vortex.DType{Kind: vortex.DTypeExtension, ExtensionID: extKQLTimespan, Nullable: true,
+			StorageDType: &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64, Nullable: true}}
 	default:
 		return &vortex.DType{Kind: vortex.DTypeUtf8} // Fallback to string
 	}
@@ -180,9 +182,10 @@ func buildI64Array(rows []types.Row, colIdx, n int) *vortex.Array {
 		binary.LittleEndian.PutUint64(buf[i*8:], uint64(v))
 	}
 	return &vortex.Array{
-		DType:   &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64},
-		Length:  n,
-		Buffers: [][]byte{buf},
+		DType:    &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI64, Nullable: true},
+		Length:   n,
+		Buffers:  [][]byte{buf},
+		Children: nullValidity(rows, colIdx, n),
 	}
 }
 
@@ -196,9 +199,10 @@ func buildI32Array(rows []types.Row, colIdx, n int) *vortex.Array {
 		binary.LittleEndian.PutUint32(buf[i*4:], uint32(v))
 	}
 	return &vortex.Array{
-		DType:   &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI32},
-		Length:  n,
-		Buffers: [][]byte{buf},
+		DType:    &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeI32, Nullable: true},
+		Length:   n,
+		Buffers:  [][]byte{buf},
+		Children: nullValidity(rows, colIdx, n),
 	}
 }
 
@@ -212,9 +216,10 @@ func buildF64Array(rows []types.Row, colIdx, n int) *vortex.Array {
 		binary.LittleEndian.PutUint64(buf[i*8:], math.Float64bits(v))
 	}
 	return &vortex.Array{
-		DType:   &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeF64},
-		Length:  n,
-		Buffers: [][]byte{buf},
+		DType:    &vortex.DType{Kind: vortex.DTypePrimitive, PType: vortex.PTypeF64, Nullable: true},
+		Length:   n,
+		Buffers:  [][]byte{buf},
+		Children: nullValidity(rows, colIdx, n),
 	}
 }
 
@@ -230,9 +235,10 @@ func buildBoolArray(rows []types.Row, colIdx, n int) *vortex.Array {
 		}
 	}
 	return &vortex.Array{
-		DType:   &vortex.DType{Kind: vortex.DTypeBool},
-		Length:  n,
-		Buffers: [][]byte{buf},
+		DType:    &vortex.DType{Kind: vortex.DTypeBool, Nullable: true},
+		Length:   n,
+		Buffers:  [][]byte{buf},
+		Children: nullValidity(rows, colIdx, n),
 	}
 }
 
@@ -545,4 +551,26 @@ func buildDictRefArray(rows []types.Row, colIdx, n int, dict *sharedDict, codePT
 			Buffers: [][]byte{buf},
 		}
 	}
+}
+
+// nullValidity is the validity child (a bool array, 1 = valid) for one
+// column of rows, or nil when no row is null.
+func nullValidity(rows []types.Row, colIdx, n int) []*vortex.Array {
+	var bits []byte
+	for i, row := range rows {
+		if colIdx < len(row) && row[colIdx] != nil {
+			continue
+		}
+		if bits == nil {
+			bits = make([]byte, (n+7)/8)
+			for j := 0; j < n; j++ {
+				bits[j/8] |= 1 << uint(j%8)
+			}
+		}
+		bits[i/8] &^= 1 << uint(i%8)
+	}
+	if bits == nil {
+		return nil
+	}
+	return []*vortex.Array{{DType: &vortex.DType{Kind: vortex.DTypeBool}, Length: n, Buffers: [][]byte{bits}}}
 }

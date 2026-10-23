@@ -73,7 +73,10 @@ func extractPredicates(eng *Engine, expr parser.Expr, schema *types.Schema, pred
 		case parser.OpEQ:
 			pred = vortex.EQ(col.Name, val)
 		case parser.OpNEQ:
-			pred = vortex.NEQ(col.Name, val)
+			// Not pushed down: null != v is true, and zone statistics
+			// cover valid values only, so a zone of v and nulls would be
+			// pruned wrongly.
+			return
 		case parser.OpGT:
 			if colLeft {
 				pred = vortex.GT(col.Name, val)
