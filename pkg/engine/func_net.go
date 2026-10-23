@@ -1299,10 +1299,12 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 		if err != nil {
 			return nil, true, err
 		}
-		if val == nil {
-			return nil, true, nil
+		argType := inferExprType(eng, fc.Args[0], schema)
+		if argType == types.TypeDynamic {
+			// ADX rejects a dynamic argument (semantic error).
+			return nil, true, fmt.Errorf("%s: a dynamic argument is not supported; use tostring()", fc.Name)
 		}
-		h := kqlHash64(val, inferExprType(eng, fc.Args[0], schema))
+		h := kqlHash64(val, argType)
 		if len(fc.Args) == 2 {
 			modVal, err := evalExpr(eng, fc.Args[1], schema, row)
 			if err != nil {
@@ -1320,6 +1322,45 @@ func evalNetFuncExtended(eng *Engine, fc *parser.FuncCall, schema *types.Schema,
 			}
 		}
 		return int64(h), true, nil
+
+	case "hash_combine":
+		// hash_combine(h1, h2 [, ...]): see kqlHashCombine. A null
+		// argument gives null here; ADX returns a value whose encoding
+		// of the null is not pinned.
+		if len(fc.Args) < 2 {
+			return nil, true, fmt.Errorf("hash_combine requires at least 2 arguments")
+		}
+		hs := make([]int64, len(fc.Args))
+		for i, a := range fc.Args {
+			v, err := evalExpr(eng, a, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			if v == nil {
+				return nil, true, nil
+			}
+			hs[i] = types.ToInt64(v)
+		}
+		return kqlHashCombine(hs), true, nil
+
+	case "hash_many":
+		// hash_many(s1 [, ...]): hash() of each argument, then
+		// hash_combine of those; a single argument is its hash().
+		if len(fc.Args) < 1 {
+			return nil, true, fmt.Errorf("hash_many requires at least 1 argument")
+		}
+		hs := make([]int64, len(fc.Args))
+		for i, a := range fc.Args {
+			v, err := evalExpr(eng, a, schema, row)
+			if err != nil {
+				return nil, true, err
+			}
+			hs[i] = int64(kqlHash64(v, inferExprType(eng, a, schema)))
+		}
+		if len(hs) == 1 {
+			return hs[0], true, nil
+		}
+		return kqlHashCombine(hs), true, nil
 
 	case "new_guid":
 		// Generate a v4 UUID
@@ -2415,26 +2456,73 @@ func canonicalIPv6String(b [16]byte) string {
 		b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
 }
 
-// kqlHash64 is ADX's hash(): xxhash64 (seed 0) of the value's bytes —
-// UTF-8 for strings, the little-endian 8-byte value for numbers and
-// timespans, .NET ticks for datetimes, the string form otherwise.
+// kqlNullHash is hash() of a null value or the empty string (ADX gives
+// both the same value; it is not xxhash64 of zero bytes).
+const kqlNullHash uint64 = 8393271554155345163
+
+// kqlHash64 is ADX's hash(): xxhash64 (seed 0) of the value's .NET
+// binary form. Strings are UTF-8; long, real, timespan (ticks) and
+// datetime (.NET ticks) are 8 bytes little-endian; int is 4 bytes; bool
+// is one byte; guid is .NET's mixed-endian 16-byte layout. Null and ""
+// give kqlNullHash. Each encoding was checked against the Kusto
+// emulator (engine 2025.07.06). Decimal is not pinned: it hashes the
+// string form, which ADX does not.
 func kqlHash64(val types.Value, t types.KQLType) uint64 {
+	if val == nil {
+		return kqlNullHash
+	}
 	var data []byte
 	switch t {
 	case types.TypeDatetime:
 		ticks := types.ToInt64(val)/100 + dotnetTicksAtUnixEpoch
-		data = make([]byte, 8)
-		binary.LittleEndian.PutUint64(data, uint64(ticks))
-	case types.TypeTimespan, types.TypeLong, types.TypeInt:
-		data = make([]byte, 8)
-		binary.LittleEndian.PutUint64(data, uint64(types.ToInt64(val)))
+		data = binary.LittleEndian.AppendUint64(nil, uint64(ticks))
+	case types.TypeTimespan, types.TypeLong:
+		data = binary.LittleEndian.AppendUint64(nil, uint64(types.ToInt64(val)))
+	case types.TypeInt:
+		data = binary.LittleEndian.AppendUint32(nil, uint32(int32(types.ToInt64(val))))
 	case types.TypeReal:
-		data = make([]byte, 8)
-		binary.LittleEndian.PutUint64(data, math.Float64bits(types.ToFloat64(val)))
+		data = binary.LittleEndian.AppendUint64(nil, math.Float64bits(types.ToFloat64(val)))
+	case types.TypeBool:
+		if b, ok := val.(bool); ok && b {
+			data = []byte{1}
+		} else {
+			data = []byte{0}
+		}
+	case types.TypeGUID:
+		if b, ok := guidStringToBytesLE(fmt.Sprintf("%v", val)); ok {
+			data = b
+		} else {
+			data = []byte(fmt.Sprintf("%v", val))
+		}
 	default:
 		data = []byte(fmt.Sprintf("%v", val))
 	}
+	if len(data) == 0 {
+		return kqlNullHash
+	}
 	return xxhash.Sum64(data)
+}
+
+// kqlHashCombine is hash_combine(): Bob Jenkins' one-at-a-time hash
+// over each value's 8 little-endian bytes, in argument order, with a
+// signed 64-bit state (so >> is arithmetic). Derived by probing the
+// Kusto emulator and checked against 384 probe values and the reference
+// example hash_combine(hash("Hello"), hash("World")) ==
+// -1440138333540407281.
+func kqlHashCombine(hs []int64) int64 {
+	var h int64
+	for _, v := range hs {
+		u := uint64(v)
+		for i := 0; i < 8; i++ {
+			h += int64(byte(u >> (8 * i)))
+			h += h << 10
+			h ^= h >> 6
+		}
+	}
+	h += h << 3
+	h ^= h >> 11
+	h += h << 15
+	return h
 }
 
 // urlEncodeDotNet is HttpUtility.UrlEncode: unreserved characters

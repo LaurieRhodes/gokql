@@ -69,12 +69,13 @@ func TestHashXxhash64AliasMatchesHash(t *testing.T) {
 	}
 }
 
-// TestHashNullPropagation guards null input propagating to null.
-func TestHashNullPropagation(t *testing.T) {
-	result := queryResult(t, `print r = hash(dynamic(null))`)
-	if result.Rows[0][0] != nil {
-		t.Errorf("r = %v, want null", result.Rows[0][0])
-	}
+// TestHashNullAndDynamic: a null hashes to ADX's null/empty constant;
+// a dynamic argument is rejected, as ADX does.
+func TestHashNullAndDynamic(t *testing.T) {
+	result := queryResult(t, `print r = hash(long(null))`)
+	expectCell(t, result, 0, 0, "8393271554155345163")
+	queryError(t, `print r = hash(dynamic([1]))`)
+	queryError(t, `print r = hash(parse_json("{}"))`)
 }
 
 // TestHashModZeroOrNegativeIgnored guards the undocumented-but-
