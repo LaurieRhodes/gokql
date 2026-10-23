@@ -113,10 +113,12 @@ func TestVariancepifPopulationVariance(t *testing.T) {
 func TestMakeListWithNullsKeepsNulls(t *testing.T) {
 	dir := t.TempDir()
 	eng := discoverEngine(t, dir)
+	// y is long: a string is never null (a missing string cell reads
+	// as ""), so the null has to be numeric.
 	diskExec(t, eng, `.create table T (x: string)`)
 	diskExec(t, eng, `.set-or-append T <| datatable(x:string) ["a"]`)
-	diskExec(t, eng, `.alter-merge table T (y: string)`)
-	diskExec(t, eng, `.set-or-append T <| datatable(x:string, y:string) ["b","hasval"]`)
+	diskExec(t, eng, `.alter-merge table T (y: long)`)
+	diskExec(t, eng, `.set-or-append T <| datatable(x:string, y:long) ["b", 7]`)
 
 	withNulls := diskQuery(t, eng, `T | summarize make_list_with_nulls(y)`)
 	arr, ok := parseJSONArray(withNulls.Rows[0][0])

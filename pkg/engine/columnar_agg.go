@@ -230,7 +230,7 @@ func collectExactPreds(eng *Engine, expr parser.Expr, schema *types.Schema, out 
 		if err != nil {
 			return false // invalid regex: the row engine reports it
 		}
-		*out = append(*out, exactPred{col: col.Name, op: be.Op, match: m, nullAsEmpty: isStringOperator(be.Op)})
+		*out = append(*out, exactPred{col: col.Name, op: be.Op, match: m, nullAsEmpty: true}) // a missing string cell is ""
 		return true
 	}
 
@@ -305,8 +305,9 @@ func kqlCmpMatches(op parser.BinaryOp, cmp int) bool {
 }
 
 // evalExactPred narrows sel by one predicate, with exact row-engine
-// semantics. A null cell, or a column missing from the chunk, passes
-// only != (null != v is true; every other comparison is null).
+// semantics. A null cell, or a numeric column missing from the chunk,
+// passes only != (null != v is true; every other comparison is null);
+// a missing string column compares as "".
 func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
 	if p.match != nil {
 		evalStringPred(p, c, sel, memo)
@@ -314,6 +315,10 @@ func evalExactPred(p exactPred, c *colVec, sel []bool, memo *strMemo) {
 	}
 	if c == nil {
 		keep := p.op == parser.OpNEQ
+		if p.strVal != nil {
+			// A missing string column reads as "" (strings are never null).
+			keep = (*p.strVal == "") == (p.op == parser.OpEQ)
+		}
 		for i := range sel {
 			sel[i] = sel[i] && keep
 		}
@@ -626,6 +631,20 @@ func accumulate(a *aggAccum, fn string, isMax bool, c *colVec, row int) {
 	}
 }
 
+// accumulateEmptyString folds the "" of a string column missing from
+// the extent (strings are never null).
+func accumulateEmptyString(a *aggAccum, fn string) {
+	if fn == "dcount" || fn == "count_distinct" {
+		if a.d == nil {
+			a.d = &distinctSet{}
+		}
+		if a.d.str == nil {
+			a.d.str = make(map[string]struct{})
+		}
+		a.d.str[""] = struct{}{}
+	}
+}
+
 func cellFloat(c *colVec, row int) float64 {
 	switch {
 	case c.i64 != nil:
@@ -782,6 +801,20 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 	nAggs := len(aggFns)
 	st := &extentAggState{
 		repKinds: make([]vecKind, nAggs),
+	}
+	// String by-columns read as "" where the extent lacks the column.
+	byIsString := make([]bool, len(plan.byCols))
+	for i, c := range plan.byCols {
+		if ci := schema.ColumnIndex(c); ci >= 0 && schema.Columns[ci].Type == types.TypeString {
+			byIsString[i] = true
+		}
+	}
+	// Likewise a missing string aggregate argument: dcount sees "".
+	aggIsString := make([]bool, len(plan.aggCols))
+	for i, c := range plan.aggCols {
+		if ci := schema.ColumnIndex(c); c != "" && ci >= 0 && schema.Columns[ci].Type == types.TypeString {
+			aggIsString[i] = true
+		}
 	}
 	var keyBuf []byte     // reused: map lookups on string(keyBuf) do not allocate
 	var codeToGroup []int // dict code -> group index; -1 = unseen
@@ -985,6 +1018,10 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 						acc[ai].cnt++ // count()
 						continue
 					}
+					if vecs[vi] == nil && aggIsString[ai] {
+						accumulateEmptyString(&acc[ai], aggFns[ai])
+						continue
+					}
 					accumulate(&acc[ai], aggFns[ai], aggIsMax[ai], vecs[vi], row)
 				}
 			}
@@ -1002,6 +1039,9 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 				if bi > 0 {
 					keyBuf = append(keyBuf, 0)
 				}
+				if vecs[vi] == nil && byIsString[bi] {
+					continue // missing string column: the key part is ""
+				}
 				keyBuf = appendKeyPart(keyBuf, vecs[vi], row)
 			}
 
@@ -1012,6 +1052,8 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 				for bi, vi := range byVecIdx {
 					if vecs[vi] != nil {
 						bv[bi] = vecs[vi].value(row)
+					} else if byIsString[bi] {
+						bv[bi] = ""
 					}
 				}
 			}
@@ -1021,6 +1063,10 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 				vi := aggVecIdx[ai]
 				if vi < 0 {
 					acc[ai].cnt++ // count()
+					continue
+				}
+				if vecs[vi] == nil && aggIsString[ai] {
+					accumulateEmptyString(&acc[ai], aggFns[ai])
 					continue
 				}
 				accumulate(&acc[ai], aggFns[ai], aggIsMax[ai], vecs[vi], row)

@@ -192,6 +192,8 @@ func (e *Engine) ScanExtent(tableName, filePath string, tableSchema *types.Schem
 			for colIdx, vec := range colVecs {
 				if vec != nil {
 					row[colIdx] = vec.value(rowIdx)
+				} else if projectedSchema.Columns[colIdx].Type == types.TypeString {
+					row[colIdx] = "" // column added after this extent: a string is never null
 				}
 			}
 			table.AddRow(row)

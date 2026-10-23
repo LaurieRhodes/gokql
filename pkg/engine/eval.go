@@ -341,7 +341,17 @@ func evalExpr(eng *Engine, expr parser.Expr, schema *types.Schema, row types.Row
 	case *parser.ColumnRef:
 		idx := schema.ColumnIndex(e.Name)
 		if idx >= 0 {
-			return row[idx], nil
+			var v types.Value
+			if idx < len(row) {
+				v = row[idx]
+			}
+			// A string is never null in KQL: a missing cell (an
+			// extent from before the column existed, an unmatched
+			// outer-join or union row) reads as "".
+			if v == nil && schema.Columns[idx].Type == types.TypeString {
+				return "", nil
+			}
+			return v, nil
 		}
 		// Check scalar let bindings — walks the parent chain, not
 		// just the innermost context's own local map.

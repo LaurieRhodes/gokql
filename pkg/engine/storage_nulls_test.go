@@ -67,3 +67,30 @@ func TestStoredNullsRoundTrip(t *testing.T) {
 	one(`F | summarize c=count() by v | where v == 0 | project c`, "20")
 	one(`F | where isnull(v) | summarize c=count() by s | count`, "3")
 }
+
+// TestStringNeverNull: a string cell with no value (a column added after
+// an extent was written, an unmatched outer-join or union row) reads as
+// "", on the row and columnar paths alike.
+func TestStringNeverNull(t *testing.T) {
+	eng := diskEngineEmpty(t)
+	diskExec(t, eng, `.create table S (Id: long)`)
+	diskExec(t, eng, ".ingest inline into table S <| 1\n2")
+	diskExec(t, eng, `.alter-merge table S (Late: string)`)
+	diskExec(t, eng, ".ingest inline into table S <| 3,late")
+	for q, want := range map[string]string{
+		`S | where Late == "" | count`:                                   "2",
+		`S | where isnull(Late) | count`:                                 "0",
+		`S | where isempty(Late) | count`:                                "2",
+		`S | summarize dcount(Late)`:                                     "2",
+		`S | summarize c=count() by Late | where Late == "" | project c`: "2",
+	} {
+		if got := cell(t, diskExec(t, eng, q), 0, 0); got != want {
+			t.Errorf("%s: got %s, want %s", q, got, want)
+		}
+	}
+	tbl := queryResult(t, `let L=datatable(k:long)[1,2]; let R=datatable(k:long, s:string, n:long)[1,"a",5];
+L | join kind=leftouter R on k | where k == 2 | project sn=isnull(s), se=isempty(s), nn=isnull(n)`)
+	expectCell(t, tbl, 0, 0, "false")
+	expectCell(t, tbl, 0, 1, "true")
+	expectCell(t, tbl, 0, 2, "true")
+}
