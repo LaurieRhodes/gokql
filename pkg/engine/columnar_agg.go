@@ -724,11 +724,48 @@ func finalizeAccum(a *aggAccum, fn string, k vecKind) types.Value {
 
 // extentAggState is one extent's partial aggregation.
 type extentAggState struct {
+	// dense, when set, holds the whole state: groups keyed by the
+	// code of one dictionary-encoded by-column (see denseAgg). The
+	// fields below are then unused.
+	dense    *denseAgg
 	groupIdx map[string]int
 	keys     []string        // first-seen order within the extent
 	byVals   [][]types.Value // per group: boxed by-values
 	accums   [][]aggAccum
 	repKinds []vecKind // representative type tags for min/max typing (see vecKind)
+}
+
+// denseAgg is an extent's aggregation state for a single
+// dictionary-encoded by-column: accumulators indexed by dictionary
+// code (nAggs per code) and the codes in first-seen order. With a
+// shared dictionary every extent's dense state lines up, so the
+// cross-extent merge is array arithmetic rather than one string-keyed
+// group per extent.
+type denseAgg struct {
+	dict  []string
+	acc   []aggAccum
+	seen  []bool
+	order []int32
+}
+
+// denseGroupLimit bounds the dictionary size the dense state is used
+// for (its accumulators cost dictionary size x aggregates, whether or
+// not a code occurs in the extent).
+const denseGroupLimit = 1 << 18
+
+// undense converts a dense state to string-keyed groups.
+func (st *extentAggState) undense(nAggs int) {
+	d := st.dense
+	if d == nil {
+		return
+	}
+	st.dense = nil
+	for _, code := range d.order {
+		st.keys = append(st.keys, d.dict[code])
+		st.accums = append(st.accums, d.acc[int(code)*nAggs:int(code)*nAggs+nAggs:int(code)*nAggs+nAggs])
+		st.byVals = append(st.byVals, nil)
+	}
+	st.groupIdx = nil
 }
 
 // mergeAccum folds src into dst for one aggregate function.
@@ -971,6 +1008,47 @@ func (e *Engine) aggregateExtent(tableName string, ext catalog.ExtentEntry, plan
 				byDict = v
 			}
 		}
+		if byDict != nil && st.dense == nil && len(st.keys) == 0 && lastDict == nil &&
+			len(byDict.dictVals) <= denseGroupLimit {
+			st.dense = &denseAgg{
+				dict: byDict.dictVals,
+				acc:  make([]aggAccum, len(byDict.dictVals)*nAggs),
+				seen: make([]bool, len(byDict.dictVals)),
+			}
+		}
+		if byDict != nil && st.dense != nil && !sameDict(st.dense.dict, byDict.dictVals) {
+			st.undense(nAggs) // a different dictionary: back to keyed groups
+			lastDict = nil
+		}
+		if st.dense != nil && byDict == nil {
+			st.undense(nAggs)
+		}
+		if d := st.dense; d != nil {
+			for row := 0; row < chunk.RowCount; row++ {
+				if !sel[row] {
+					continue
+				}
+				code := byDict.dictCodes[row]
+				if !d.seen[code] {
+					d.seen[code] = true
+					d.order = append(d.order, int32(code))
+				}
+				acc := d.acc[code*nAggs : code*nAggs+nAggs]
+				for ai := 0; ai < nAggs; ai++ {
+					vi := aggVecIdx[ai]
+					if vi < 0 {
+						acc[ai].cnt++ // count()
+						continue
+					}
+					if vecs[vi] == nil && aggIsString[ai] {
+						accumulateEmptyString(&acc[ai], aggFns[ai])
+						continue
+					}
+					accumulate(&acc[ai], aggFns[ai], aggIsMax[ai], vecs[vi], row)
+				}
+			}
+			continue
+		}
 		if byDict != nil {
 			if lastDict != nil && !sameDict(lastDict, byDict.dictVals) {
 				// A different dictionary: codes no longer mean what
@@ -1208,7 +1286,6 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 	var byVals [][]types.Value
 	var accums [][]aggAccum
 	aggRepKind := make([]vecKind, nAggs)
-
 	for _, st := range states {
 		if st == nil {
 			continue
@@ -1217,6 +1294,65 @@ func (e *Engine) runColumnarAggregate(tableDef *catalog.Table, plan *colAggPlan)
 			if aggRepKind[ai] == vecKindUnset {
 				aggRepKind[ai] = st.repKinds[ai]
 			}
+		}
+	}
+
+	// Dense states over one shared dictionary merge by code.
+	var dict []string
+	allDense := true
+	for _, st := range states {
+		if st == nil || (st.dense == nil && len(st.keys) == 0) {
+			continue // nothing aggregated (pruned or empty extent)
+		}
+		if st.dense == nil || (dict != nil && !sameDict(dict, st.dense.dict)) {
+			allDense = false
+			break
+		}
+		dict = st.dense.dict
+	}
+	if allDense && dict != nil {
+		gAcc := make([]aggAccum, len(dict)*nAggs)
+		gSeen := make([]bool, len(dict))
+		var gOrder []int32
+		for _, st := range states {
+			if st == nil || st.dense == nil {
+				continue
+			}
+			d := st.dense
+			for _, code := range d.order {
+				off := int(code) * nAggs
+				src := d.acc[off : off+nAggs]
+				if !gSeen[code] {
+					gSeen[code] = true
+					gOrder = append(gOrder, code)
+					copy(gAcc[off:off+nAggs], src)
+					continue
+				}
+				for ai := 0; ai < nAggs; ai++ {
+					mergeAccum(&gAcc[off+ai], &src[ai], aggFns[ai], aggIsMax[ai])
+				}
+			}
+		}
+		byVals = make([][]types.Value, len(gOrder))
+		accums = make([][]aggAccum, len(gOrder))
+		vals := make([]types.Value, len(gOrder))
+		for gi, code := range gOrder {
+			vals[gi] = dict[code]
+			byVals[gi] = vals[gi : gi+1 : gi+1]
+			off := int(code) * nAggs
+			accums[gi] = gAcc[off : off+nAggs : off+nAggs]
+		}
+		states = nil
+	}
+	for _, st := range states {
+		if st != nil {
+			st.undense(nAggs)
+		}
+	}
+
+	for _, st := range states {
+		if st == nil {
+			continue
 		}
 		for sgi, key := range st.keys {
 			gi, exists := groupIdx[key]

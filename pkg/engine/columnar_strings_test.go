@@ -81,6 +81,12 @@ func TestColumnarStringPredicatesDifferential(t *testing.T) {
 		`S | summarize D = dcount(Late), C = count() by Name`,
 		`S | where Score > 0.0 | summarize D = dcount(Late) by Flag`,
 		`S | summarize D = dcount(Name), M = max(Id), S = sum(Score) by Flag`,
+		// Grouping by one dictionary column: dense per-extent state,
+		// mixed with keyed state where an extent lacks the column.
+		`S | summarize C = count(), M = min(Id), X = max(Score), A = avg(Score) by Name`,
+		`S | summarize C = count(), D = dcount(Msg) by Late`,
+		`S | where Id > 150 | summarize S = sum(Id) by Late`,
+		`S | where Name has "foo" | summarize C = count() by Msg`,
 	)
 
 	for _, q := range queries {
