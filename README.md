@@ -29,7 +29,8 @@ gokql makes that store a KQL database:
   Id` and the history stays available.
 - **Plain output.** `-mode csv`, `tsv`, `json` or `jsonl`, errors as
   one line on stderr, a non-zero exit status on failure: easy to call
-  from a tool and to parse.
+  from a tool and to parse. JSON keys follow the column order, and
+  dynamic values arrive as JSON rather than escaped strings.
 - **Retrieval in the same language.** Text embeddings, chunking and
   vector similarity are KQL functions and commands, so semantic search
   can be joined and filtered like any other table.

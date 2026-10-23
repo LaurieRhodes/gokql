@@ -12,8 +12,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -526,31 +526,31 @@ func (st *replState) printCSV(t *types.Table, sep string) {
 }
 
 func (st *replState) printJSON(t *types.Table) {
-	var rows []map[string]interface{}
-	for _, row := range t.Rows {
-		obj := make(map[string]interface{})
-		for i, col := range t.Schema.Columns {
-			if i < len(row) {
-				obj[col.Name] = row[i]
+	var b bytes.Buffer
+	if len(t.Rows) == 0 {
+		b.WriteString("[]\n")
+	} else {
+		b.WriteString("[\n")
+		for i, row := range t.Rows {
+			b.WriteString("  ")
+			appendJSONRow(&b, t.Schema.Columns, row)
+			if i < len(t.Rows)-1 {
+				b.WriteByte(',')
 			}
+			b.WriteByte('\n')
 		}
-		rows = append(rows, obj)
+		b.WriteString("]\n")
 	}
-	enc := json.NewEncoder(st.output)
-	enc.SetIndent("", "  ")
-	enc.Encode(rows)
+	st.output.Write(b.Bytes())
 }
 
 func (st *replState) printJSONL(t *types.Table) {
-	enc := json.NewEncoder(st.output)
+	var b bytes.Buffer
 	for _, row := range t.Rows {
-		obj := make(map[string]interface{})
-		for i, col := range t.Schema.Columns {
-			if i < len(row) {
-				obj[col.Name] = row[i]
-			}
-		}
-		enc.Encode(obj)
+		b.Reset()
+		appendJSONRow(&b, t.Schema.Columns, row)
+		b.WriteByte('\n')
+		st.output.Write(b.Bytes())
 	}
 }
 

@@ -39,6 +39,7 @@ package main
 //   ignored or misrouted.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -361,13 +362,20 @@ func kustoTable(name string, t *types.Table) kustoTableResult {
 			})
 		}
 		for _, row := range t.Rows {
-			cells := append([]interface{}(nil), row...)
-			for i, v := range cells {
-				// ADX's REST protocol carries decimals as strings, so
-				// clients do not round them through float64.
-				if d, ok := v.(types.Decimal); ok {
-					cells[i] = d.String()
+			// Cells are typed as the json modes type them (json_out.go):
+			// datetime and timespan as their text, decimals as strings so
+			// clients do not round them through float64, dynamic as
+			// embedded JSON, non-finite reals as "NaN"/"Infinity". A raw
+			// NaN would make the whole response fail to encode.
+			cells := make([]interface{}, len(t.Schema.Columns))
+			for i, col := range t.Schema.Columns {
+				var v types.Value
+				if i < len(row) {
+					v = row[i]
 				}
+				var b bytes.Buffer
+				appendJSONValue(&b, v, col.Type)
+				cells[i] = json.RawMessage(b.Bytes())
 			}
 			table.Rows = append(table.Rows, cells)
 		}
