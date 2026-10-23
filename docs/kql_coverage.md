@@ -51,7 +51,7 @@ This rewrite corrects a significant amount of drift in the previous version (dat
 | graph-to-table          | ✅      | nodes / edges, with_node_id/with_source_id/with_target_id (long hash(NodeId), exact), `as` aliases, `nodes as N, edges as E` binding both for the rest of the batch. Bare `graph-to-table` means edges (ADX requires an output) |
 | graph models            | ✅      | `.create-or-alter graph_model` (versioned; JSON Schema + AddNodes/AddEdges steps, static `Labels` and `LabelsColumn`), `.show graph_model(s)` [details] [with (id=..., showAll=true)], `.drop graph_model`, `.make [async] graph_snapshot`, `.show graph_snapshot(s)` [details / statistics / data statistics / failures], `.drop graph_snapshot(s)`, `.show/.alter/.delete graph_model M policy snapshot_indexing/graph_query/retention/caching` (stored and validated; snapshots are complete when made, so LatestIndexedSnapshot = LatestSnapshot), `.show operations`; `graph("M" [, "S" / snapshot="S" / true / false])`. Stored in `_GraphModels`, `_GraphSnapshots`, `_GraphSnapshotNodes`, `_GraphSnapshotEdges`, `_GraphSnapshotFailures`, `_GraphModelPolicies`. `async` runs synchronously; CPU and memory statistics are null |
 | graph functions         | ✅      | map, all, any, inner_nodes, labels, node_id, node_degree_in, node_degree_out (with a variable, or argument-less inside map/all/any over inner_nodes); hop ranges from lets/parameters (`-[e*lo..hi]->`); graphs bound by let or returned by functions (`let G = graph("M");`, `f() \| graph-match ...`) |
-| GQL, openCypher         | ❌      | Separate query languages (MATCH ... RETURN); not implemented |
+| GQL, openCypher         | ✅      | `#crp query_language=gql\|opencypher` + `query_graph_reference` (or REST `properties.Options`); translated to graph-match by pkg/gql. MATCH/OPTIONAL MATCH, label expressions, quantifiers, shortest paths, WHERE/FILTER/LET/FOR/UNWIND, RETURN/WITH with aggregates, ORDER BY/OFFSET/LIMIT, NEXT, UNION. See [gql.md](./gql.md) |
 | range                   | ✅      | Table-generating source: int/long/real/datetime/timespan, let-bound and standalone forms                            |
 | evaluate                | ✅      | General plugin-dispatch mechanism (a registry, not a single hard-coded case); bag_unpack is the first plugin        |
 | search                  | ✅      | ADX form: `[T \|] search [kind=] [in (T1, T*)] Predicate`; terms with wildcards, `Col:"term"`, boolean combinations; `$table` + union schema |
@@ -363,7 +363,9 @@ gaps in `docs/parity_backlog.md` (Closed, P2, and "Reference engine").
 
 6. ✅ Usable approximations where ADX is unspecified (later the same day): `series_periods_detect`, `series_periods_validate` and seasonality -1 of `series_decompose*`/`series_seasonal`; `evaluate diffpatterns`; the `reduce` operator (Drain-style). See `docs/parity_backlog.md` P2 for how close each is.
 
-Still open: GQL/openCypher, the python plugin, `hash_combine` with a null argument, `hash()` of decimal.
+7. ✅ GQL and openCypher ([gql.md](./gql.md)); sort/order/top by expressions; `distinct *`.
+
+Still open: the python plugin, `hash_combine` with a null argument, `hash()` of decimal.
 
 ### Not Yet Implemented (notable gaps)
 

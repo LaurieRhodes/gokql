@@ -319,10 +319,17 @@ func (e *Engine) applyCount(input *types.Table) (*types.Table, error) {
 }
 
 func (e *Engine) applyDistinct(input *types.Table, op *parser.DistinctOp) (*types.Table, error) {
-	// Build projection indices
-	colIndices := make([]int, len(op.Columns))
+	// Build projection indices; "distinct *" keeps every column.
+	cols := op.Columns
+	if len(cols) == 1 && strings.TrimSpace(cols[0]) == "*" {
+		cols = nil
+		for _, c := range input.Schema.Columns {
+			cols = append(cols, c.Name)
+		}
+	}
+	colIndices := make([]int, len(cols))
 	newSchema := types.Schema{}
-	for i, colName := range op.Columns {
+	for i, colName := range cols {
 		idx := input.Schema.ColumnIndex(colName)
 		if idx < 0 {
 			return nil, fmt.Errorf("distinct: column %q not found", colName)

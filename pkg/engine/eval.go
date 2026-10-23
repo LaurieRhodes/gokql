@@ -938,6 +938,8 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			return types.TypeString
 		case "toguid":
 			return types.TypeGUID
+		case "__gql_size":
+			return types.TypeLong
 		case "indexof", "indexof_regex", "countof", "parse_ipv4", "array_length", "array_index_of", "has_any_index", "hash", "hash_xxhash64",
 			"binary_and", "binary_or", "binary_xor", "binary_not",
 			"binary_shift_left", "binary_shift_right", "bitset_count_ones":
@@ -947,7 +949,7 @@ func inferExprType(eng *Engine, expr parser.Expr, schema *types.Schema) types.KQ
 			"pack", "pack_array", "set_difference", "set_intersect",
 			"set_union", "treepath", "array_rotate_left", "array_rotate_right",
 			"array_split", "array_iff", "array_iif", "bag_zip", "bag_set_key",
-			"bag_pack_columns", "parse_json", "todynamic", "__gql_interleave":
+			"bag_pack_columns", "parse_json", "todynamic", "__gql_interleave", "__gql_labels":
 			// parse_json/todynamic found missing from this switch
 			// entirely 2026-08-18 while implementing gettype(): with
 			// no case here, both fell through to the FuncCall

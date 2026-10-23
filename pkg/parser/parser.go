@@ -230,6 +230,10 @@ func stripLineComments(s string) string {
 }
 
 func Parse(input string) (Statement, error) {
+	input, err := translateQueryLanguage(input)
+	if err != nil {
+		return nil, err
+	}
 	head := keywordFold(strings.TrimSpace(stripLineComments(input)))
 	if !strings.HasPrefix(head, ".ingest inline") && !strings.HasPrefix(head, ".create-or-alter graph_model") &&
 		!(strings.HasPrefix(head, ".alter graph_model") && strings.Contains(head, " policy ")) {

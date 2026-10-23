@@ -1293,6 +1293,9 @@ func rowBag(s types.Schema, row types.Row) map[string]interface{} {
 				continue
 			}
 		}
+		if v == nil && col.Type == types.TypeString {
+			v = "" // KQL strings are never null
+		}
 		m[col.Name] = v
 	}
 	return m

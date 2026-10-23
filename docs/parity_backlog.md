@@ -128,10 +128,13 @@ header says what was pinned and what is an approximation):
 
 Not done:
 
-- GQL and openCypher graph query languages (MATCH ... RETURN ...
-  NEXT, with a `#crp query_graph_reference` client property), each
-  with its own reference section in the docs. The `python` plugin
-  (plotly_graph_fl).
+- The `python` plugin (plotly_graph_fl): judged not worth it.
+
+Done 2026-10-23: GQL and openCypher (docs/gql.md), translated to
+graph-match. The emulator (2025.07.06) rejects much of its own
+documented GQL (LET, FOR, NEXT, FILTER, element WHERE) and gets
+OPTIONAL MATCH, CASE and abs() wrong; gokql follows the documented
+results and the GQL standard there.
 
 ### Remaining plugin output schemas (Kusto.Language 12.4.1)
 

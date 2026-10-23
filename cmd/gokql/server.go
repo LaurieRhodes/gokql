@@ -46,6 +46,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/engine"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -211,6 +212,38 @@ func loadServerConfig(dbPath, addrFlag, dbNameFlag string, verbose bool, explici
 type kustoRequest struct {
 	Database string `json:"db"`
 	Query    string `json:"csl"`
+	// Properties are the client request properties: a JSON object, or
+	// (as Kusto clients send it) a string holding one. Only
+	// Options.query_language and Options.query_graph_reference (GQL /
+	// openCypher) are used.
+	Properties json.RawMessage `json:"properties"`
+}
+
+// queryLanguage extracts Options.query_language and
+// Options.query_graph_reference from the request properties.
+func (r kustoRequest) queryLanguage() (lang, graphRef string) {
+	raw := r.Properties
+	var str string
+	if json.Unmarshal(raw, &str) == nil {
+		raw = json.RawMessage(str)
+	}
+	var props struct {
+		Options map[string]interface{} `json:"Options"`
+	}
+	if json.Unmarshal(raw, &props) != nil {
+		return "", ""
+	}
+	get := func(k string) string {
+		for name, v := range props.Options {
+			if strings.EqualFold(name, k) {
+				if s, ok := v.(string); ok {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	return get("query_language"), get("query_graph_reference")
 }
 
 // kustoColumn mirrors kustainer-ui's models.Column exactly — verified
@@ -309,7 +342,14 @@ func handleKustoRequest(cfg serverConfig, w http.ResponseWriter, r *http.Request
 	eng := engine.New(cat)
 	eng.Verbose = cfg.verbose
 
-	stmt, err := parser.Parse(req.Query)
+	query := req.Query
+	if lang, ref := req.queryLanguage(); lang != "" {
+		if query, err = parser.TranslateQueryLanguage(query, lang, ref); err != nil {
+			writeKustoError(w, http.StatusBadRequest, fmt.Errorf("parse: %w", err))
+			return
+		}
+	}
+	stmt, err := parser.Parse(query)
 	if err != nil {
 		writeKustoError(w, http.StatusBadRequest, fmt.Errorf("parse: %w", err))
 		return

@@ -127,6 +127,54 @@ func evalDynamicFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row
 		}
 		return strings.Join(parts, delim), true, nil
 
+	case "__gql_size":
+		// __gql_size(x): GQL/openCypher size()/length(): characters of a
+		// string, elements of an array, keys of a bag.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("size requires 1 argument")
+		}
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil || v == nil {
+			return nil, true, err
+		}
+		if inferExprType(eng, fc.Args[0], schema) == types.TypeDynamic {
+			if arr, ok := parseJSONArray(v); ok {
+				return int64(len(arr)), true, nil
+			}
+			var m map[string]interface{}
+			if json.Unmarshal([]byte(fmt.Sprintf("%v", v)), &m) == nil {
+				return int64(len(m)), true, nil
+			}
+			var str string
+			if json.Unmarshal([]byte(fmt.Sprintf("%v", v)), &str) == nil {
+				return int64(len([]rune(str))), true, nil
+			}
+		}
+		return int64(len([]rune(fmt.Sprintf("%v", v)))), true, nil
+
+	case "__gql_labels":
+		// __gql_labels(bag): the labels of an entity bag, from its Label
+		// property (a string or an array), as an array.
+		if len(fc.Args) != 1 {
+			return nil, true, fmt.Errorf("__gql_labels requires 1 argument")
+		}
+		v, err := evalExpr(eng, fc.Args[0], schema, row)
+		if err != nil {
+			return nil, true, err
+		}
+		var m map[string]interface{}
+		out := []interface{}{}
+		if v != nil && json.Unmarshal([]byte(fmt.Sprintf("%v", v)), &m) == nil {
+			switch l := m["Label"].(type) {
+			case string:
+				out = append(out, l)
+			case []interface{}:
+				out = l
+			}
+		}
+		b, _ := json.Marshal(out)
+		return string(b), true, nil
+
 	case "__gql_interleave":
 		// __gql_interleave(nodes, edges): a GQL path value, the nodes
 		// and edges alternating (n0, e0, n1, ...). Used by the GQL
