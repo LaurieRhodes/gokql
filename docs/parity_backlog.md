@@ -161,8 +161,11 @@ with their own examples.
 
 ## P3 — carried over
 
-`hash_combine` with a null argument (null here; ADX returns a value
-whose null encoding is not pinned); `hash()` of decimal.
+Both closed as not reproducible, 2026-10-24: `hash_combine` with a
+null argument is rejected by the emulator (gokql returns null), and
+`hash()` of decimal hashes ADX's internal decimal encoding, which no
+tried layout (.NET decimal fields in four orders, scales 0-28, string
+forms) reproduces.
 
 ## Reference engine: the Kusto emulator
 
@@ -179,9 +182,19 @@ at /media/laurie/Data/kustainer/samples/gokql_db. Comparison scripts
 results as sets) were in /tmp/gk_emu (kdiff.py, mdiff.py); they are
 short to rewrite. The emulator license forbids benchmarking.
 
-## Out of scope (unchanged)
+## Out of scope
 
-Cluster, cursor and principal introspection; HLL and T-Digest
-sketches. See `scalar_function_backlog.md`. Geo is no longer out of
-scope: groups 1-2, H3, shape algebra and the lookup plugins are
-implemented (above).
+What needs outside systems: `external_table`/`inline_external_table`,
+`stored_query_result`, `geo_info_from_ip_address`, and the plugins that
+call other services (python, R, ai_*, http_request*, SQL/Cosmos DB,
+Digital Twins, infer_storage_schema*). Cluster, cursor, principal and
+extent introspection (the cluster layer, `.okql-federation.json`),
+HLL/T-Digest sketches and geo are implemented.
+
+## Status, 2026-10-24
+
+Parity is as complete as the reference allows: of the 1,041
+deterministic examples in the ADX query docs, 983 agree with the
+emulator; the rest are results ADX leaves unspecified (tie and
+partition order, t-digest and HLL internals, gzip bytes, heuristic
+plugins) or examples the emulator itself cannot run.

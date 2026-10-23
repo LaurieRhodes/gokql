@@ -79,3 +79,12 @@ func TestCursors(t *testing.T) {
 	expectWrRows(t, eng, `T | where ingestion_time() > datetime(2000-01-01) | project x | count`, "2")
 	expectErrContains(t, eng, `T | where cursor_after('abc')`, "not a cursor")
 }
+
+// extent_id() is the empty guid and extent_tags() null, as the emulator
+// answers them per row.
+func TestExtentIntrospection(t *testing.T) {
+	eng := discoverEngine(t, t.TempDir())
+	diskExec(t, eng, `.set-or-append T <| print x=1`)
+	expectWrRows(t, eng, `T | project e = extent_id(), t = isnull(extent_tags())`,
+		"00000000-0000-0000-0000-000000000000 | true")
+}

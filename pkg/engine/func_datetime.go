@@ -73,7 +73,7 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 	case "cursor_after", "cursor_before_or_at":
 		// cursor_after(c): the row was written after cursor c (from
 		// cursor_current()); cursor_before_or_at(c): at or before it.
-		// Uses the row's _TimeReceived; false for rows without one.
+		// Uses the row's _TimeReceived; null for rows without one.
 		if len(fc.Args) != 1 {
 			return nil, true, fmt.Errorf("%s requires 1 argument (a cursor)", fc.Name)
 		}
@@ -83,7 +83,7 @@ func evalDatetimeFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, ro
 		}
 		idx := schema.ColumnIndex(timeReceivedColumnName)
 		if idx < 0 || row[idx] == nil {
-			return false, true, nil
+			return nil, true, nil // no ingestion time: null, as the emulator answers for print
 		}
 		at := types.ToInt64(row[idx])
 		cursor := fmt.Sprintf("%v", v)

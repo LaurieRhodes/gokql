@@ -681,6 +681,14 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		}
 		return x >= c-d && x <= c+d, true, nil
 
+	case "extent_id":
+		// The emulator answers the empty guid (and extent_tags() null):
+		// gokql's extents carry short ids and no tags.
+		return "00000000-0000-0000-0000-000000000000", true, nil
+
+	case "extent_tags":
+		return nil, true, nil
+
 	case "current_cluster_endpoint":
 		// This cluster's name from .okql-federation.json ("localhost",
 		// as the emulator answers, when unset). See cluster.go.

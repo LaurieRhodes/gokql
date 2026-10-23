@@ -142,8 +142,12 @@ func (c *Catalog) rediscoverLocked(force bool) error {
 		}
 	}
 
+	name := filepath.Base(dir)
+	if abs, err := filepath.Abs(dir); err == nil {
+		name = filepath.Base(abs) // -db . names the directory, not "."
+	}
 	db := &Database{
-		Name:   filepath.Base(dir),
+		Name:   name,
 		Tables: make(map[string]*Table),
 	}
 	for _, info := range infos {
