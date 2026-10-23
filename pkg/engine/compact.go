@@ -211,6 +211,10 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	}
 	newExtentID := strings.Join(newIDs, ",")
 
+	if compactBeforeSupersedeHook != nil {
+		compactBeforeSupersedeHook()
+	}
+
 	// Supersede exactly the snapshotted old extents, PLUS the shell
 	// files found above — rename, not delete. Update the in-memory
 	// Extents list to match immediately, so this same process/session
@@ -641,6 +645,11 @@ func normalizedCell(t *types.Table, colName string) interface{} {
 }
 
 var compactAfterSnapshotHook func()
+
+// compactBeforeSupersedeHook runs after the merged extent is written and
+// before the old ones are superseded: the window in which every row is
+// on disk twice (tests).
+var compactBeforeSupersedeHook func()
 
 // minCompactVectorLen is the shortest array compactVectorColumns
 // treats as an embedding; shorter numeric arrays are ordinary data.

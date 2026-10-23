@@ -364,6 +364,8 @@ func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 	// outlives its own statement. See activeEmbedding in embedder.go
 	// for the contamination bug that made this unconditional.
 	if e.execDepth.Add(1) == 1 && e.Catalog != nil {
+		unlock := e.lockScope(stmt)
+		defer unlock()
 		if err := e.Catalog.Refresh(); err != nil {
 			e.execDepth.Add(-1)
 			return nil, fmt.Errorf("refresh catalog: %w", err)
