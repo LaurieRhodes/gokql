@@ -119,7 +119,7 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	// file is a permanently-redundant tiny file the moment any
 	// row-bearing extent exists, regardless of how many row-bearing
 	// extents there are.
-	if len(snapshot) <= 1 && len(shellFiles) == 0 && cmd.Where == nil && cmd.Options == nil {
+	if len(shellFiles) == 0 && cmd.Where == nil && cmd.Options == nil && alreadySized(snapshot) {
 		result := types.NewTable("", types.Schema{Columns: []types.Column{
 			{Name: "Result", Type: types.TypeString},
 			{Name: "ExtentsBefore", Type: types.TypeLong},
@@ -269,6 +269,33 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	result.AddRow(types.Row{status, newExtentID, int64(len(snapshot) + len(shellFiles)), int64(superseded),
 		int64(totalScanned), int64(rowsDropped), int64(len(allRows)), strings.Join(vectorCols, ", ")})
 	return result, nil
+}
+
+// alreadySized reports whether extents are already what a rewrite would
+// produce: one extent, or (wide rows, split by extentRowsFor) as few as
+// their total size allows. Without it .compact database rewrote every
+// wide table on every run.
+func alreadySized(exts []catalog.ExtentEntry) bool {
+	if len(exts) <= 1 {
+		return true
+	}
+	var rows, bytes int64
+	for _, x := range exts {
+		rows += x.RowCount
+		bytes += x.SizeBytes
+	}
+	if rows <= 0 || bytes <= 0 {
+		return false
+	}
+	per := int64(extentTargetBytes) / (bytes / rows)
+	if per >= ExtentTargetRows {
+		per = ExtentTargetRows
+	}
+	if per < 1 {
+		per = 1
+	}
+	want := (rows + per - 1) / per
+	return int64(len(exts)) <= want
 }
 
 // findActiveShellFiles globs for a table's active (non-.superseded)
@@ -488,10 +515,16 @@ func (e *Engine) applyGCTable(cmd *parser.GCTableCmd) (*types.Table, error) {
 	if !e.Catalog.IsDiscovery() {
 		return nil, fmt.Errorf(".gc needs an on-disk database")
 	}
-	pattern := filepath.Join(e.Catalog.DatabasePath(), cmd.TableName+"_*.vtx"+supersededSuffix)
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, fmt.Errorf(".gc: %w", err)
+	// Both places discovery reads extents from: the root and extents/
+	// (the root alone left a scope that keeps its extents in extents/
+	// with every superseded file still on disk).
+	var matches []string
+	for _, dir := range []string{e.Catalog.DatabasePath(), filepath.Join(e.Catalog.DatabasePath(), "extents")} {
+		m, err := filepath.Glob(filepath.Join(dir, cmd.TableName+"_*.vtx"+supersededSuffix))
+		if err != nil {
+			return nil, fmt.Errorf(".gc: %w", err)
+		}
+		matches = append(matches, m...)
 	}
 
 	removed := 0

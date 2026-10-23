@@ -3,6 +3,8 @@ package engine
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -72,5 +74,26 @@ func TestChunkRowsFor(t *testing.T) {
 	got := chunkRowsFor(wide)
 	if got >= ZoneChunkSize || got < minChunkRows || int64(got)*int64(len(big)) > 2*chunkTargetBytes {
 		t.Errorf("wide rows: %d chunk rows", got)
+	}
+}
+
+// .gc removes superseded files under extents/ as well as the root.
+func TestGCExtentsSubdir(t *testing.T) {
+	dir := t.TempDir()
+	eng := discoverEngine(t, dir)
+	diskExec(t, eng, `.create table G (X: long)`)
+	diskExec(t, eng, `.set-or-append G <| datatable(X:long)[1]`)
+	diskExec(t, eng, `.set-or-append G <| datatable(X:long)[2]`)
+	sub := filepath.Join(dir, "extents")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(sub, "G_00000000deadbeef.vtx.superseded")
+	if err := os.WriteFile(stale, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diskExec(t, eng, `.gc table G`)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("superseded file under extents/ survived .gc")
 	}
 }
