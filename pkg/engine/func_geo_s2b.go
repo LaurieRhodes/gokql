@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/golang/geo/r3"
 	"github.com/golang/geo/s2"
 
 	"github.com/LaurieRhodes/gokql/pkg/parser"
@@ -168,8 +169,30 @@ func densifyGeoJSON(v types.Value, tol float64) (string, bool) {
 		if json.Unmarshal(obj["coordinates"], &c) != nil {
 			return "", false
 		}
-		coords = rawCoordsJSON(densifyRing(c, tol))
-	case "MultiLineString", "Polygon":
+		parts := splitAtAntimeridian(densifyRing(c, tol))
+		if len(parts) == 1 {
+			coords = rawCoordsJSON(parts[0])
+			break
+		}
+		typ = "MultiLineString"
+		var ps []string
+		for _, p := range parts {
+			ps = append(ps, rawCoordsJSON(p))
+		}
+		coords = "[" + strings.Join(ps, ",") + "]"
+	case "MultiLineString":
+		var c [][][]float64
+		if json.Unmarshal(obj["coordinates"], &c) != nil {
+			return "", false
+		}
+		var ps []string
+		for _, r := range c {
+			for _, p := range splitAtAntimeridian(densifyRing(r, tol)) {
+				ps = append(ps, rawCoordsJSON(p))
+			}
+		}
+		coords = "[" + strings.Join(ps, ",") + "]"
+	case "Polygon":
 		var c [][][]float64
 		if json.Unmarshal(obj["coordinates"], &c) != nil {
 			return "", false
@@ -179,7 +202,7 @@ func densifyGeoJSON(v types.Value, tol float64) (string, bool) {
 			if typ == "Polygon" && i == 0 {
 				r = ccwShell(r)
 			}
-			parts[i] = rawCoordsJSON(densifyRing(r, tol))
+			parts[i] = rawCoordsJSON(normalizeLngs(densifyRing(r, tol)))
 		}
 		coords = "[" + strings.Join(parts, ",") + "]"
 	case "MultiPolygon":
@@ -194,7 +217,7 @@ func densifyGeoJSON(v types.Value, tol float64) (string, bool) {
 				if j == 0 {
 					r = ccwShell(r)
 				}
-				parts[j] = rawCoordsJSON(densifyRing(r, tol))
+				parts[j] = rawCoordsJSON(normalizeLngs(densifyRing(r, tol)))
 			}
 			polys[i] = "[" + strings.Join(parts, ",") + "]"
 		}
@@ -203,6 +226,69 @@ func densifyGeoJSON(v types.Value, tol float64) (string, bool) {
 		return "", false
 	}
 	return `{"type":"` + typ + `","coordinates":` + coords + "}", true
+}
+
+// wrapLng maps a longitude into [-180, 180].
+func wrapLng(x float64) float64 {
+	if x >= -180 && x <= 180 {
+		return x
+	}
+	x = math.Mod(x+180, 360)
+	if x < 0 {
+		x += 360
+	}
+	return x - 180
+}
+
+func normalizeLngs(c [][]float64) [][]float64 {
+	for _, p := range c {
+		p[0] = wrapLng(p[0])
+	}
+	return c
+}
+
+// splitAtAntimeridian wraps a densified line's longitudes into
+// [-180, 180] and splits it where its planar path crosses the
+// antimeridian, as ADX does: each part ends (and the next begins) at
+// longitude ±(180 - 1e-12), at the latitude where the geodesic between
+// the two straddling vertices meets the antimeridian.
+func splitAtAntimeridian(c [][]float64) [][][]float64 {
+	const edge = 179.999999999999
+	turn := func(x float64) float64 { return math.Floor((x + 180) / 360) }
+	var parts [][][]float64
+	cur := [][]float64{}
+	for i, p := range c {
+		if i > 0 {
+			a := c[i-1]
+			if ta, tb := turn(a[0]), turn(p[0]); ta != tb {
+				lat := antimeridianLat(a, p)
+				east := tb > ta // crossing eastwards: leaves at +180
+				end, start := -edge, edge
+				if east {
+					end, start = edge, -edge
+				}
+				cur = append(cur, []float64{end, lat})
+				parts = append(parts, cur)
+				cur = [][]float64{{start, lat}}
+			}
+		}
+		cur = append(cur, []float64{wrapLng(p[0]), p[1]})
+	}
+	return append(parts, cur)
+}
+
+// antimeridianLat is the latitude at which the geodesic a-b crosses the
+// 180 degree meridian.
+func antimeridianLat(a, b []float64) float64 {
+	pa := s2.PointFromLatLng(s2.LatLngFromDegrees(a[1], a[0]))
+	pb := s2.PointFromLatLng(s2.LatLngFromDegrees(b[1], b[0]))
+	n := pa.Cross(pb.Vector)
+	d := n.Cross(r3.Vector{Y: 1}) // in the plane y = 0
+	if d.X > 0 {
+		d = d.Mul(-1)
+	}
+	d = d.Normalize()
+	return math.Asin(d.Z) * 180 / math.Pi
 }
 
 func densifyRing(c [][]float64, tol float64) [][]float64 {

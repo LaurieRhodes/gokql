@@ -224,12 +224,25 @@ func geoJSONPoints(v interface{}, min int) ([]s2.Point, bool) {
 		return nil, false
 	}
 	out := make([]s2.Point, len(arr))
+	prev := 0.0
 	for i, c := range arr {
-		p, ok := geoJSONPoint(c)
-		if !ok {
+		// In a coordinate list ADX accepts any longitude, as long as
+		// consecutive vertices are less than 360 degrees apart (a
+		// lone GeoJSON Point needs [-180, 180]).
+		xy, ok := c.([]interface{})
+		if !ok || len(xy) < 2 {
 			return nil, false
 		}
-		out[i] = p
+		lng, ok1 := jsonFloat(xy[0])
+		lat, ok2 := jsonFloat(xy[1])
+		if !ok1 || !ok2 || math.IsNaN(lng) || math.IsInf(lng, 0) || math.IsNaN(lat) || math.Abs(lat) > 90 {
+			return nil, false
+		}
+		if i > 0 && math.Abs(lng-prev) >= 360 {
+			return nil, false
+		}
+		prev = lng
+		out[i] = s2.PointFromLatLng(s2.LatLngFromDegrees(lat, lng))
 	}
 	return out, true
 }

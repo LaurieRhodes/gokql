@@ -134,21 +134,28 @@ func evalGeoS2(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types
 			return nil, true, err
 		}
 		g := parseGeoShape(vals[0])
-		if g == nil || !g.isPolygonal() || g.overlapping() {
-			// Overlapping members measure as their union, which needs
-			// polygon boolean operations (not available).
+		if g == nil || !g.isPolygonal() {
 			return nil, true, nil
+		}
+		polys := g.polys
+		if g.overlapping() {
+			// Overlapping members measure as their union.
+			u, ok := geoDestructiveUnion(g.polys)
+			if !ok {
+				return nil, true, nil
+			}
+			polys = []*s2.Polygon{u}
 		}
 		switch fc.Name {
 		case "geo_polygon_area":
 			a := 0.0
-			for _, poly := range g.polys {
+			for _, poly := range polys {
 				a += poly.Area()
 			}
 			return a * geoSphereRadius * geoSphereRadius, true, nil
 		case "geo_polygon_perimeter":
 			var t s1.Angle
-			for _, poly := range g.polys {
+			for _, poly := range polys {
 				for _, l := range poly.Loops() {
 					n := l.NumVertices()
 					for i := 0; i < n; i++ {
@@ -159,7 +166,7 @@ func evalGeoS2(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types
 			return geoMeters(t), true, nil
 		default:
 			var c s2.Point
-			for _, poly := range g.polys {
+			for _, poly := range polys {
 				c = s2.Point{Vector: c.Add(poly.Centroid().Vector)}
 			}
 			if c.Norm() == 0 {
