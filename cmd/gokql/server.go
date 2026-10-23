@@ -44,68 +44,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/LaurieRhodes/gokql/pkg/config"
 	"github.com/LaurieRhodes/gokql/pkg/engine"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
-
-// serverConfigFileName is the config file runServer looks for INSIDE
-// the served scope directory (-db's target), read once at startup.
-// Dot-prefixed and distinctly named, matching this codebase's existing
-// convention for engine-internal files that live alongside scope data
-// without being mistaken for it (.dropped/, _dictionaries.lock) — a
-// session inspecting a scope directory should be able to tell at a
-// glance which files are its own data and which aren't.
-const serverConfigFileName = ".okql-server.json"
-
-// serverFileConfig is the on-disk shape of serverConfigFileName —
-// every field optional, since the point of this file is to let a
-// containerized deployment fully configure a server (port, TLS,
-// eventually retention/compaction settings) by dropping one file
-// alongside the database, without needing to know or construct the
-// exact CLI invocation in advance. Precedence: an explicitly-set CLI
-// flag always wins over this file (flag.Parse's own defaults can't be
-// distinguished from "user typed the default value" with the
-// standard flag package, so "explicitly set" here means the flag's
-// package-level Visit call found it on the command line — see
-// loadServerConfig) — this file exists specifically for the case
-// where NO flags beyond -serve -db are given at all, matching the
-// "one command, config lives with the data" deployment shape this was
-// built for.
-type serverFileConfig struct {
-	Addr      string           `json:"addr,omitempty"`      // e.g. ":8443" or "0.0.0.0:8080"
-	DBName    string           `json:"dbName,omitempty"`    // overrides the directory-basename default
-	TLSCert   string           `json:"tlsCert,omitempty"`   // path to a PEM certificate file
-	TLSKey    string           `json:"tlsKey,omitempty"`    // path to a PEM private key file
-	Databases []serverDatabase `json:"databases,omitempty"` // additional, fully read-write databases this server also serves — see serverDatabase's own doc comment for why this is deliberately NOT the same mechanism as federation's read-only aliases
-}
-
-// serverDatabase names one ADDITIONAL database this server serves
-// beyond its primary -db, with full read-write access — this is
-// deliberately a SEPARATE mechanism from federation's
-// .okql-federation.json aliases, not a reuse of it, even though both
-// resolve a name to a local path. Federation exists for querying
-// scopes potentially owned and actively written by a DIFFERENT
-// process, where read-only is the safety boundary that avoids
-// needing any cross-process write coordination at all. Multi-database
-// serving is the opposite situation: this server process IS the
-// owner of every database listed here, in exactly the same sense it
-// owns its primary -db, so there's no cross-process coordination
-// problem to avoid — restricting these to read-only would just be an
-// arbitrary, unhelpful limitation with no safety benefit behind it.
-// Conflating the two mechanisms would either make federation
-// accidentally writable (a real regression) or make multi-database
-// serving needlessly read-only (a real, avoidable limitation) — kept
-// separate specifically so getting one right doesn't silently weaken
-// the other.
-type serverDatabase struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
-}
 
 // serverConfig holds everything one running server instance needs —
 // deliberately small and flat, matching this codebase's existing
@@ -115,9 +61,13 @@ type serverConfig struct {
 	dbName    string            // the name clients send in "db" for the primary database
 	databases map[string]string // additional dbName -> path, all fully read-write (see serverDatabase's doc comment)
 	verbose   bool
-	addr      string
-	tlsCert   string // empty means plain HTTP
-	tlsKey    string
+	readOnly  bool // -readonly or server.readonly: every write command is refused
+	// readOnlyDBs marks additional databases served read-only
+	// (server.databases[].readonly).
+	readOnlyDBs map[string]bool
+	addr        string
+	tlsCert     string // empty means plain HTTP
+	tlsKey      string
 }
 
 // resolveDatabase maps a request's "db" field to the filesystem path
@@ -140,13 +90,11 @@ func (cfg serverConfig) resolveDatabase(name string) (string, error) {
 }
 
 // loadServerConfig resolves the final serverConfig by layering, in
-// increasing precedence: built-in defaults, the on-disk
-// .okql-server.json inside dbPath (if present — its absence is not an
-// error, since most of this file's fields are genuinely optional),
-// then explicitly-set CLI flags. explicitFlags names which flags the
-// user actually typed (via flag.Visit), so a flag left at its zero
-// value doesn't silently override a real config-file setting with
-// nothing.
+// increasing precedence: built-in defaults, the server section of the
+// database's gokql.yaml (pkg/config; the older .okql-server.json is
+// read when it is absent), then explicitly-set CLI flags. explicitFlags
+// names which flags the user actually typed (via flag.Visit), so a flag
+// left at its zero value doesn't override a real config-file setting.
 func loadServerConfig(dbPath, addrFlag, dbNameFlag string, verbose bool, explicitFlags map[string]bool) (serverConfig, error) {
 	cfg := serverConfig{
 		dbPath:  dbPath,
@@ -154,44 +102,30 @@ func loadServerConfig(dbPath, addrFlag, dbNameFlag string, verbose bool, explici
 		addr:    ":8080",
 		verbose: verbose,
 	}
-
-	fileCfgPath := filepath.Join(dbPath, serverConfigFileName)
-	data, err := os.ReadFile(fileCfgPath)
-	switch {
-	case err == nil:
-		var fc serverFileConfig
-		if jsonErr := json.Unmarshal(data, &fc); jsonErr != nil {
-			return serverConfig{}, fmt.Errorf("parse %s: %w", fileCfgPath, jsonErr)
-		}
-		if fc.Addr != "" {
-			cfg.addr = fc.Addr
-		}
-		if fc.DBName != "" {
-			cfg.dbName = fc.DBName
-		}
-		cfg.tlsCert = fc.TLSCert
-		cfg.tlsKey = fc.TLSKey
-		if len(fc.Databases) > 0 {
-			cfg.databases = make(map[string]string, len(fc.Databases))
-			for _, db := range fc.Databases {
-				if db.Name == "" || db.Path == "" {
-					return serverConfig{}, fmt.Errorf("%s: databases entry needs both name and path (got name=%q path=%q)",
-						fileCfgPath, db.Name, db.Path)
-				}
-				if db.Name == cfg.dbName {
-					return serverConfig{}, fmt.Errorf("%s: databases entry %q collides with the primary database's own name", fileCfgPath, db.Name)
-				}
-				if !filepath.IsAbs(db.Path) {
-					return serverConfig{}, fmt.Errorf("%s: databases entry %q path %q must be absolute (same requirement as federation aliases)",
-						fileCfgPath, db.Name, db.Path)
-				}
-				cfg.databases[db.Name] = db.Path
+	f, err := config.Load(dbPath)
+	if err != nil {
+		return serverConfig{}, err
+	}
+	src := f.Path
+	sv := f.Server
+	if sv.Addr != "" {
+		cfg.addr = sv.Addr
+	}
+	if sv.Name != "" {
+		cfg.dbName = sv.Name
+	}
+	cfg.tlsCert, cfg.tlsKey = sv.TLS.Cert, sv.TLS.Key
+	cfg.readOnly = sv.ReadOnly
+	if len(sv.Databases) > 0 {
+		cfg.databases = make(map[string]string, len(sv.Databases))
+		cfg.readOnlyDBs = map[string]bool{}
+		for _, db := range sv.Databases {
+			if db.Name == cfg.dbName {
+				return serverConfig{}, fmt.Errorf("%s: server.databases entry %q collides with the primary database's own name", src, db.Name)
 			}
+			cfg.databases[db.Name] = db.Path
+			cfg.readOnlyDBs[db.Name] = db.ReadOnly
 		}
-	case os.IsNotExist(err):
-		// No config file — fine, every field it could set is optional.
-	default:
-		return serverConfig{}, fmt.Errorf("read %s: %w", fileCfgPath, err)
 	}
 
 	// Explicit CLI flags win over whatever the file said.
@@ -367,6 +301,7 @@ func handleKustoRequest(cfg serverConfig, w http.ResponseWriter, r *http.Request
 	}
 	eng := engine.New(cat)
 	eng.Verbose = cfg.verbose
+	eng.ReadOnly = cfg.readOnly || cfg.readOnlyDBs[req.Database]
 
 	query := req.Query
 	if lang, ref := req.queryLanguage(); lang != "" {

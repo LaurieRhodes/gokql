@@ -2,7 +2,7 @@ package engine
 
 // cluster.go — gokql answering as a cluster. The databases of this
 // cluster are the local scope plus the aliases of its
-// .okql-federation.json (read-only); the file may also name the cluster
+// gokql.yaml (read-only); the file may also name the cluster
 // ("cluster", default "localhost"), the principal current_principal()
 // reports, and other clusters ("clusters": name -> the primary scope
 // directory of another cluster, whose own config lists its databases).

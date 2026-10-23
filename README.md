@@ -1,190 +1,139 @@
 # gokql
 
-A single-binary KQL (Kusto Query Language) engine over local Vortex
-columnar storage, built to be a durable, queryable store that LLM agents
-read and write through a shell.
+**A local KQL engine in one binary.** gokql runs Kusto Query Language
+(the language of Azure Data Explorer, Microsoft Sentinel, Defender and
+Fabric) over a directory of columnar files on your own machine. There
+is no server, no cloud account and no network dependency.
+
+It is built first for **AI agents**, which already write KQL well and
+need somewhere durable to keep what they learn. It works just as well
+for **analysts and engineers** who want ADX semantics offline.
 
 ```bash
-gokql -db ./scope -mode csv -e 'Findings | where Confidence == "locked" | summarize count() by Project'
+gokql -db ./notes -e '.set-or-append Findings <| datatable(Id:string, Claim:string, Confidence:string)
+  ["F-1", "The gate faces the solstice sunrise", "tested"]'
+gokql -db ./notes -mode jsonl -e 'Findings | where Confidence == "tested"'
 ```
 
-## Why
+## What it is for
 
-Agents need somewhere to keep state between sessions: tasks, findings,
-decisions, the links between them, and text they can search later.
-gokql makes that store a KQL database:
+| Use | What gokql gives you | Start here |
+|---|---|---|
+| **Agent memory** | A store an LLM reads and writes in a language it already knows: append-only history, current state by query, provenance links, semantic search | [agent memory](docs/use-cases/agent-memory.md) |
+| **Security data triage** | Sentinel-style hunting queries over exported logs, Wiz or Defender findings, CSV and JSON, on a laptop | [security triage](docs/use-cases/security-triage.md) |
+| **KQL development** | Write and test queries, functions and update policies offline before they reach ADX | [KQL development](docs/use-cases/kql-development.md) |
+| **Research knowledge graphs** | Facts linked to their sources, competing hypotheses side by side, queried as graphs (KQL, GQL or openCypher) | [research graphs](docs/use-cases/research-graphs.md) |
+| **A local "cluster"** | Several specialised databases queried together with `database()` and `cluster()` | [local cluster](docs/use-cases/local-cluster.md) |
 
-- **A language models already write.** KQL is used daily in Microsoft
-  Sentinel, Defender and Azure Data Explorer, and its documentation is
-  extensive. gokql follows ADX semantics closely, checked against
-  Microsoft's reference examples and `Kusto.Language`, so a query a
-  model writes from that knowledge runs as written.
-- **One process, one directory.** A database is a directory of
-  self-describing `.vtx` extent files and nothing else. There is no
-  server to start, no catalog file to corrupt and no schema registry to
-  keep in step. Point any number of sessions at the same directory.
-- **Append-only by design.** Writes add extents and never rewrite
-  history. Every row gets an engine-stamped `_TimeReceived`, so the
-  current value of a record is `summarize arg_max(_TimeReceived, *) by
-  Id` and the history stays available.
-- **Plain output.** `-mode csv`, `tsv`, `json` or `jsonl`, errors as
-  one line on stderr, a non-zero exit status on failure: easy to call
-  from a tool and to parse. JSON keys follow the column order, and
-  dynamic values arrive as JSON rather than escaped strings.
-- **Retrieval in the same language.** Text embeddings, chunking and
-  vector similarity are KQL functions and commands, so semantic search
-  can be joined and filtered like any other table.
-
-## Quick start
-
-```bash
-go build -o gokql ./cmd/gokql/
-
-# Create a table and append to it (the directory is created on first write)
-gokql -db ./scope -e '.create table Findings (Id: string, Claim: string, Confidence: string, Project: string)'
-gokql -db ./scope -e '.set-or-append Findings <| datatable(Id:string, Claim:string, Confidence:string, Project:string)
-  ["F-1", "Gate faces the solstice sunrise", "tested", "girsu"]'
-
-# A later write supersedes the earlier row with the same Id
-gokql -db ./scope -e '.set-or-append Findings <| datatable(Id:string, Claim:string, Confidence:string, Project:string)
-  ["F-1", "Gate faces the solstice sunrise within 1.5 deg", "locked", "girsu"]'
-
-# Save the "current state" query as a stored function
-gokql -db ./scope -e '.create-or-alter function Current() { Findings | summarize arg_max(_TimeReceived, *) by Id }'
-
-# Read it back, read-only, as JSON lines
-gokql -db ./scope -readonly -mode jsonl -e 'Current() | project Id, Claim, Confidence'
-```
-
-Without `-e`, gokql opens a REPL (`.help` lists the dot-commands).
-Without `-db`, it runs against a temporary in-memory database.
-
-## Storage
-
-Storage is [vortex-go](https://github.com/LaurieRhodes/vortex-go), a
-native Go implementation of the [Vortex](https://github.com/spiraldb/vortex)
-columnar format, readable by the Rust reference implementation.
-
-- **Discovery only.** A database is the set of `<Table>_<id>.vtx`
-  extents in a directory. Each extent carries its own schema; engine
-  metadata (stored functions, materialized views, dictionaries) lives
-  in KQL system tables stored the same way. A long-running engine
-  notices when another process adds extents.
-- **Columnar scans.** Column projection, per-zone min/max statistics
-  for pruning, dictionary, FSST, frame-of-reference, bit-packing, ALP
-  and Pcodec encodings, and parallel extent scans.
-- **Real nulls.** Numeric, bool, datetime and timespan nulls are stored
-  as nulls. Strings are never null, as in ADX: a missing string reads
-  as `""`.
-- **Schema evolution.** `.create-merge` and `.alter-merge` add columns
-  to existing tables; older extents read the new columns as null.
-- **Maintenance.** `.compact table T` / `.compact database` merge
-  small extents; `.drop` archives rather than deletes.
-
-## Language
-
-The parity target is Azure Data Explorer. Each area below was checked
-against Microsoft's documentation examples rather than written from
-function names. [docs/kql_coverage.md](docs/kql_coverage.md) has the
-full verified list and [docs/parity_backlog.md](docs/parity_backlog.md)
-the remaining gaps.
-
-- **Tabular operators:** `where`, `project*`, `extend`, `summarize`,
-  `join` (all kinds), `lookup`, `union`, `mv-expand`, `mv-apply`,
-  `parse`/`parse-where`, `search`, `top`/`top-nested`, `make-series`,
-  `scan`, `partition`, `fork`, `as`, `materialize`, `render`
-  (passthrough) and more.
-- **Functions:** strings, datetime and timespan, math, dynamic/JSON,
-  IPv4/IPv6, hashing, regex, `decimal`, time series (`series_*`),
-  window functions, and geospatial on the S2 sphere (distances,
-  containment, areas, geohash and S2 cells, `geo_polygon_lookup`,
-  `geo_line_lookup`).
-- **Aggregations:** the standard set with `-if` variants, `arg_max`/
-  `arg_min`, percentiles, `dcount`, `hll`/`tdigest` sketches.
-- **Graphs:** `make-graph`, `graph-match` (variable-length paths,
-  cycles), `graph-shortest-paths`, `graph-mark-components`,
-  `graph-to-table`, and persistent graph models and snapshots.
-- **Database objects:** `let`, user-defined and stored functions,
-  materialized views, `datatable`, query batches.
-
-## Beyond ADX: embeddings
-
-Not part of ADX parity, and the only feature that talks to anything
-outside the process. Details: [docs/embeddings.md](docs/embeddings.md).
-
-| Surface | What it does |
-|---|---|
-| `.chunk-file T <\| "path"` | Split a document into paragraph chunks with heading trails and line numbers |
-| `.embed-into E <\| query` | Embed a `Text` column in bulk through a local backend (Ollama or any OpenAI-compatible endpoint, such as llama-server) |
-| `embed_text("...")` | Embed a query string |
-| `series_cosine_similarity(a, b)` | Rank stored vectors (standard ADX function) |
+## A taste
 
 ```kql
-let q = embed_text("which gate alignments were tested?");
-FindingsEmbeddings
-| extend score = series_cosine_similarity(Embedding, q)
-| top 5 by score desc
-| join kind=inner (Current()) on Id
-| project Id, Claim, score
+.set-or-append Events <| datatable(Time:datetime, User:string, Action:string, Bytes:long)
+  [datetime(2026-10-01 08:00), "ana", "login", 0,
+   datetime(2026-10-01 08:05), "ana", "download", 52000000,
+   datetime(2026-10-01 09:10), "raj", "login", 0,
+   datetime(2026-10-01 09:12), "raj", "download", 1200,
+   datetime(2026-10-01 23:40), "ana", "download", 880000000]
 ```
 
-## Getting data in
-
-- `.set-or-append T <| query` and `.ingest inline into table T <| rows`
-  for writes from an agent.
-- `.ingest csv into table T from "path"` for bulk loads.
-- `csv("path")`, `json()`, `ndjson()` and `parquet()` read a file as a
-  table source for one-off queries and imports; they are not the
-  storage layer.
-
-## Serving
-
-`gokql -serve -db ./scope -addr :8080` serves one database over HTTP
-using Kustainer's REST protocol (`POST /v1/rest/query`,
-`/v1/rest/mgmt`), so existing Kusto clients and
-[kustainer-ui](https://github.com/LaurieRhodes/kustainer-ui) can query
-it.
-
-## Command line
-
-```
-gokql [flags] [db-dir] [query]
-
-  -db DIR       database directory
-  -e QUERY      run one query or command and exit
-  -readonly     open the database read-only
-  -mode M       table (default), csv, tsv, json, jsonl
-  -no-rc        don't load ~/.okqlrc
-  -serve        HTTP mode (with -addr, -dbname)
-  -v            show scan diagnostics
+```kql
+Events
+| where Action == "download"
+| summarize Downloads = count(), TotalMB = sum(Bytes) / 1e6, Last = max(Time) by User
+| order by TotalMB desc
 ```
 
-`echo 'Findings | count' | gokql -db ./scope` reads a query from stdin.
+```output
+User  Downloads  TotalMB  Last
+────  ─────────  ───────  ────
+ana   2          932      2026-10-01T23:40:00Z
+raj   1          0.0012   2026-10-01T09:12:00Z
+(2 rows)
+```
 
-## Building
+Every example in this repository's documentation is run by the test
+suite, and the output shown is what gokql prints.
+
+## Why gokql
+
+- **The language models already write.** KQL is used daily across
+  Microsoft's security and data products and is extensively documented.
+  gokql follows Azure Data Explorer's semantics, checked against
+  Microsoft's documentation examples and against the Kusto emulator:
+  983 of the 1,041 deterministic examples in Microsoft's KQL
+  documentation give the same results, and the rest are results ADX
+  leaves unspecified. A query a model writes from that knowledge runs
+  as written. See [compatibility](docs/compatibility.md).
+- **One binary, one directory.** A database is a directory of
+  self-describing Vortex columnar files. Nothing to install or run
+  alongside it, no catalog file to corrupt. Any number of processes can
+  read and append to the same directory.
+- **Append-only, with history.** Writes add files and never rewrite
+  earlier ones. Every row is stamped with the time it arrived, so the
+  current value of a record is one `arg_max` away and every earlier
+  value is still there.
+- **Built for tools.** `-mode csv | tsv | json | jsonl`, errors as one
+  line on stderr, non-zero exit on failure. An HTTP mode speaks the
+  Kusto REST protocol for existing clients.
+- **More than queries.** Graphs (KQL `make-graph`/`graph-match`, plus
+  GQL and openCypher), geospatial functions (S2, H3, geohash),
+  time series, text embeddings and vector search, and HTTP and LLM
+  calls behind an allow-list.
+
+## Coverage at a glance
+
+Generated from the engine by the test suite
+([reference](docs/reference/README.md)):
+
+| Area | Supported |
+|---|---|
+| Tabular operators | 51 of 51 |
+| Scalar functions | 386 of 392 |
+| Aggregation functions | 57 of 59 |
+| Window functions | 7 of 7 |
+| Plugins (`evaluate`) | 33 of 41 |
+| Management commands | tables, ingestion, functions, materialized views, update policies, graph models, scripts |
+
+What is missing is listed with reasons in the reference: mainly plugins
+that would embed Python or R or need database drivers.
+
+## Install
+
+Requires Go 1.24.9 or later. gokql builds against
+[vortex-go](https://github.com/LaurieRhodes/vortex-go), which must be
+checked out beside it:
 
 ```bash
 git clone https://github.com/LaurieRhodes/vortex-go.git
 git clone https://github.com/LaurieRhodes/gokql.git
 cd gokql
-go build -o gokql ./cmd/gokql/
+go build -o gokql ./cmd/gokql
+./gokql -version
 ```
 
-Requires Go 1.24.9 or later. vortex-go must be a sibling directory
-(`replace ../vortex-go` in `go.mod`). The other dependencies are
-parquet-go, xxhash, golang/geo and yaml.v3.
+Then follow [getting started](docs/getting-started.md).
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): first database, writes, queries, the REPL, serving
+- [Guides](docs/README.md): storage, writing data, files and external data, the local cluster, graphs, geospatial, embeddings and AI, security, HTTP serving
+- [Reference](docs/reference/README.md): every operator, function, aggregation, plugin, command and CLI flag, with support status
+- [Compatibility with ADX](docs/compatibility.md): how parity is checked and where gokql differs
+- [For AI agents](docs/for-agents.md): the compact rules an LLM needs to use gokql well ([llms.txt](llms.txt))
+- [Development](docs/dev/README.md): architecture, building, testing, contributing
 
 ## Relationship to Microsoft's KQL
 
 gokql is an independent Go implementation. It does not fork, embed or
 translate code from Microsoft's
 [Kusto-Query-Language](https://github.com/microsoft/Kusto-Query-Language)
-repository, the official grammar and `Kusto.Language` parser, which is
-Apache 2.0 licensed and openly maintained. That openness is what makes a
-project like this possible. For the full language surface, distributed
-execution or enterprise support, use Azure Data Explorer; gokql is a
-local, single-node engine for a narrower job.
+repository, whose openly published grammar and documentation make a
+project like this possible. For distributed execution, the full service
+surface or enterprise support, use Azure Data Explorer; gokql is a
+local, single-node engine for a narrower job. "Kusto" and "KQL" are
+used here only to describe the language implemented.
 
 ## Licence
 
-[MIT](LICENSE)
+[MIT](LICENSE). Descriptions quoted from Microsoft's KQL documentation
+are CC BY 4.0, attributed where they appear.

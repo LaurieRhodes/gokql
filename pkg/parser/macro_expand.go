@@ -17,6 +17,41 @@ import (
 
 var letEntityGroup = regexp.MustCompile(`(?is)^\s*let\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*entity_group\s*\[`)
 
+var aliasStatement = regexp.MustCompile(`(?is)^\s*alias\s+database\s+(\[\s*(?:'[^']*'|"[^"]*")\s*\]|[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$`)
+
+// expandAliases removes alias database statements and rewrites
+// database("Alias") in the later statements to the aliased reference
+// (cluster("c").database("d") or database("d")).
+func expandAliases(stmts []string) ([]string, error) {
+	type alias struct{ name, target string }
+	var aliases []alias
+	var out []string
+	for _, s := range stmts {
+		if m := aliasStatement.FindStringSubmatch(s); m != nil {
+			name := m[1]
+			if strings.HasPrefix(name, "[") {
+				name = strings.TrimSpace(name[1 : len(name)-1])
+				name = name[1 : len(name)-1]
+			}
+			target := strings.TrimSpace(m[2])
+			if _, d, rest, ok := SplitQualifiedName(target + ".x"); !ok || d == "" || rest != "x" {
+				return nil, fmt.Errorf("alias database %s: expected cluster('c').database('d') or database('d'), got %s", name, target)
+			}
+			aliases = append(aliases, alias{name, target})
+			continue
+		}
+		for _, a := range aliases {
+			for _, q := range []string{"'", `"`} {
+				for _, f := range []string{"database(", "database ("} {
+					s = strings.ReplaceAll(s, f+q+a.name+q+")", a.target)
+				}
+			}
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // expandMacros rewrites the macro-expand statements of a query.
 func expandMacros(stmts []string) ([]string, error) {
 	hasMacro := false

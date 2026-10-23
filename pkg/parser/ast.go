@@ -336,7 +336,7 @@ func (*ParseWhereOp) operatorNode() {}
 // the "regex" mode (regex=RegexPattern) are real, documented alternate
 // forms of the same operator but are NOT implemented here; a query using
 // either gets a clear parse error, not silent mis-parsing. See
-// docs/kql_coverage.md for the precise scope note.
+// docs/dev/history/kql_coverage.md for the precise scope note.
 type ParseKVOp struct {
 	Column        string
 	Keys          []ParseKVKey

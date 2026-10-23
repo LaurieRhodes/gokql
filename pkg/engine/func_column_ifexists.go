@@ -42,6 +42,9 @@ func evalColumnIfExists(eng *Engine, fc *parser.FuncCall, schema *types.Schema, 
 	if !isColumnIfExists(fc.Name) {
 		return nil, false, nil
 	}
+	if len(fc.Args) != 2 {
+		return nil, true, fmt.Errorf("%s requires 2 arguments (columnName, defaultValue)", fc.Name)
+	}
 	name, err := columnIfExistsName(fc)
 	if err != nil {
 		// A name held in a let or function parameter is constant for

@@ -119,7 +119,27 @@ func TestLoadServerConfigMissingDatabaseFieldErrors(t *testing.T) {
 
 func writeServerConfigFile(t *testing.T, dir, contents string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, serverConfigFileName), []byte(contents), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".okql-server.json") /* the legacy file, still read */, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// gokql.yaml's server section, including read-only serving of fixed
+// data (a chatbot over company information).
+func TestLoadServerConfigYAML(t *testing.T) {
+	dir := t.TempDir()
+	yml := "server:\n  addr: 127.0.0.1:9090\n  name: handbook\n  readonly: true\n  databases:\n    - name: policies\n      path: /abs/policies\n      readonly: true\n    - name: scratch\n      path: /abs/scratch\n"
+	if err := os.WriteFile(filepath.Join(dir, "gokql.yaml"), []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadServerConfig(dir, ":8080", "", false, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.addr != "127.0.0.1:9090" || cfg.dbName != "handbook" || !cfg.readOnly || !cfg.readOnlyDBs["policies"] || cfg.readOnlyDBs["scratch"] {
+		t.Fatalf("%+v", cfg)
+	}
+	if p, err := cfg.resolveDatabase("policies"); err != nil || p != "/abs/policies" {
+		t.Fatalf("%q %v", p, err)
 	}
 }

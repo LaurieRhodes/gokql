@@ -220,7 +220,7 @@ func firstLine(s string) string {
 }
 
 // ShowCalloutPolicyCmd: .show cluster policy callout — the callout
-// policy (.okql-federation.json "callouts" plus the predefined rules).
+// policy (gokql.yaml "callouts" plus the predefined rules).
 // Altering it from a query is refused: the policy is the operator's
 // file, not something a query may widen.
 type ShowCalloutPolicyCmd struct{}

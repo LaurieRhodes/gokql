@@ -29,73 +29,60 @@ package engine
 // convention someone could accidentally violate.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
+	"github.com/LaurieRhodes/gokql/pkg/config"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-// federationConfigFileName is read from INSIDE the local scope
-// directory — the same "config lives alongside the data it
-// describes" convention .okql-server.json already established, so a
-// session inspecting a scope directory finds every engine-internal
-// setting file in one place, not scattered across different
-// locations depending on which feature it configures.
-const federationConfigFileName = ".okql-federation.json"
+// federationConfigFileName names the configuration file in messages:
+// gokql.yaml (pkg/config), which also reads the older
+// .okql-federation.json.
+const federationConfigFileName = config.FileName
 
-// federationAlias is one entry in the config file. Path is absolute,
-// per this session's own design decision — a relative path would need
-// deciding "relative to what" (the config file's own directory? the
-// process's working directory? something else?) in a way that's
-// genuinely ambiguous for a containerized deployment where the mount
-// layout, not the scope directory's own location, is what's stable;
-// absolute paths sidestep that ambiguity entirely at the cost of
-// needing regeneration if a mount layout ever changes — an explicit,
-// accepted tradeoff, not an oversight.
+// federationAlias is one other database: a name and an absolute path.
 type federationAlias struct {
-	Alias string `json:"alias"`
-	Path  string `json:"path"`
+	Alias string
+	Path  string
 }
 
+// federationConfig is the part of gokql.yaml the engine uses.
 type federationConfig struct {
-	Aliases []federationAlias `json:"aliases"`
+	Aliases []federationAlias
 	// Cluster names the cluster this scope's databases form, as
 	// current_cluster_endpoint() and cluster('name') see it
 	// ("localhost" when unset). See cluster.go.
-	Cluster string `json:"cluster,omitempty"`
+	Cluster string
 	// Principal is what current_principal() reports.
-	Principal string `json:"principal,omitempty"`
-	// Clusters are other clusters: each is the primary scope directory
-	// of another cluster, whose own .okql-federation.json lists its
-	// databases.
-	Clusters []federationAlias `json:"clusters,omitempty"`
+	Principal string
+	// Clusters are other clusters, each by its primary database.
+	Clusters []federationAlias
 	// Callouts is the callout policy, in ADX's form (callout.go).
-	Callouts []calloutRule `json:"callouts,omitempty"`
+	Callouts []calloutRule
+	// ReadOnly refuses every write command to this database.
+	ReadOnly bool
 }
 
-// loadFederationConfig reads the federation config from inside dbPath.
-// Its absence is not an error — most scopes will never define any
-// aliases at all, and querying database('anything') against a scope
-// with no config file should fail with a clear "no such alias" error
-// (see resolveFederatedTable), not a confusing file-not-found one.
+// loadFederationConfig reads the configuration of the database in
+// dbPath. Its absence is not an error: most databases have none.
 func loadFederationConfig(dbPath string) (*federationConfig, error) {
-	data, err := os.ReadFile(filepath.Join(dbPath, federationConfigFileName))
-	if os.IsNotExist(err) {
-		return &federationConfig{}, nil
-	}
+	f, err := config.Load(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", federationConfigFileName, err)
+		return nil, err
 	}
-	var cfg federationConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", federationConfigFileName, err)
+	cfg := &federationConfig{Cluster: f.Cluster, Principal: f.Principal, Callouts: f.Callouts, ReadOnly: f.ReadOnly}
+	for _, d := range f.Databases {
+		cfg.Aliases = append(cfg.Aliases, federationAlias{Alias: d.Name, Path: d.Path})
 	}
-	return &cfg, nil
+	for _, d := range f.Clusters {
+		cfg.Clusters = append(cfg.Clusters, federationAlias{Alias: d.Name, Path: d.Path})
+	}
+	return cfg, nil
 }
 
 // pushableFederationOps is the allowlist of operator types safe to

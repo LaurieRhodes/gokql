@@ -2,7 +2,7 @@ package engine
 
 // callout.go — the callout policy: which outside endpoints a query may
 // reach, in ADX's form. Rules come from "callouts" in the primary
-// scope's .okql-federation.json, e.g.
+// scope's gokql.yaml, e.g.
 //
 //	"callouts": [{"CalloutType": "webapi",
 //	              "CalloutUriRegex": "^https://prices\\.azure\\.com/",
@@ -23,14 +23,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/LaurieRhodes/gokql/pkg/config"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
-type calloutRule struct {
-	CalloutType     string `json:"CalloutType"`
-	CalloutUriRegex string `json:"CalloutUriRegex"`
-	CanCall         bool   `json:"CanCall"`
-}
+type calloutRule = config.Callout
 
 var predefinedCallouts = []calloutRule{{CalloutType: "external_data", CalloutUriRegex: ".*", CanCall: true}}
 
@@ -63,8 +60,8 @@ func (e *Engine) checkCallout(kind, uri string) error {
 	}
 	if !allowed {
 		return fmt.Errorf("callout to %s is not allowed: the callout policy has no %s rule for it. "+
-			"Add {\"CalloutType\": %q, \"CalloutUriRegex\": \"<regex>\", \"CanCall\": true} to \"callouts\" in %s",
-			uri, kind, kind, federationConfigFileName)
+			"Add one under callouts in %s: {CalloutType: %s, CalloutUriRegex: <regex>, CanCall: true}",
+			uri, kind, federationConfigFileName, kind)
 	}
 	return nil
 }

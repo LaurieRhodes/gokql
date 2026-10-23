@@ -331,6 +331,13 @@ func ParseWithParameters(input string, params map[string]string) (Statement, err
 
 	// Split on semicolons (respecting strings and parentheses)
 	stmts := splitStatements(input)
+	if strings.Contains(strings.ToLower(input), "alias") {
+		exp, err := expandAliases(stmts)
+		if err != nil {
+			return nil, err
+		}
+		stmts = exp
+	}
 	if exp, err := expandMacros(stmts); err != nil {
 		return nil, err
 	} else {
@@ -520,7 +527,7 @@ func parseStatements(stmts []string) (Statement, error) {
 // nothing about either command's own grammar conflicts with piping.
 var pipeableSimpleCommandPrefixes = []string{
 	".show tables", ".show database", ".help", ".show table ",
-	".show graph_model", ".show cluster policy callout", ".show graph_snapshot", ".show operations",
+	".show graph_model", ".show cluster policy callout", ".show functions", ".show function ", ".show materialized-views", ".show graph_snapshot", ".show operations",
 }
 
 func parseSingleStatement(input string) (Statement, error) {
@@ -1086,7 +1093,7 @@ func parseCommand(input string) (Statement, error) {
 	}
 	if strings.HasPrefix(lower, ".alter cluster policy callout") || strings.HasPrefix(lower, ".alter-merge cluster policy callout") ||
 		strings.HasPrefix(lower, ".delete cluster policy callout") {
-		return nil, fmt.Errorf("the callout policy is read from \"callouts\" in .okql-federation.json and cannot be changed by a command")
+		return nil, fmt.Errorf("the callout policy is read from \"callouts\" in gokql.yaml and cannot be changed by a command")
 	}
 
 	// .show database

@@ -35,6 +35,7 @@ import (
 	// portability improvement, not just defensive boilerplate).
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
+	"github.com/LaurieRhodes/gokql/pkg/config"
 	"github.com/LaurieRhodes/gokql/pkg/engine"
 	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
@@ -105,11 +106,12 @@ func main() {
 	// Accepted for existing scripts; every database is discovered.
 	_ = flag.Bool("discover", false, "No effect: every database is read from its extent files")
 	modeFlag := flag.String("mode", "table", "Output mode: table, csv, json, jsonl, tsv")
-	noRC := flag.Bool("no-rc", false, "Don't load ~/.okqlrc")
+	noRC := flag.Bool("no-rc", false, "Don't load ~/.gokqlrc")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	serveFlag := flag.Bool("serve", false, "Network mode: serve -db over HTTP, speaking Kustainer's REST protocol (POST /v1/rest/query, /v1/rest/mgmt). Single database, no auth — see server.go's file-level doc comment before exposing beyond a trusted network.")
 	serveAddr := flag.String("addr", ":8080", "Address to listen on in -serve mode")
 	dbNameFlag := flag.String("dbname", "", "Database name clients must send in -serve mode (defaults to -db's final path component)")
+	writeConfig := flag.Bool("write-config", false, "Write gokql.yaml into -db: converted from the older .okql-*.json files if present, else a commented template; then exit")
 	embedCheck := flag.Bool("embed-check", false, "Probe the configured embedding backend and report whether it is ready, then exit")
 	embedSetup := flag.Bool("embed-setup", false, "Write a setup script for a local embedding backend, then exit. Writes only; gokql never downloads or runs anything itself")
 	embedSetupPath := flag.String("embed-setup-path", "setup-embeddings.sh", "Where -embed-setup writes its script")
@@ -134,6 +136,10 @@ func main() {
 		fmt.Printf("gokql v%s\n", version)
 		fmt.Printf("build: %s\n", buildInfo())
 		return
+	}
+
+	if *writeConfig {
+		os.Exit(runWriteConfig(*dbFlag, flag.Args()))
 	}
 
 	// --- Resolve database path and query from positional args ---
@@ -173,7 +179,7 @@ func main() {
 		}
 		// Which flags the user actually typed, not just which ended up
 		// non-zero — loadServerConfig needs this to know whether a CLI
-		// flag should override a real .okql-server.json setting, or
+		// flag should override a real gokql.yaml setting, or
 		// whether it's just sitting at its own unrelated default.
 		explicit := make(map[string]bool)
 		flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
@@ -183,6 +189,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		cfg.readOnly = cfg.readOnly || *readOnly
 		if err := runServer(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -213,6 +220,7 @@ func main() {
 
 	eng := engine.New(cat)
 	eng.Verbose = *verbose
+	eng.ReadOnly = *readOnly
 
 	// -embed-eval needs a database, so unlike -embed-check it runs
 	// after the catalog is open rather than before.
@@ -257,17 +265,26 @@ func main() {
 	// --- Pipe mode ---
 	stat, _ := os.Stdin.Stat()
 	if (stat.Mode() & os.ModeCharDevice) == 0 {
-		scanner := bufio.NewScanner(os.Stdin)
-		// Increase buffer for long queries
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "//") {
-				continue
-			}
-			if err := st.dispatch(line); err != nil {
+		// Statements may span lines (script.go). Any failed statement
+		// makes the exit status 1; the others still run.
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: reading stdin: %v\n", err)
+			os.Exit(1)
+		}
+		failed := false
+		for _, q := range scriptStatements(string(data)) {
+			if err := st.dispatch(q); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				failed = true
 			}
+		}
+		if failed {
+			st.closeOutput()
+			if dbPath != "" {
+				engine.WaitForAllMaterializedViewMaintenance(dbPath)
+			}
+			os.Exit(1)
 		}
 		return
 	}
@@ -626,12 +643,8 @@ func (st *replState) handleRead(input string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "//") {
-			continue
-		}
-		if err := st.dispatch(line); err != nil {
+	for _, q := range scriptStatements(string(data)) {
+		if err := st.dispatch(q); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	}
@@ -751,8 +764,11 @@ func (st *replState) loadRC() {
 	if err != nil {
 		return
 	}
-	rcPath := filepath.Join(home, ".okqlrc")
-	data, err := os.ReadFile(rcPath)
+	// ~/.gokqlrc; ~/.okqlrc is the older name
+	data, err := os.ReadFile(filepath.Join(home, ".gokqlrc"))
+	if os.IsNotExist(err) {
+		data, err = os.ReadFile(filepath.Join(home, ".okqlrc"))
+	}
 	if err != nil {
 		return // No RC file — fine
 	}
@@ -887,4 +903,46 @@ func openCatalog(dbPath string, verbose bool) (*catalog.Catalog, error) {
 		fmt.Fprintf(os.Stderr, "[catalog] %d tables from extent footers\n", len(cat.Database.Tables))
 	}
 	return cat, nil
+}
+
+// runWriteConfig implements -write-config.
+func runWriteConfig(dbPath string, args []string) int {
+	if dbPath == "" && len(args) == 1 {
+		dbPath = args[0]
+	}
+	if dbPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: -write-config needs -db DIR")
+		return 1
+	}
+	target := filepath.Join(dbPath, config.FileName)
+	if _, err := os.Stat(target); err == nil {
+		fmt.Fprintf(os.Stderr, "Error: %s already exists\n", target)
+		return 1
+	}
+	f, err := config.Load(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	data := []byte(config.Template)
+	if f.Legacy {
+		if data, err = f.Marshal(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+	}
+	if err := os.MkdirAll(dbPath, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	if f.Legacy {
+		fmt.Printf("Wrote %s from the older JSON files; delete .okql-federation.json and .okql-server.json once you have checked it.\n", target)
+	} else {
+		fmt.Printf("Wrote %s (a commented template).\n", target)
+	}
+	return 0
 }

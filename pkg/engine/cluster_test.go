@@ -22,7 +22,7 @@ func clusterScopes(t *testing.T) (*Engine, string) {
 		"clusters":  []map[string]string{{"alias": "lab", "path": other}},
 	}
 	b, _ := json.Marshal(cfg)
-	if err := os.WriteFile(filepath.Join(local, federationConfigFileName), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(local, ".okql-federation.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return discoverEngine(t, local), filepath.Base(other)
@@ -67,6 +67,13 @@ func TestMacroExpand(t *testing.T) {
 	expectErrContains(t, eng, `macro-expand Nope as X (X.Ent)`, "unknown entity group")
 }
 
+func TestAliasDatabase(t *testing.T) {
+	eng, otherDB := clusterScopes(t)
+	expectWrRows(t, eng, `alias database m = cluster('odm').database('mstar'); database('m').Ent | count`, "1")
+	expectWrRows(t, eng, `alias database ['far db'] = cluster('lab').database('`+otherDB+`'); database("far db").Far | project Name`, "far Kusto")
+	expectErrContains(t, eng, `alias database x = 1; print 1`, "expected cluster")
+}
+
 func TestCursors(t *testing.T) {
 	eng := discoverEngine(t, t.TempDir())
 	diskExec(t, eng, `.create table T (x:long)`)
@@ -87,4 +94,20 @@ func TestExtentIntrospection(t *testing.T) {
 	diskExec(t, eng, `.set-or-append T <| print x=1`)
 	expectWrRows(t, eng, `T | project e = extent_id(), t = isnull(extent_tags())`,
 		"00000000-0000-0000-0000-000000000000 | true")
+}
+
+// gokql.yaml: the database's own readonly, and the cluster sections.
+func TestConfigYAML(t *testing.T) {
+	local, other := t.TempDir(), t.TempDir()
+	diskExec(t, discoverEngine(t, other), `.set-or-append Policies <| datatable(Title:string)["Leave policy"]`)
+	diskExec(t, discoverEngine(t, local), `.set-or-append Notes <| print x=1`)
+	yml := "cluster: corp\nreadonly: true\ndatabases:\n  - name: hr\n    path: " + other + "\n"
+	if err := os.WriteFile(filepath.Join(local, "gokql.yaml"), []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	eng := discoverEngine(t, local)
+	expectWrRows(t, eng, `database("hr").Policies | project Title`, "Leave policy")
+	expectWrRows(t, eng, `print current_cluster_endpoint()`, "corp")
+	expectErrContains(t, eng, `.set-or-append Notes <| print x=2`, "readonly: true")
+	expectWrRows(t, eng, `Notes | count`, "1")
 }

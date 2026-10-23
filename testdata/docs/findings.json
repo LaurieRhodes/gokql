@@ -1,0 +1,6 @@
+[
+ {"id": "wiz-001", "severity": "HIGH", "resource": {"type": "VirtualMachine", "name": "vm-web-01", "region": "australiaeast"}, "rule": "Public VM with critical vulnerability", "cves": ["CVE-2024-3094", "CVE-2023-4863"], "firstSeen": "2026-09-28T02:10:00Z"},
+ {"id": "wiz-002", "severity": "MEDIUM", "resource": {"type": "StorageAccount", "name": "stlogs01", "region": "australiaeast"}, "rule": "Storage account allows public blob access", "cves": [], "firstSeen": "2026-09-30T11:00:00Z"},
+ {"id": "wiz-003", "severity": "CRITICAL", "resource": {"type": "VirtualMachine", "name": "vm-db-02", "region": "australiasoutheast"}, "rule": "Exposed SSH with weak credentials", "cves": ["CVE-2024-6387"], "firstSeen": "2026-10-01T05:45:00Z"},
+ {"id": "wiz-004", "severity": "LOW", "resource": {"type": "KeyVault", "name": "kv-shared", "region": "australiaeast"}, "rule": "Key Vault without purge protection", "cves": [], "firstSeen": "2026-10-01T09:00:00Z"}
+]

@@ -14,7 +14,7 @@ package engine
 // api-key to *.azure.com and as a bearer token elsewhere. The callout
 // policy must allow the URI (type azure_openai, callout.go). For
 // ai_embeddings an empty connection string, or "default", uses the
-// engine's own embedder (GOKQL_EMBED, docs/embeddings.md), as
+// engine's own embedder (GOKQL_EMBED, docs/guide/embeddings-and-ai.md), as
 // embed_text() does.
 //
 // Output, as Kusto.Language types it: the input columns plus

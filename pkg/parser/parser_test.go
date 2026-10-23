@@ -579,3 +579,20 @@ func TestSplitStatementsStillSplitsAtTopLevel(t *testing.T) {
 		t.Fatalf("expected 2 parts for a genuine top-level split, got %d: %q", len(parts), parts)
 	}
 }
+
+func TestIsWrite(t *testing.T) {
+	for q, want := range map[string]bool{
+		`T | count`: false, `.show tables`: false, `.show tables | count`: false, `.help`: false,
+		`.show table T policy update`: false, `.set-or-append T <| print 1`: true, `.drop table T`: true,
+		`.create-or-alter function F() { 1 }`: true, `.alter table T policy update @'[]'`: true,
+		`let x = 1; print x`: false, `.compact table T`: true,
+	} {
+		stmt, err := Parse(q)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if got := IsWrite(stmt); got != want {
+			t.Errorf("IsWrite(%q) = %v, want %v", q, got, want)
+		}
+	}
+}

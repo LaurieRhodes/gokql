@@ -41,7 +41,7 @@ func writeFederationConfig(t *testing.T, dir string, aliases map[string]string) 
 		sb = append(sb, []byte(`{"alias":"`+alias+`","path":"`+path+`"}`)...)
 	}
 	sb = append(sb, []byte(`]}`)...)
-	if err := os.WriteFile(filepath.Join(dir, federationConfigFileName), sb, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".okql-federation.json"), sb, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

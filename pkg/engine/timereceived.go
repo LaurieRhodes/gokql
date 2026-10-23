@@ -72,7 +72,7 @@ const schemaOptionsFileName = ".okql-schema-options.json"
 // schemaOptions is the scope-level default — loaded once per Engine
 // from inside the scope directory, matching the established "config
 // lives alongside the data it describes" convention
-// (.okql-federation.json, .okql-server.json already established this).
+// (gokql.yaml already established this).
 type schemaOptions struct {
 	// DisableTimeReceived flips the SCOPE-WIDE default to opt-out —
 	// for a scope that wants plain, unmodified KQL-over-files access

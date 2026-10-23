@@ -14,7 +14,7 @@ func calloutScope(t *testing.T, rules []calloutRule) *Engine {
 	t.Helper()
 	dir := t.TempDir()
 	b, _ := json.Marshal(map[string]interface{}{"callouts": rules})
-	if err := os.WriteFile(filepath.Join(dir, federationConfigFileName), b, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".okql-federation.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return discoverEngine(t, dir)

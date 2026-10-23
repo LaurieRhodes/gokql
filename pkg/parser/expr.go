@@ -1139,6 +1139,16 @@ func (p *exprParser) parseIdentOrFunc() (Expr, error) {
 				return p.parsePostfixAccess(fc)
 			}
 		}
+		if alias, ok := deprecatedFuncAliases[lower]; ok {
+			lower = alias
+		}
+		if lower == "make_string" {
+			// make_string(cp, ...): the deprecated form of
+			// unicode_codepoints_to_string over the code points given
+			fc := &FuncCall{Name: "unicode_codepoints_to_string", RawName: name,
+				Args: []Expr{&FuncCall{Name: "pack_array", RawName: "pack_array", Args: args}}}
+			return p.parsePostfixAccess(fc)
+		}
 		fc := &FuncCall{Name: lower, RawName: name, Args: args}
 		return p.parsePostfixAccess(fc)
 	}
@@ -1325,4 +1335,21 @@ func isIdentStart(ch byte) bool {
 
 func isIdentChar(ch byte) bool {
 	return isIdentStart(ch) || (ch >= '0' && ch <= '9')
+}
+
+// deprecatedFuncAliases are the older names ADX still accepts (the
+// emulator answers them), mapped to the current function.
+var deprecatedFuncAliases = map[string]string{
+	"arraylength":         "array_length",
+	"base64_decodestring": "base64_decode_tostring",
+	"base64_encodestring": "base64_encode_tostring",
+	"current_cursor":      "cursor_current",
+	"extentid":            "extent_id",
+	"extractall":          "extract_all",
+	"notempty":            "isnotempty",
+	"notnull":             "isnotnull",
+	"parsejson":           "parse_json",
+	"parseurl":            "parse_url",
+	"parseurlquery":       "parse_urlquery",
+	"toobject":            "todynamic",
 }

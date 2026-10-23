@@ -690,7 +690,7 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 		return nil, true, nil
 
 	case "current_cluster_endpoint":
-		// This cluster's name from .okql-federation.json ("localhost",
+		// This cluster's name from gokql.yaml ("localhost",
 		// as the emulator answers, when unset). See cluster.go.
 		if eng == nil {
 			return "localhost", true, nil

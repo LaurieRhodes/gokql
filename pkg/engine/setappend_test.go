@@ -228,7 +228,7 @@ func TestPipedSimpleCommands(t *testing.T) {
 	expectRows(t, tbl, 1)
 	expectCell(t, tbl, 0, 0, "Alpha")
 
-	tbl = diskQuery(t, eng, `.help | where Command has "compact"`)
+	tbl = diskQuery(t, eng, `.help | where Command startswith ".compact table"`)
 	expectRows(t, tbl, 1)
 
 	tbl = diskQuery(t, eng, `.show database | project Tables`)

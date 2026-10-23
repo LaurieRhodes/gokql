@@ -233,10 +233,10 @@ func convertCSVValue(s string, kt types.KQLType) interface{} {
 			"01/02/2006 15:04:05", "01/02/2006",
 		} {
 			if t, err := time.Parse(f, s); err == nil {
-				return t.UTC()
+				return t.UTC().UnixNano() // datetimes are int64 nanoseconds
 			}
 		}
-		return s // Fall back to string
+		return nil // not a datetime: null, as tostring-typed parsing does
 	default:
 		return s
 	}
@@ -252,18 +252,27 @@ func readJSONFile(path string) (*types.Table, error) {
 
 	data = []byte(strings.TrimSpace(string(data)))
 
-	// Try JSON array first
-	var records []map[string]interface{}
-	if err := json.Unmarshal(data, &records); err != nil {
-		// Try single object
+	// A JSON array of objects, or a single object. Columns keep the
+	// order of first appearance in the file.
+	var raws []json.RawMessage
+	if err := json.Unmarshal(data, &raws); err != nil {
 		var single map[string]interface{}
 		if err2 := json.Unmarshal(data, &single); err2 != nil {
 			return nil, fmt.Errorf("not valid JSON array or object: %w", err)
 		}
-		records = []map[string]interface{}{single}
+		raws = []json.RawMessage{data}
 	}
-
-	return jsonRecordsToTable(path, records)
+	var records []map[string]interface{}
+	var keys [][]string
+	for _, r := range raws {
+		var obj map[string]interface{}
+		if err := json.Unmarshal(r, &obj); err != nil {
+			return nil, fmt.Errorf("not valid JSON array of objects: %w", err)
+		}
+		records = append(records, obj)
+		keys = append(keys, objectKeys(r))
+	}
+	return jsonRecordsToTable(path, records, keys)
 }
 
 func readNDJSONFile(path string) (*types.Table, error) {
@@ -274,21 +283,27 @@ func readNDJSONFile(path string) (*types.Table, error) {
 	defer f.Close()
 
 	var records []map[string]interface{}
+	var keys [][]string
 	dec := json.NewDecoder(f)
 	for {
-		var obj map[string]interface{}
-		if err := dec.Decode(&obj); err == io.EOF {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err == io.EOF {
 			break
 		} else if err != nil {
 			break // Tolerate partial reads
 		}
+		var obj map[string]interface{}
+		if json.Unmarshal(raw, &obj) != nil {
+			continue
+		}
 		records = append(records, obj)
+		keys = append(keys, objectKeys(raw))
 	}
 
-	return jsonRecordsToTable(path, records)
+	return jsonRecordsToTable(path, records, keys)
 }
 
-func jsonRecordsToTable(path string, records []map[string]interface{}) (*types.Table, error) {
+func jsonRecordsToTable(path string, records []map[string]interface{}, keys [][]string) (*types.Table, error) {
 	if len(records) == 0 {
 		name := filepath.Base(path)
 		return types.NewTable(name, types.Schema{}), nil
@@ -297,8 +312,8 @@ func jsonRecordsToTable(path string, records []map[string]interface{}) (*types.T
 	// Discover columns from all records (union of keys)
 	colSet := make(map[string]bool)
 	var colOrder []string
-	for _, rec := range records {
-		for k := range rec {
+	for i := range records {
+		for _, k := range keys[i] {
 			if !colSet[k] {
 				colSet[k] = true
 				colOrder = append(colOrder, k)

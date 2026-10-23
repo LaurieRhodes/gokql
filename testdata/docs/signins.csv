@@ -1,0 +1,11 @@
+TimeGenerated,UserPrincipalName,IPAddress,Location,ResultType,AppDisplayName
+2026-10-01T07:58:12Z,ana@contoso.example,203.0.113.10,AU,0,Outlook
+2026-10-01T08:01:40Z,ana@contoso.example,203.0.113.10,AU,0,Teams
+2026-10-01T08:03:05Z,raj@contoso.example,198.51.100.7,IN,50126,Outlook
+2026-10-01T08:03:20Z,raj@contoso.example,198.51.100.7,IN,50126,Outlook
+2026-10-01T08:03:41Z,raj@contoso.example,198.51.100.7,IN,0,Outlook
+2026-10-01T09:15:00Z,ana@contoso.example,192.0.2.44,RU,50126,Azure Portal
+2026-10-01T09:15:09Z,ana@contoso.example,192.0.2.44,RU,50126,Azure Portal
+2026-10-01T09:15:30Z,ana@contoso.example,192.0.2.44,RU,50126,Azure Portal
+2026-10-01T09:16:02Z,ana@contoso.example,192.0.2.44,RU,0,Azure Portal
+2026-10-01T10:20:00Z,lee@contoso.example,203.0.113.25,AU,0,SharePoint

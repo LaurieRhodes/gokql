@@ -1,0 +1,4821 @@
+[
+ {
+  "kind": "aggregation",
+  "name": "any",
+  "category": "Aggregation functions",
+  "description": "Arbitrarily chooses one record for each group in a summarize operator, and returns the value of one or more expressions over each such record.",
+  "url": "https://learn.microsoft.com/kusto/query/take-any-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "anyif",
+  "category": "Aggregation functions",
+  "description": "Arbitrarily selects one record for each group in a summarize operator in records for which the predicate is 'true'.",
+  "url": "https://learn.microsoft.com/kusto/query/take-anyif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "argmax",
+  "category": "Aggregation functions",
+  "description": "Finds a row in the table that maximizes the specified expression.",
+  "url": "https://learn.microsoft.com/kusto/query/arg-max-aggregation-function",
+  "supported": false,
+  "note": "Deprecated name of arg_max with older column naming (max_x, max_x_y); not accepted here. Use arg_max()."
+ },
+ {
+  "kind": "aggregation",
+  "name": "argmin",
+  "category": "Aggregation functions",
+  "description": "Finds a row in the table that minimizes the specified expression.",
+  "url": "https://learn.microsoft.com/kusto/query/arg-min-aggregation-function",
+  "supported": false,
+  "note": "Deprecated name of arg_min; not accepted here. Use arg_min()."
+ },
+ {
+  "kind": "aggregation",
+  "name": "cnt",
+  "category": "Aggregation functions",
+  "description": "Counts the number of records per summarization group, or total if summarization is done without grouping.",
+  "url": "https://learn.microsoft.com/kusto/query/count-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "count",
+  "category": "Aggregation functions",
+  "description": "Counts the number of records per summarization group, or total if summarization is done without grouping.",
+  "url": "https://learn.microsoft.com/kusto/query/count-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "count_distinct",
+  "category": "Aggregation functions",
+  "description": "Counts unique values specified by the scalar expression per summary group, or the total number of unique values if the summary group is omitted.",
+  "url": "https://learn.microsoft.com/kusto/query/count-distinct-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "count_distinctif",
+  "category": "Aggregation functions",
+  "description": "Conditionally counts unique values specified by the scalar expression per summary group, or the total number of unique values if the summary group is omitted.",
+  "url": "https://learn.microsoft.com/kusto/query/count-distinctif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "countif",
+  "category": "Aggregation functions",
+  "description": "Counts the rows in which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/countif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "covariance",
+  "category": "Aggregation functions",
+  "description": "Calculates the sample covariance of two random variables expr1 and expr2.",
+  "url": "https://learn.microsoft.com/kusto/query/covariance-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "covarianceif",
+  "category": "Aggregation functions",
+  "description": "Calculates the sample covariance of two random variables expr1 and expr2 in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/covarianceif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "covariancep",
+  "category": "Aggregation functions",
+  "description": "Calculates the population covariance of two random variables expr1 and expr2.",
+  "url": "https://learn.microsoft.com/kusto/query/covariancep-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "covariancepif",
+  "category": "Aggregation functions",
+  "description": "Calculates the sample covariance of two random variables expr1 and expr2 in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/covariancepif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "dcount",
+  "category": "Aggregation functions",
+  "description": "Calculates an estimate of the number of distinct values that are taken by a scalar expression in the summary group.",
+  "url": "https://learn.microsoft.com/kusto/query/dcount-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "dcountif",
+  "category": "Aggregation functions",
+  "description": "Estimates the number of distinct values of expr for rows in which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/dcountif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_bag",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` JSON property bag (dictionary) of all the values of expr in the group.",
+  "url": "https://learn.microsoft.com/kusto/query/make-bag-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_bag_if",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` JSON property bag (dictionary) of expr values in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/make-bag-if-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_list",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` array of all the values of expr in the group.",
+  "url": "https://learn.microsoft.com/kusto/query/make-list-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_list_if",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` array of expr values in the group for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/make-list-if-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_set",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` array of the set of distinct values that expr takes in the group.",
+  "url": "https://learn.microsoft.com/kusto/query/make-set-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_set_if",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` array of the set of distinct values that expr takes in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/make-set-if-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "makelist",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` array of all the values of expr in the group.",
+  "url": "https://learn.microsoft.com/kusto/query/make-list-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "makeset",
+  "category": "Aggregation functions",
+  "description": "Creates a `dynamic` array of the set of distinct values that expr takes in the group.",
+  "url": "https://learn.microsoft.com/kusto/query/make-set-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "max",
+  "category": "Aggregation functions",
+  "description": "Finds the maximum value of the expression in the table.",
+  "url": "https://learn.microsoft.com/kusto/query/max-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "maxif",
+  "category": "Aggregation functions",
+  "description": "Calculates the maximum value of expr in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/maxif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "merge_tdigest",
+  "category": "Aggregation functions",
+  "description": "Merges tdigest results across the group.",
+  "url": "https://learn.microsoft.com/kusto/query/tdigest-merge-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "min",
+  "category": "Aggregation functions",
+  "description": "Finds the minimum value of the expression in the table.",
+  "url": "https://learn.microsoft.com/kusto/query/min-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "minif",
+  "category": "Aggregation functions",
+  "description": "Returns the minimum of Expr in records for which Predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/minif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "percentilew",
+  "category": "Aggregation functions",
+  "description": "The `percentilew()` function calculates a weighted estimate for the specified nearest-rank percentile of the population defined by expr.",
+  "url": "https://learn.microsoft.com/kusto/query/percentilesw-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "stdev",
+  "category": "Aggregation functions",
+  "description": "Calculates the standard deviation of expr across the group, using Bessel's correction for a small dataset that is considered a sample.",
+  "url": "https://learn.microsoft.com/kusto/query/stdev-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "stdevif",
+  "category": "Aggregation functions",
+  "description": "Calculates the standard deviation of expr in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/stdevif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "sum",
+  "category": "Aggregation functions",
+  "description": "Calculates the sum of expr across the group.",
+  "url": "https://learn.microsoft.com/kusto/query/sum-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "sumif",
+  "category": "Aggregation functions",
+  "description": "Calculates the sum of expr in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/sumif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "take_any",
+  "category": "Aggregation functions",
+  "description": "Arbitrarily chooses one record for each group in a summarize operator, and returns the value of one or more expressions over each such record.",
+  "url": "https://learn.microsoft.com/kusto/query/take-any-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "take_anyif",
+  "category": "Aggregation functions",
+  "description": "Arbitrarily selects one record for each group in a summarize operator in records for which the predicate is 'true'.",
+  "url": "https://learn.microsoft.com/kusto/query/take-anyif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "variance",
+  "category": "Aggregation functions",
+  "description": "Calculates the variance of expr across the group, considering the group as a sample.",
+  "url": "https://learn.microsoft.com/kusto/query/variance-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "varianceif",
+  "category": "Aggregation functions",
+  "description": "Calculates the variance of expr in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/varianceif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "variancep",
+  "category": "Aggregation functions",
+  "description": "Calculates the variance of expr across the group, considering the group as a population.",
+  "url": "https://learn.microsoft.com/kusto/query/variancep-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "variancepif",
+  "category": "Aggregation functions",
+  "description": "Calculates the variance of expr in records for which predicate evaluates to `true`.",
+  "url": "https://learn.microsoft.com/kusto/query/variancepif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "binary_all_and",
+  "category": "Binary functions",
+  "description": "Returns aggregated value using the binary AND of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-all-and-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "binary_all_or",
+  "category": "Binary functions",
+  "description": "Returns aggregated value using the binary OR of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-all-or-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "binary_all_xor",
+  "category": "Binary functions",
+  "description": "Returns aggregated value using the binary XOR of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-all-xor-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "buildschema",
+  "category": "Dynamic functions",
+  "description": "Returns the minimal schema that admits all values of the dynamic input.",
+  "url": "https://learn.microsoft.com/kusto/query/buildschema-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "make_list_with_nulls",
+  "category": "Dynamic functions",
+  "description": "Returns a list of all the values within the group, including null values.",
+  "url": "https://learn.microsoft.com/kusto/query/make-list-with-nulls-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "arg_max",
+  "category": "Row selector functions",
+  "description": "Returns one or more expressions when the argument is maximized.",
+  "url": "https://learn.microsoft.com/kusto/query/arg-max-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "arg_min",
+  "category": "Row selector functions",
+  "description": "Returns one or more expressions when the argument is minimized.",
+  "url": "https://learn.microsoft.com/kusto/query/arg-min-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "avg",
+  "category": "Statistical functions",
+  "description": "Returns an average value across the group.",
+  "url": "https://learn.microsoft.com/kusto/query/avg-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "avgif",
+  "category": "Statistical functions",
+  "description": "Returns an average value across the group (with predicate).",
+  "url": "https://learn.microsoft.com/kusto/query/avgif-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "hll",
+  "category": "Statistical functions",
+  "description": "Returns the HyperLogLog (HLL) results of the group elements, an intermediate value of the `dcount` approximation.",
+  "url": "https://learn.microsoft.com/kusto/query/hll-aggregation-function",
+  "supported": true,
+  "note": "The sketch encoding is gokql's own: dcount_hll and hll_merge agree within the estimate, but a sketch from ADX cannot be merged here."
+ },
+ {
+  "kind": "aggregation",
+  "name": "hll_if",
+  "category": "Statistical functions",
+  "description": "Returns the HyperLogLog (HLL) results of the group elements, an intermediate value of the `dcount` approximation (with predicate).",
+  "url": "https://learn.microsoft.com/kusto/query/hll-if-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "hll_merge",
+  "category": "Statistical functions",
+  "description": "Returns a value for merged HLL results.",
+  "url": "https://learn.microsoft.com/kusto/query/hll-merge-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "percentile",
+  "category": "Statistical functions",
+  "description": "Returns a percentile estimation of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/percentiles-aggregation-function",
+  "supported": true,
+  "note": "Nearest-rank, as ADX: exact on small inputs; on large inputs ADX's t-digest can differ in the last digits."
+ },
+ {
+  "kind": "aggregation",
+  "name": "percentiles",
+  "category": "Statistical functions",
+  "description": "Returns percentile estimations of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/percentiles-aggregation-function",
+  "supported": true,
+  "note": "As percentile()."
+ },
+ {
+  "kind": "aggregation",
+  "name": "percentiles_array",
+  "category": "Statistical functions",
+  "description": "Returns the percentile approximates of the array.",
+  "url": "https://learn.microsoft.com/kusto/query/percentiles-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "percentilesw",
+  "category": "Statistical functions",
+  "description": "Returns the weighted percentile approximate of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/percentilesw-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "percentilesw_array",
+  "category": "Statistical functions",
+  "description": "Returns the weighted percentile approximate of the array.",
+  "url": "https://learn.microsoft.com/kusto/query/percentilesw-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "stdevp",
+  "category": "Statistical functions",
+  "description": "Returns the standard deviation across the group for a population that is considered representative.",
+  "url": "https://learn.microsoft.com/kusto/query/stdevp-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "aggregation",
+  "name": "tdigest",
+  "category": "Statistical functions",
+  "description": "Returns an intermediate result for the percentiles approximation, the weighted percentile approximate of the group.",
+  "url": "https://learn.microsoft.com/kusto/query/tdigest-aggregation-function",
+  "supported": true,
+  "note": "The digest encoding is gokql's own; percentile_tdigest results agree within the digest's accuracy."
+ },
+ {
+  "kind": "aggregation",
+  "name": "tdigest_merge",
+  "category": "Statistical functions",
+  "description": "Returns the merged `tdigest` value across the group.",
+  "url": "https://learn.microsoft.com/kusto/query/tdigest-merge-aggregation-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "binary_and",
+  "category": "Binary functions",
+  "description": "Returns a result of the bitwise and operation between two values.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-and-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "binary_not",
+  "category": "Binary functions",
+  "description": "Returns a bitwise negation of the input value.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-not-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "binary_or",
+  "category": "Binary functions",
+  "description": "Returns a result of the bitwise or operation of the two values.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-or-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "binary_shift_left",
+  "category": "Binary functions",
+  "description": "Returns binary shift left operation on a pair of numbers: a \u003c\u003c n.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-shift-left-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "binary_shift_right",
+  "category": "Binary functions",
+  "description": "Returns binary shift right operation on a pair of numbers: a \u003e\u003e n.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-shift-right-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "binary_xor",
+  "category": "Binary functions",
+  "description": "Returns a result of the bitwise xor operation of the two values.",
+  "url": "https://learn.microsoft.com/kusto/query/binary-xor-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bitset_count_ones",
+  "category": "Binary functions",
+  "description": "Returns the number of set bits in the binary representation of a number.",
+  "url": "https://learn.microsoft.com/kusto/query/bitset-count-ones-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "case",
+  "category": "Conditional functions",
+  "description": "Evaluates a list of predicates and returns the first result expression whose predicate is satisfied.",
+  "url": "https://learn.microsoft.com/kusto/query/case-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "coalesce",
+  "category": "Conditional functions",
+  "description": "Evaluates a list of expressions and returns the first non-null (or nonempty for string) expression.",
+  "url": "https://learn.microsoft.com/kusto/query/coalesce-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "iff",
+  "category": "Conditional functions",
+  "description": "Evaluate the first argument (the predicate), and returns the value of either the second or third arguments, depending on whether the predicate evaluated to true (second) or false (third).",
+  "url": "https://learn.microsoft.com/kusto/query/iff-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "max_of",
+  "category": "Conditional functions",
+  "description": "Returns the maximum value of several evaluated numeric expressions.",
+  "url": "https://learn.microsoft.com/kusto/query/max-of-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "min_of",
+  "category": "Conditional functions",
+  "description": "Returns the minimum value of several evaluated numeric expressions.",
+  "url": "https://learn.microsoft.com/kusto/query/min-of-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "tobool",
+  "category": "Conversion functions",
+  "description": "Convert inputs to boolean (signed 8-bit) representation.",
+  "url": "https://learn.microsoft.com/kusto/query/tobool-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "todatetime",
+  "category": "Conversion functions",
+  "description": "Converts input to datetime scalar.",
+  "url": "https://learn.microsoft.com/kusto/query/todatetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "todecimal",
+  "category": "Conversion functions",
+  "description": "Converts input to a decimal number representation.",
+  "url": "https://learn.microsoft.com/kusto/query/todecimal-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "toguid",
+  "category": "Conversion functions",
+  "description": "Converts input to a value of type guid.",
+  "url": "https://learn.microsoft.com/kusto/query/toguid-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "toint",
+  "category": "Conversion functions",
+  "description": "Converts the input to an integer number representation.",
+  "url": "https://learn.microsoft.com/kusto/query/toint-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "tolong",
+  "category": "Conversion functions",
+  "description": "Converts the input to a long number representation.",
+  "url": "https://learn.microsoft.com/kusto/query/tolong-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "tostring",
+  "category": "Conversion functions",
+  "description": "Converts input to a string representation.",
+  "url": "https://learn.microsoft.com/kusto/query/tostring-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "totimespan",
+  "category": "Conversion functions",
+  "description": "Converts input to timespan scalar.",
+  "url": "https://learn.microsoft.com/kusto/query/totimespan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ago",
+  "category": "DateTime/timespan functions",
+  "description": "Subtracts the given timespan from the current UTC clock time.",
+  "url": "https://learn.microsoft.com/kusto/query/ago-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "datetime_add",
+  "category": "DateTime/timespan functions",
+  "description": "Calculates a new datetime from a specified datepart multiplied by a specified amount, added to a specified datetime.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-add-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "datetime_diff",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the end of the year containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-diff-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "datetime_local_to_utc",
+  "category": "DateTime/timespan functions",
+  "description": "Converts local datetime to UTC datetime using a time-zone specification.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-local-to-utc-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "datetime_part",
+  "category": "DateTime/timespan functions",
+  "description": "Extracts the requested date part as an integer value.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-part-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "datetime_utc_to_local",
+  "category": "DateTime/timespan functions",
+  "description": "Converts UTC datetimgoe to local datetime using a time-zone specification.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-utc-to-local-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "dayofmonth",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the integer number representing the day number of the given month.",
+  "url": "https://learn.microsoft.com/kusto/query/day-of-month-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "dayofweek",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the integer number of days since the preceding Sunday, as a timespan.",
+  "url": "https://learn.microsoft.com/kusto/query/day-of-week-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "dayofyear",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the integer number represents the day number of the given year.",
+  "url": "https://learn.microsoft.com/kusto/query/day-of-year-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "endofday",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the end of the day containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/endofday-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "endofmonth",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the end of the month containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/endofmonth-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "endofweek",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the end of the week containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/endofweek-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "endofyear",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the end of the year containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/endofyear-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "format_datetime",
+  "category": "DateTime/timespan functions",
+  "description": "Formats a datetime parameter based on the format pattern parameter.",
+  "url": "https://learn.microsoft.com/kusto/query/format-datetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "format_timespan",
+  "category": "DateTime/timespan functions",
+  "description": "Formats a format-timespan parameter based on the format pattern parameter.",
+  "url": "https://learn.microsoft.com/kusto/query/format-timespan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "getyear",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the year part of the datetime argument.",
+  "url": "https://learn.microsoft.com/kusto/query/getyear-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hourofday",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the integer number representing the hour number of the given date.",
+  "url": "https://learn.microsoft.com/kusto/query/hour-of-day-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "make_datetime",
+  "category": "DateTime/timespan functions",
+  "description": "Creates a datetime scalar value from the specified date and time.",
+  "url": "https://learn.microsoft.com/kusto/query/make-datetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "make_timespan",
+  "category": "DateTime/timespan functions",
+  "description": "Creates a timespan scalar value from the specified time period.",
+  "url": "https://learn.microsoft.com/kusto/query/make-timespan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "monthofyear",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the integer number that represents the month number of the given year.",
+  "url": "https://learn.microsoft.com/kusto/query/monthofyear-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "now",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the current UTC clock time, optionally offset by a given timespan.",
+  "url": "https://learn.microsoft.com/kusto/query/now-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "startofday",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the start of the day containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/startofday-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "startofmonth",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the start of the month containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/startofmonth-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "startofweek",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the start of the week containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/startofweek-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "startofyear",
+  "category": "DateTime/timespan functions",
+  "description": "Returns the start of the year containing the date, shifted by an offset, if provided.",
+  "url": "https://learn.microsoft.com/kusto/query/startofyear-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "unixtime_microseconds_todatetime",
+  "category": "DateTime/timespan functions",
+  "description": "Converts unix-epoch microseconds to UTC datetime.",
+  "url": "https://learn.microsoft.com/kusto/query/unixtime-microseconds-todatetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "unixtime_milliseconds_todatetime",
+  "category": "DateTime/timespan functions",
+  "description": "Converts unix-epoch milliseconds to UTC datetime.",
+  "url": "https://learn.microsoft.com/kusto/query/unixtime-milliseconds-todatetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "unixtime_nanoseconds_todatetime",
+  "category": "DateTime/timespan functions",
+  "description": "Converts unix-epoch nanoseconds to UTC datetime.",
+  "url": "https://learn.microsoft.com/kusto/query/unixtime-nanoseconds-todatetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "unixtime_seconds_todatetime",
+  "category": "DateTime/timespan functions",
+  "description": "Converts unix-epoch seconds to UTC datetime.",
+  "url": "https://learn.microsoft.com/kusto/query/unixtime-seconds-todatetime-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_concat",
+  "category": "Dynamic/array functions",
+  "description": "Concatenates a number of dynamic arrays to a single array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-concat-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_iff",
+  "category": "Dynamic/array functions",
+  "description": "Applies element-wise iif function on arrays.",
+  "url": "https://learn.microsoft.com/kusto/query/array-iff-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_index_of",
+  "category": "Dynamic/array functions",
+  "description": "Searches the array for the specified item, and returns its position.",
+  "url": "https://learn.microsoft.com/kusto/query/array-index-of-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_length",
+  "category": "Dynamic/array functions",
+  "description": "Calculates the number of elements in a dynamic array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-length-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_reverse",
+  "category": "Dynamic/array functions",
+  "description": "Reverses the order of the elements in a dynamic array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-reverse-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_rotate_left",
+  "category": "Dynamic/array functions",
+  "description": "Rotates values inside a dynamic array to the left.",
+  "url": "https://learn.microsoft.com/kusto/query/array-rotate-left-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_rotate_right",
+  "category": "Dynamic/array functions",
+  "description": "Rotates values inside a dynamic array to the right.",
+  "url": "https://learn.microsoft.com/kusto/query/array-rotate-right-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_shift_left",
+  "category": "Dynamic/array functions",
+  "description": "Shifts values inside a dynamic array to the left.",
+  "url": "https://learn.microsoft.com/kusto/query/array-shift-left-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_shift_right",
+  "category": "Dynamic/array functions",
+  "description": "Shifts values inside a dynamic array to the right.",
+  "url": "https://learn.microsoft.com/kusto/query/array-shift-right-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_slice",
+  "category": "Dynamic/array functions",
+  "description": "Extracts a slice of a dynamic array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-slice-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_sort_asc",
+  "category": "Dynamic/array functions",
+  "description": "Sorts a collection of arrays in ascending order.",
+  "url": "https://learn.microsoft.com/kusto/query/array-sort-asc-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_sort_desc",
+  "category": "Dynamic/array functions",
+  "description": "Sorts a collection of arrays in descending order.",
+  "url": "https://learn.microsoft.com/kusto/query/array-sort-desc-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_split",
+  "category": "Dynamic/array functions",
+  "description": "Builds an array of arrays split from the input array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-split-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_sum",
+  "category": "Dynamic/array functions",
+  "description": "Calculates the sum of a dynamic array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-sum-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_keys",
+  "category": "Dynamic/array functions",
+  "description": "Enumerates all the root keys in a dynamic property-bag object.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-keys-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_merge",
+  "category": "Dynamic/array functions",
+  "description": "Merges dynamic property-bags into a dynamic property-bag with all properties merged.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-merge-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_pack",
+  "category": "Dynamic/array functions",
+  "description": "Creates a dynamic object (property bag) from a list of names and values.",
+  "url": "https://learn.microsoft.com/kusto/query/pack-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_pack_columns",
+  "category": "Dynamic/array functions",
+  "description": "Creates a dynamic object (property bag) from a list of columns.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-pack-columns-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_remove_keys",
+  "category": "Dynamic/array functions",
+  "description": "Removes keys and associated values from a dynamic property-bag.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-remove-keys-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_set_key",
+  "category": "Dynamic/array functions",
+  "description": "Sets a given key to a given value in a dynamic property-bag.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-set-key-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "jaccard_index",
+  "category": "Dynamic/array functions",
+  "description": "Computes the Jaccard index of two sets.",
+  "url": "https://learn.microsoft.com/kusto/query/jaccard-index-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "pack_all",
+  "category": "Dynamic/array functions",
+  "description": "Creates a dynamic object (property bag) from all the columns of the tabular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/pack-all-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "pack_array",
+  "category": "Dynamic/array functions",
+  "description": "Packs all input values into a dynamic array.",
+  "url": "https://learn.microsoft.com/kusto/query/pack-array-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "repeat",
+  "category": "Dynamic/array functions",
+  "description": "Generates a dynamic array holding a series of equal values.",
+  "url": "https://learn.microsoft.com/kusto/query/repeat-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "set_difference",
+  "category": "Dynamic/array functions",
+  "description": "Returns an array of the set of all distinct values that are in the first array but aren't in other arrays.",
+  "url": "https://learn.microsoft.com/kusto/query/set-difference-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "set_has_element",
+  "category": "Dynamic/array functions",
+  "description": "Determines whether the specified array contains the specified element.",
+  "url": "https://learn.microsoft.com/kusto/query/set-has-element-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "set_intersect",
+  "category": "Dynamic/array functions",
+  "description": "Returns an array of the set of all distinct values that are in all arrays.",
+  "url": "https://learn.microsoft.com/kusto/query/set-intersect-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "set_union",
+  "category": "Dynamic/array functions",
+  "description": "Returns an array of the set of all distinct values that are in any of provided arrays.",
+  "url": "https://learn.microsoft.com/kusto/query/set-union-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "treepath",
+  "category": "Dynamic/array functions",
+  "description": "Enumerates all the path expressions that identify leaves in a dynamic object.",
+  "url": "https://learn.microsoft.com/kusto/query/treepath-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "zip",
+  "category": "Dynamic/array functions",
+  "description": "The zip function accepts any number of dynamic arrays. Returns an array whose elements are each an array with the elements of the input arrays of the same index.",
+  "url": "https://learn.microsoft.com/kusto/query/zip-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "toscalar",
+  "category": "Flow control functions",
+  "description": "Returns a scalar constant value of the evaluated expression.",
+  "url": "https://learn.microsoft.com/kusto/query/toscalar-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_angle",
+  "category": "Geospatial functions",
+  "description": "Calculates clockwise angle in radians between two lines on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-angle-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_azimuth",
+  "category": "Geospatial functions",
+  "description": "Calculates clockwise angle in radians between the line from point1 to true north and a line from point1 to point2 on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-azimuth-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_closest_point_on_line",
+  "category": "Geospatial functions",
+  "description": "Calculates a point on a line or a multiline, which is closest to a given point on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-closest-point-on-line-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_closest_point_on_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates a point on a polygon or a multipolygon, which is closest to a given point on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-closest-point-on-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_distance_2points",
+  "category": "Geospatial functions",
+  "description": "Calculates the shortest distance between two geospatial coordinates on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-distance-2points-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_distance_point_to_line",
+  "category": "Geospatial functions",
+  "description": "Calculates the shortest distance between a coordinate and a line or multiline on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-distance-point-to-line-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_distance_point_to_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates the shortest distance between a coordinate and a polygon or multipolygon on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-distance-point-to-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_from_wkt",
+  "category": "Geospatial functions",
+  "description": "Converts WKT string to GeoJSON shape.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-from-wkt-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_geohash_neighbors",
+  "category": "Geospatial functions",
+  "description": "Calculates the geohash neighbors.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-geohash-neighbors-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_geohash_to_central_point",
+  "category": "Geospatial functions",
+  "description": "Calculates the geospatial coordinates that represent the center of a Geohash rectangular area.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-geohash-to-central-point-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_geohash_to_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates the polygon that represents the geohash rectangular area.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-geohash-to-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_children",
+  "category": "Geospatial functions",
+  "description": "Calculates the H3 cell children.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-children-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_level",
+  "category": "Geospatial functions",
+  "description": "Calculates the H3 cell resolution.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-level-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_neighbors",
+  "category": "Geospatial functions",
+  "description": "Calculates the H3 cell neighbors.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-neighbors-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_parent",
+  "category": "Geospatial functions",
+  "description": "Calculates the H3 cell parent.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-parent-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_rings",
+  "category": "Geospatial functions",
+  "description": "Calculates the H3 cell Rings.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-rings-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_to_central_point",
+  "category": "Geospatial functions",
+  "description": "Calculates the geospatial coordinates that represent the center of an H3 Cell.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-to-central-point-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_h3cell_to_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates the polygon that represents the H3 Cell rectangular area.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-h3cell-to-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_intersection_2lines",
+  "category": "Geospatial functions",
+  "description": "Calculates the intersection of two lines or multilines.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-intersection-2lines-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_intersection_2polygons",
+  "category": "Geospatial functions",
+  "description": "Calculates the intersection of two polygons or multipolygons.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-intersection-2polygons-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_intersection_line_with_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates the intersection of line or multiline with polygon or multipolygon.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-intersection-line-with-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_intersects_2lines",
+  "category": "Geospatial functions",
+  "description": "Calculates whether the two lines or multilines intersects.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-intersects-2lines-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_intersects_2polygons",
+  "category": "Geospatial functions",
+  "description": "Calculates whether the two polygons or multipolygons intersects.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-intersects-2polygons-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_intersects_line_with_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates whether the line or multiline intersects with polygon or multipolygon.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-intersects-line-with-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_buffer",
+  "category": "Geospatial functions",
+  "description": "Calculates polygon or multipolygon that contains all points within the given radius of the input line or multiline on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-buffer-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_centroid",
+  "category": "Geospatial functions",
+  "description": "Calculates the centroid of line or a multiline on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-centroid-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_densify",
+  "category": "Geospatial functions",
+  "description": "Converts planar line edges to geodesics by adding intermediate points.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-densify-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_interpolate_point",
+  "category": "Geospatial functions",
+  "description": "Calculates a point at fraction value on a line on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-interpolate-point-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_length",
+  "category": "Geospatial functions",
+  "description": "Calculates the total length of line or a multiline on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-length-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_locate_point",
+  "category": "Geospatial functions",
+  "description": "fraction value as a ratio of a line length from line start till a point on a line which is closest to a given point and a whole line length on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-locate-point-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_simplify",
+  "category": "Geospatial functions",
+  "description": "Simplifies line or a multiline by replacing nearly straight chains of short edges with a single long edge on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-simplify-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_line_to_s2cells",
+  "category": "Geospatial functions",
+  "description": "Calculates S2 cell tokens that cover a line or multiline on Earth. Useful geospatial join tool.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-to-s2cells-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_point_buffer",
+  "category": "Geospatial functions",
+  "description": "Calculates polygon that contains all points within the given radius of the point on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-point-buffer-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_point_in_circle",
+  "category": "Geospatial functions",
+  "description": "Calculates whether the geospatial coordinates are inside a circle on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-point-in-circle-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_point_in_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates whether the geospatial coordinates are inside a polygon or a multipolygon on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-point-in-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_point_to_geohash",
+  "category": "Geospatial functions",
+  "description": "Calculates the Geohash string value for a geographic location.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-point-to-geohash-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_point_to_h3cell",
+  "category": "Geospatial functions",
+  "description": "Calculates the H3 Cell token string value for a geographic location.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-point-to-h3cell-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_point_to_s2cell",
+  "category": "Geospatial functions",
+  "description": "Calculates the S2 Cell token string value for a geographic location.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-point-to-s2cell-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_area",
+  "category": "Geospatial functions",
+  "description": "Calculates the area of polygon or a multipolygon on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-area-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_buffer",
+  "category": "Geospatial functions",
+  "description": "Calculates polygon or multipolygon that contains all points within the given radius of the input polygon or multipolygon on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-buffer-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_centroid",
+  "category": "Geospatial functions",
+  "description": "Calculates the centroid of polygon or a multipolygon on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-centroid-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_densify",
+  "category": "Geospatial functions",
+  "description": "Converts polygon or multipolygon planar edges to geodesics by adding intermediate points.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-densify-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_perimeter",
+  "category": "Geospatial functions",
+  "description": "Calculates the length of the boundary of polygon or a multipolygon on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-perimeter-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_simplify",
+  "category": "Geospatial functions",
+  "description": "Simplifies polygon or a multipolygon by replacing nearly straight chains of short edges with a single long edge on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-simplify-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_to_h3cells",
+  "category": "Geospatial functions",
+  "description": "Converts polygon to H3 cells. Useful geospatial join and visualization tool.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-to-h3cells-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_polygon_to_s2cells",
+  "category": "Geospatial functions",
+  "description": "Calculates S2 Cell tokens that cover a polygon or multipolygon on Earth. Useful geospatial join tool.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-to-s2cells-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_s2cell_neighbors",
+  "category": "Geospatial functions",
+  "description": "Calculates the S2 cell neighbors.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-s2cell-neighbors-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_s2cell_to_central_point",
+  "category": "Geospatial functions",
+  "description": "Calculates the geospatial coordinates that represent the center of an S2 Cell.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-s2cell-to-central-point-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_s2cell_to_polygon",
+  "category": "Geospatial functions",
+  "description": "Calculates the polygon that represents the S2 Cell rectangular area.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-s2cell-to-polygon-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_simplify_polygons_array",
+  "category": "Geospatial functions",
+  "description": "Simplifies polygons by replacing nearly straight chains of short edges with a single long edge, while ensuring mutual boundaries consistency related to each other, on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-simplify-polygons-array-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_union_lines_array",
+  "category": "Geospatial functions",
+  "description": "Calculates the union of lines or multilines on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-union-lines-array-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_union_polygons_array",
+  "category": "Geospatial functions",
+  "description": "Calculates the union of polygons or multipolygons on Earth.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-union-polygons-array-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "GQL",
+  "category": "Graph functions",
+  "description": "GQL (Graph Query Language) is an emerging ISO standard for querying graph databases that uses standardized graph pattern matching.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-query-language",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "Graphistry",
+  "category": "Graph functions",
+  "description": "Graphistry adds server-side GPU layout and filtering on top of KQL graph semantics for iterative exploration of large or dense connected data:",
+  "url": "https://learn.microsoft.com/kusto/query/graph-visualization-graphistry",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "Scenarios",
+  "category": "Graph functions",
+  "description": "Graph semantics enables modeling and querying data as interconnected networks.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-scenarios",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "all",
+  "category": "Graph functions",
+  "description": "The `all()` graph function evaluates a condition for each edge or inner node along a variable length path.",
+  "url": "https://learn.microsoft.com/kusto/query/all-graph-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "any",
+  "category": "Graph functions",
+  "description": "The `any()` graph function evaluates a condition for each edge or inner node along a variable length path.",
+  "url": "https://learn.microsoft.com/kusto/query/any-graph-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "inner_nodes",
+  "category": "Graph functions",
+  "description": "The `inner_nodes()` graph function allows access to the inner nodes of a variable length edge.",
+  "url": "https://learn.microsoft.com/kusto/query/inner-nodes-graph-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "labels",
+  "category": "Graph functions",
+  "description": "Retrieves the labels associated with nodes or edges in a graph query.",
+  "url": "https://learn.microsoft.com/kusto/query/labels-graph-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "map",
+  "category": "Graph functions",
+  "description": "The `map()` graph function calculates an expression for each edge or inner node along a variable length path and returns a dynamic array of all results.",
+  "url": "https://learn.microsoft.com/kusto/query/map-graph-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "node_degree_in",
+  "category": "Graph functions",
+  "description": "The `node_degree_in` function calculates the in-degree, or number of incoming edges, to a node in a directed graph.",
+  "url": "https://learn.microsoft.com/kusto/query/node-degree-in",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "node_degree_out",
+  "category": "Graph functions",
+  "description": "The `node_degree_out` function calculates the out-degree, or number of outgoing edges, from  a node in a directed graph.",
+  "url": "https://learn.microsoft.com/kusto/query/node-degree-out",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "node_id",
+  "category": "Graph functions",
+  "description": "The `node_id` function calculates the graph node identifier as it was set by the user either in make-graph or graph model.",
+  "url": "https://learn.microsoft.com/kusto/query/node-id",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "openCypher",
+  "category": "Graph functions",
+  "description": "openCypher is an open-source specification for querying property graph databases.",
+  "url": "https://learn.microsoft.com/kusto/query/opencypher-graph-query-language",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hash",
+  "category": "Hash functions",
+  "description": "Returns a hash value for the input value.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-function",
+  "supported": true,
+  "note": "Agrees with ADX except for decimal inputs."
+ },
+ {
+  "kind": "function",
+  "name": "hash_combine",
+  "category": "Hash functions",
+  "description": "Combines two or more hash values.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-combine-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hash_many",
+  "category": "Hash functions",
+  "description": "Returns a combined hash value of multiple values.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-many-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hash_md5",
+  "category": "Hash functions",
+  "description": "Returns an MD5 hash value for the input value.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-md5-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hash_sha1",
+  "category": "Hash functions",
+  "description": "Returns an SHA1 hash value for the input value.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-sha1-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hash_sha256",
+  "category": "Hash functions",
+  "description": "Returns an SHA256 hash value for the input value.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-sha256-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hash_xxhash64",
+  "category": "Hash functions",
+  "description": "Returns an XXHASH64 hash value for the input value.",
+  "url": "https://learn.microsoft.com/kusto/query/hash-xxhash64-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "has_any_ipv4",
+  "category": "IPv4 text match functions",
+  "description": "Searches for any of the specified IPv4 addresses in a text.",
+  "url": "https://learn.microsoft.com/kusto/query/has-any-ipv4-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "has_any_ipv4_prefix",
+  "category": "IPv4 text match functions",
+  "description": "Searches for any of the specified IPv4 addresses or prefixes in a text.",
+  "url": "https://learn.microsoft.com/kusto/query/has-any-ipv4-prefix-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "has_ipv4",
+  "category": "IPv4 text match functions",
+  "description": "Searches for an IPv4 address in a text.",
+  "url": "https://learn.microsoft.com/kusto/query/has-ipv4-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "has_ipv4_prefix",
+  "category": "IPv4 text match functions",
+  "description": "Searches for an IPv4 address or prefix in a text.",
+  "url": "https://learn.microsoft.com/kusto/query/has-ipv4-prefix-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "format_ipv4",
+  "category": "IPv4/IPv6 functions",
+  "description": "Parses input with a netmask and returns string representing IPv4 address.",
+  "url": "https://learn.microsoft.com/kusto/query/format-ipv4-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "format_ipv4_mask",
+  "category": "IPv4/IPv6 functions",
+  "description": "Parses input with a netmask and returns string representing IPv4 address as CIDR notation.",
+  "url": "https://learn.microsoft.com/kusto/query/format-ipv4-mask-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "geo_info_from_ip_address",
+  "category": "IPv4/IPv6 functions",
+  "description": "Retrieves geolocation information about IPv4 or IPv6 addresses.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-info-from-ip-address-function",
+  "supported": false,
+  "note": "Not supported: needs a GeoIP database."
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_compare",
+  "category": "IPv4/IPv6 functions",
+  "description": "Compares two IPv4 strings.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-compare-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_is_in_any_range",
+  "category": "IPv4/IPv6 functions",
+  "description": "Checks if IPv4 string address is any of the IPv4-prefix notation ranges.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-is-in-any-range-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_is_in_range",
+  "category": "IPv4/IPv6 functions",
+  "description": "Checks if IPv4 string address is in IPv4-prefix notation range.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-is-in-range-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_is_match",
+  "category": "IPv4/IPv6 functions",
+  "description": "Matches two IPv4 strings.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-is-match-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_is_private",
+  "category": "IPv4/IPv6 functions",
+  "description": "Checks if IPv4 string address belongs to a set of private network IPs.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-is-private-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_netmask_suffix",
+  "category": "IPv4/IPv6 functions",
+  "description": "Returns the value of the IPv4 netmask suffix from IPv4 string address.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-netmask-suffix-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv4_range_to_cidr_list",
+  "category": "IPv4/IPv6 functions",
+  "description": "Converts IPv4 address range to a list of CIDR ranges.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-range-to-cidr-list-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv6_compare",
+  "category": "IPv4/IPv6 functions",
+  "description": "Compares two IPv4 or IPv6 strings.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv6-compare-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv6_is_in_any_range",
+  "category": "IPv4/IPv6 functions",
+  "description": "Checks if an IPv6 string address is in any of the IPv6-prefix notation ranges.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv6-is-in-any-range-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv6_is_in_range",
+  "category": "IPv4/IPv6 functions",
+  "description": "Checks if an IPv6 string address is in IPv6-prefix notation range.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv6-is-in-range-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ipv6_is_match",
+  "category": "IPv4/IPv6 functions",
+  "description": "Matches two IPv4 or IPv6 strings.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv6-is-match-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "abs",
+  "category": "Mathematical functions",
+  "description": "Calculates the absolute value of the input.",
+  "url": "https://learn.microsoft.com/kusto/query/abs-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "acos",
+  "category": "Mathematical functions",
+  "description": "Returns the angle whose cosine is the specified number (the inverse operation of cos()).",
+  "url": "https://learn.microsoft.com/kusto/query/acos-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "asin",
+  "category": "Mathematical functions",
+  "description": "Returns the angle whose sine is the specified number (the inverse operation of sin()).",
+  "url": "https://learn.microsoft.com/kusto/query/asin-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "atan",
+  "category": "Mathematical functions",
+  "description": "Returns the angle whose tangent is the specified number (the inverse operation of tan()).",
+  "url": "https://learn.microsoft.com/kusto/query/atan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "atan2",
+  "category": "Mathematical functions",
+  "description": "Calculates the angle, in radians, between the positive x-axis and the ray from the origin to the point (y, x).",
+  "url": "https://learn.microsoft.com/kusto/query/atan2-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "beta_cdf",
+  "category": "Mathematical functions",
+  "description": "Returns the standard cumulative beta distribution function.",
+  "url": "https://learn.microsoft.com/kusto/query/beta-cdf-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "beta_inv",
+  "category": "Mathematical functions",
+  "description": "Returns the inverse of the beta cumulative probability beta density function.",
+  "url": "https://learn.microsoft.com/kusto/query/beta-inv-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "beta_pdf",
+  "category": "Mathematical functions",
+  "description": "Returns the probability density beta function.",
+  "url": "https://learn.microsoft.com/kusto/query/beta-pdf-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "cos",
+  "category": "Mathematical functions",
+  "description": "Returns the cosine function.",
+  "url": "https://learn.microsoft.com/kusto/query/cos-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "cot",
+  "category": "Mathematical functions",
+  "description": "Calculates the trigonometric cotangent of the specified angle, in radians.",
+  "url": "https://learn.microsoft.com/kusto/query/cot-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "degrees",
+  "category": "Mathematical functions",
+  "description": "Converts angle value in radians into value in degrees, using formula degrees = (180 / PI) * angle-in-radians.",
+  "url": "https://learn.microsoft.com/kusto/query/degrees-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "erf",
+  "category": "Mathematical functions",
+  "description": "Returns the error function.",
+  "url": "https://learn.microsoft.com/kusto/query/erf-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "erfc",
+  "category": "Mathematical functions",
+  "description": "Returns the complementary error function.",
+  "url": "https://learn.microsoft.com/kusto/query/erfc-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "exp",
+  "category": "Mathematical functions",
+  "description": "The base-e exponential function of x, which is e raised to the power x: e^x.",
+  "url": "https://learn.microsoft.com/kusto/query/exp-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "exp10",
+  "category": "Mathematical functions",
+  "description": "The base-10 exponential function of x, which is 10 raised to the power x: 10^x.",
+  "url": "https://learn.microsoft.com/kusto/query/exp10-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "exp2",
+  "category": "Mathematical functions",
+  "description": "The base-2 exponential function of x, which is 2 raised to the power x: 2^x.",
+  "url": "https://learn.microsoft.com/kusto/query/exp2-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "gamma",
+  "category": "Mathematical functions",
+  "description": "Computes gamma function.",
+  "url": "https://learn.microsoft.com/kusto/query/gamma-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isfinite",
+  "category": "Mathematical functions",
+  "description": "Returns whether input is a finite value (isn't infinite or NaN).",
+  "url": "https://learn.microsoft.com/kusto/query/isfinite-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isinf",
+  "category": "Mathematical functions",
+  "description": "Returns whether input is an infinite (positive or negative) value.",
+  "url": "https://learn.microsoft.com/kusto/query/isinf-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isnan",
+  "category": "Mathematical functions",
+  "description": "Returns whether input is Not-a-Number (NaN) value.",
+  "url": "https://learn.microsoft.com/kusto/query/isnan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "log",
+  "category": "Mathematical functions",
+  "description": "Returns the natural logarithm function.",
+  "url": "https://learn.microsoft.com/kusto/query/log-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "log10",
+  "category": "Mathematical functions",
+  "description": "Returns the common (base-10) logarithm function.",
+  "url": "https://learn.microsoft.com/kusto/query/log10-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "log2",
+  "category": "Mathematical functions",
+  "description": "Returns the base-2 logarithm function.",
+  "url": "https://learn.microsoft.com/kusto/query/log2-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "loggamma",
+  "category": "Mathematical functions",
+  "description": "Computes log of absolute value of the gamma function.",
+  "url": "https://learn.microsoft.com/kusto/query/loggamma-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "not",
+  "category": "Mathematical functions",
+  "description": "Reverses the value of its bool argument.",
+  "url": "https://learn.microsoft.com/kusto/query/not-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "pi",
+  "category": "Mathematical functions",
+  "description": "Returns the constant value of Pi (π).",
+  "url": "https://learn.microsoft.com/kusto/query/pi-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "pow",
+  "category": "Mathematical functions",
+  "description": "Returns a result of raising to power.",
+  "url": "https://learn.microsoft.com/kusto/query/pow-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "radians",
+  "category": "Mathematical functions",
+  "description": "Converts angle value in degrees into value in radians, using formula radians = (PI / 180) * angle-in-degrees.",
+  "url": "https://learn.microsoft.com/kusto/query/radians-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "rand",
+  "category": "Mathematical functions",
+  "description": "Returns a random number.",
+  "url": "https://learn.microsoft.com/kusto/query/rand-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "range",
+  "category": "Mathematical functions",
+  "description": "Generates a dynamic array holding a series of equally spaced values.",
+  "url": "https://learn.microsoft.com/kusto/query/range-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "round",
+  "category": "Mathematical functions",
+  "description": "Returns the rounded source to the specified precision.",
+  "url": "https://learn.microsoft.com/kusto/query/round-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "sign",
+  "category": "Mathematical functions",
+  "description": "Sign of a numeric expression.",
+  "url": "https://learn.microsoft.com/kusto/query/sign-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "sin",
+  "category": "Mathematical functions",
+  "description": "Returns the sine function.",
+  "url": "https://learn.microsoft.com/kusto/query/sin-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "sqrt",
+  "category": "Mathematical functions",
+  "description": "Returns the square root function.",
+  "url": "https://learn.microsoft.com/kusto/query/sqrt-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "tan",
+  "category": "Mathematical functions",
+  "description": "Returns the tangent function.",
+  "url": "https://learn.microsoft.com/kusto/query/tan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "welch_test",
+  "category": "Mathematical functions",
+  "description": "Computes the p-value of the Welch-test function.",
+  "url": "https://learn.microsoft.com/kusto/query/welch-test-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "column_ifexists",
+  "category": "Metadata functions",
+  "description": "Takes a column name as a string and a default value. Returns a reference to the column if it exists, otherwise - returns the default value.",
+  "url": "https://learn.microsoft.com/kusto/query/column-ifexists-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "current_cluster_endpoint",
+  "category": "Metadata functions",
+  "description": "Returns the current cluster running the query.",
+  "url": "https://learn.microsoft.com/kusto/query/current-cluster-endpoint-function",
+  "supported": true,
+  "note": "The \"cluster\" name in .okql-federation.json, default localhost."
+ },
+ {
+  "kind": "function",
+  "name": "current_database",
+  "category": "Metadata functions",
+  "description": "Returns the name of the database in scope.",
+  "url": "https://learn.microsoft.com/kusto/query/current-database-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "current_principal",
+  "category": "Metadata functions",
+  "description": "Returns the current principal running this query.",
+  "url": "https://learn.microsoft.com/kusto/query/current-principal-function",
+  "supported": true,
+  "note": "The \"principal\" in .okql-federation.json."
+ },
+ {
+  "kind": "function",
+  "name": "current_principal_details",
+  "category": "Metadata functions",
+  "description": "Returns details of the principal running the query.",
+  "url": "https://learn.microsoft.com/kusto/query/current-principal-details-function",
+  "supported": true,
+  "note": "Built from the \"principal\" in .okql-federation.json."
+ },
+ {
+  "kind": "function",
+  "name": "current_principal_is_member_of",
+  "category": "Metadata functions",
+  "description": "Checks group membership or principal identity of the current principal running the query.",
+  "url": "https://learn.microsoft.com/kusto/query/current-principal-is-member-of-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "cursor_after",
+  "category": "Metadata functions",
+  "description": "Used to access to the records that were ingested after the previous value of the cursor.",
+  "url": "https://learn.microsoft.com/kusto/query/cursor-after-function",
+  "supported": true,
+  "note": "Over _TimeReceived; null for rows without one."
+ },
+ {
+  "kind": "function",
+  "name": "estimate_data_size",
+  "category": "Metadata functions",
+  "description": "Returns an estimated data size of the selected columns of the tabular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/estimate-data-size-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extent_id",
+  "category": "Metadata functions",
+  "description": "Returns a unique identifier that identifies the data shard (\"extent\") that the current record resides in.",
+  "url": "https://learn.microsoft.com/kusto/query/extent-id-function",
+  "supported": true,
+  "note": "The empty guid, as the emulator answers per row."
+ },
+ {
+  "kind": "function",
+  "name": "extent_tags",
+  "category": "Metadata functions",
+  "description": "Returns a dynamic array with the tags of the data shard (\"extent\") that the current record resides in.",
+  "url": "https://learn.microsoft.com/kusto/query/extent-tags-function",
+  "supported": true,
+  "note": "Null: extents carry no tags."
+ },
+ {
+  "kind": "function",
+  "name": "ingestion_time",
+  "category": "Metadata functions",
+  "description": "Retrieves the record's $IngestionTime hidden datetime column, or null.",
+  "url": "https://learn.microsoft.com/kusto/query/ingestion-time-function",
+  "supported": true,
+  "note": "The engine-stamped _TimeReceived of the row."
+ },
+ {
+  "kind": "function",
+  "name": "around",
+  "category": "Other scalar functions",
+  "description": "Creates a `bool` value indicating if the first argument is within a range around the center value.",
+  "url": "https://learn.microsoft.com/kusto/query/around-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "array_iif",
+  "category": "Other scalar functions",
+  "description": "Element-wise `iif` function on dynamic arrays.",
+  "url": "https://learn.microsoft.com/kusto/query/array-iff-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "arraylength",
+  "category": "Other scalar functions",
+  "description": "Calculates the number of elements in a dynamic array.",
+  "url": "https://learn.microsoft.com/kusto/query/array-length-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "assert",
+  "category": "Other scalar functions",
+  "description": "Checks for a condition.",
+  "url": "https://learn.microsoft.com/kusto/query/assert-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_has_key",
+  "category": "Other scalar functions",
+  "description": "Checks whether a dynamic property bag object contains a given key.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-has-key-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bag_zip",
+  "category": "Other scalar functions",
+  "description": "Creates a dynamic property-bag from two input dynamic arrays.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-zip",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_decodestring",
+  "category": "Other scalar functions",
+  "description": "Decodes a base64 string to a UTF-8 string.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-decode-tostring-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_encode_fromarray",
+  "category": "Other scalar functions",
+  "description": "Encodes a base64 string from a bytes array.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-encode-fromarray-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_encodestring",
+  "category": "Other scalar functions",
+  "description": "Encodes a string as base64 string.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-encode-tostring-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bin_auto",
+  "category": "Other scalar functions",
+  "description": "Rounds values down to a fixed-size bin, with control over the bin size and starting point provided by a query property.",
+  "url": "https://learn.microsoft.com/kusto/query/bin-auto-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "column_names_of",
+  "category": "Other scalar functions",
+  "description": "Returns the column names of a tabular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/column-names-of-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "columnifexists",
+  "category": "Other scalar functions",
+  "description": "Displays the column, if the column exists.",
+  "url": "https://learn.microsoft.com/kusto/query/column-ifexists-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "columnnamesof",
+  "category": "Other scalar functions",
+  "description": "Returns the column names of a tabular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/column-names-of-function",
+  "supported": false,
+  "note": "Listed in Microsoft's docs index but rejected by ADX itself."
+ },
+ {
+  "kind": "function",
+  "name": "current_cursor",
+  "category": "Other scalar functions",
+  "description": "Retrieves the current value of the cursor of the database in scope.",
+  "url": "https://learn.microsoft.com/kusto/query/cursor-current",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "cursor_before_or_at",
+  "category": "Other scalar functions",
+  "description": "A predicate function runs over the records of a table to compare their ingestion time against the database cursor time.",
+  "url": "https://learn.microsoft.com/kusto/query/cursor-before-or-at-function",
+  "supported": true,
+  "note": "Over _TimeReceived; null for rows without one."
+ },
+ {
+  "kind": "function",
+  "name": "cursor_current",
+  "category": "Other scalar functions",
+  "description": "Retrieves the current value of the cursor of the database in scope.",
+  "url": "https://learn.microsoft.com/kusto/query/cursor-current",
+  "supported": true,
+  "note": "Cursors are over the engine-stamped _TimeReceived."
+ },
+ {
+  "kind": "function",
+  "name": "datepart",
+  "category": "Other scalar functions",
+  "description": "Extracts the requested date part as an integer value.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-part-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "datetime_list_timezones",
+  "category": "Other scalar functions",
+  "description": "Provides a list of supported timezones a time-zone specification.",
+  "url": "https://learn.microsoft.com/kusto/query/datetime-list-timezones",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "dynamic_to_json",
+  "category": "Other scalar functions",
+  "description": "Converts a scalar value of type `dynamic` to a canonical `string` representation.",
+  "url": "https://learn.microsoft.com/kusto/query/dynamic-to-json-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extentid",
+  "category": "Other scalar functions",
+  "description": "Provides a unique identifier for the data shard (\"extent\") containing the current record at the time the query was run.",
+  "url": "https://learn.microsoft.com/kusto/query/extent-id-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extenttags",
+  "category": "Other scalar functions",
+  "description": "Provides a dynamic array with the extent tags of the extent that the current record is in.",
+  "url": "https://learn.microsoft.com/kusto/query/extent-tags-function",
+  "supported": false,
+  "note": "Listed in Microsoft's docs index but rejected by ADX itself; use extent_tags()."
+ },
+ {
+  "kind": "function",
+  "name": "extractall",
+  "category": "Other scalar functions",
+  "description": "Get all matches for a regular expression from a source string.",
+  "url": "https://learn.microsoft.com/kusto/query/extract-all-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extractjson",
+  "category": "Other scalar functions",
+  "description": "Get a specified element out of a JSON text using a path expression.",
+  "url": "https://learn.microsoft.com/kusto/query/extract-json-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "floor",
+  "category": "Other scalar functions",
+  "description": "Rounds values down to an integer multiple of a given bin size.",
+  "url": "https://learn.microsoft.com/kusto/query/bin-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "format_bytes",
+  "category": "Other scalar functions",
+  "description": "Formats a number as a string representing data size in bytes.",
+  "url": "https://learn.microsoft.com/kusto/query/format-bytes-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "getmonth",
+  "category": "Other scalar functions",
+  "description": "Returns the integer number from 1-12 representing the month number of the given year.",
+  "url": "https://learn.microsoft.com/kusto/query/monthofyear-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "gzip_compress_to_base64_string",
+  "category": "Other scalar functions",
+  "description": "Performs gzip compression and encodes the result to base64.",
+  "url": "https://learn.microsoft.com/kusto/query/gzip-base64-compress",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "gzip_decompress_from_base64_string",
+  "category": "Other scalar functions",
+  "description": "Decodes the input string from base64 and performs gzip decompression.",
+  "url": "https://learn.microsoft.com/kusto/query/gzip-base64-decompress",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "iif",
+  "category": "Other scalar functions",
+  "description": "Returns the :::no-loc text=\"then\":::",
+  "url": "https://learn.microsoft.com/kusto/query/iff-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "indexof_regex",
+  "category": "Other scalar functions",
+  "description": "Returns the zero-based index of the first occurrence of a specified lookup regular expression within the input string.",
+  "url": "https://learn.microsoft.com/kusto/query/indexof-regex-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isascii",
+  "category": "Other scalar functions",
+  "description": "Returns `true` if the argument is a valid ASCII string.",
+  "url": "https://learn.microsoft.com/kusto/query/isascii",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isutf8",
+  "category": "Other scalar functions",
+  "description": "Returns `true` if the argument is a valid UTF8 string.",
+  "url": "https://learn.microsoft.com/kusto/query/isutf8-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "new_guid",
+  "category": "Other scalar functions",
+  "description": "Returns a random GUID (Globally Unique Identifier).",
+  "url": "https://learn.microsoft.com/kusto/query/new-guid-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "pack",
+  "category": "Other scalar functions",
+  "description": "Creates a dynamic property bag object from a list of keys and values.",
+  "url": "https://learn.microsoft.com/kusto/query/pack-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "pack_dictionary",
+  "category": "Other scalar functions",
+  "description": "Creates a dynamic property bag object from a list of keys and values.",
+  "url": "https://learn.microsoft.com/kusto/query/pack-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_path",
+  "category": "Other scalar functions",
+  "description": "Parses a file path `string` and returns a `dynamic` object that contains the following parts of the path:",
+  "url": "https://learn.microsoft.com/kusto/query/parse-path-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_user_agent",
+  "category": "Other scalar functions",
+  "description": "Interprets a user-agent string, which identifies the user's browser and provides certain system details to servers hosting the websites the user visits.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-user-agent-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_xml",
+  "category": "Other scalar functions",
+  "description": "Interprets a `string` as an XML value, converts the value to a JSON, and returns the value as `dynamic`.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-xml-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "punycode_domain_from_string",
+  "category": "Other scalar functions",
+  "description": "Decodes input string from encoded Internationalized Domain Name in Applications (IDNA) punycode form.",
+  "url": "https://learn.microsoft.com/kusto/query/punycode-domain-from-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "punycode_domain_to_string",
+  "category": "Other scalar functions",
+  "description": "Encodes Internationalized Domain Name in Applications (IDNA) string to Punycode form.",
+  "url": "https://learn.microsoft.com/kusto/query/punycode-domain-to-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "regex_quote",
+  "category": "Other scalar functions",
+  "description": "Returns a string that escapes all regular expression characters.",
+  "url": "https://learn.microsoft.com/kusto/query/regex-quote-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "strcat_array",
+  "category": "Other scalar functions",
+  "description": "Creates a concatenated string of array values using a specified delimiter.",
+  "url": "https://learn.microsoft.com/kusto/query/strcat-array-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "string_size",
+  "category": "Other scalar functions",
+  "description": "Returns the size, in bytes, of the input string.",
+  "url": "https://learn.microsoft.com/kusto/query/string-size-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "to_utf8",
+  "category": "Other scalar functions",
+  "description": "Returns a dynamic array of the Unicode codepoints of the input string.",
+  "url": "https://learn.microsoft.com/kusto/query/unicode-codepoints-from-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "toreal",
+  "category": "Other scalar functions",
+  "description": "Converts the input expression to a value of type real.",
+  "url": "https://learn.microsoft.com/kusto/query/toreal-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "unicode_codepoints_from_string",
+  "category": "Other scalar functions",
+  "description": "Returns a dynamic array of the Unicode codepoints of the input string.",
+  "url": "https://learn.microsoft.com/kusto/query/unicode-codepoints-from-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "unicode_codepoints_to_string",
+  "category": "Other scalar functions",
+  "description": "Returns the string represented by the Unicode codepoints.",
+  "url": "https://learn.microsoft.com/kusto/query/unicode-codepoints-to-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "url_encode_component",
+  "category": "Other scalar functions",
+  "description": "The function converts characters of the input URL into a format that can be transmitted over the internet.",
+  "url": "https://learn.microsoft.com/kusto/query/url-encode-component-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "week_of_year",
+  "category": "Other scalar functions",
+  "description": "Returns an integer that represents the week number.",
+  "url": "https://learn.microsoft.com/kusto/query/week-of-year-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "zlib_compress_to_base64_string",
+  "category": "Other scalar functions",
+  "description": "Performs zlib compression and encodes the result to base64.",
+  "url": "https://learn.microsoft.com/kusto/query/zlib-base64-compress-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "zlib_decompress_from_base64_string",
+  "category": "Other scalar functions",
+  "description": "Decodes the input string from base64 and performs zlib decompression.",
+  "url": "https://learn.microsoft.com/kusto/query/zlib-base64-decompress-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bin",
+  "category": "Rounding functions",
+  "description": "Rounds values down to an integer multiple of a given bin size.",
+  "url": "https://learn.microsoft.com/kusto/query/bin-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "bin_at",
+  "category": "Rounding functions",
+  "description": "Rounds values down to a fixed-size \"bin\", with control over the bin's starting point. (See also bin function.)",
+  "url": "https://learn.microsoft.com/kusto/query/bin-at-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "ceiling",
+  "category": "Rounding functions",
+  "description": "Calculates the smallest integer greater than, or equal to, the specified numeric expression.",
+  "url": "https://learn.microsoft.com/kusto/query/ceiling-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "dcount_hll",
+  "category": "Scalar aggregation functions",
+  "description": "Calculates the dcount from hll results (which was generated by hll or hll-merge).",
+  "url": "https://learn.microsoft.com/kusto/query/dcount-hll-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "hll_merge",
+  "category": "Scalar aggregation functions",
+  "description": "Merges hll results (scalar version of the aggregate version hll-merge()).",
+  "url": "https://learn.microsoft.com/kusto/query/hll-merge-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "merge_tdigest",
+  "category": "Scalar aggregation functions",
+  "description": "Merge tdigest results (scalar version of the aggregate version tdigest-merge()).",
+  "url": "https://learn.microsoft.com/kusto/query/merge-tdigest-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "percentile_array_tdigest",
+  "category": "Scalar aggregation functions",
+  "description": "Calculates the percentile array result from tdigest results (which was generated by tdigest or merge_tdigest).",
+  "url": "https://learn.microsoft.com/kusto/query/percentile-array-tdigest-function",
+  "supported": false,
+  "note": "Rejected by ADX itself; use percentiles_array_tdigest()."
+ },
+ {
+  "kind": "function",
+  "name": "percentile_tdigest",
+  "category": "Scalar aggregation functions",
+  "description": "Calculates the percentile result from tdigest results (which was generated by tdigest or merge_tdigest).",
+  "url": "https://learn.microsoft.com/kusto/query/percentile-tdigest-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "percentrank_tdigest",
+  "category": "Scalar aggregation functions",
+  "description": "Calculates the percentage ranking of a value in a dataset.",
+  "url": "https://learn.microsoft.com/kusto/query/percentrank-tdigest-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "rank_tdigest",
+  "category": "Scalar aggregation functions",
+  "description": "Calculates relative rank of a value in a set.",
+  "url": "https://learn.microsoft.com/kusto/query/rank-tdigest-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_abs",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise absolute value of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-abs-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_acos",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise arccosine function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-acos-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_add",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise addition of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-add-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_asin",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise arcsine function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-asin-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_atan",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise arctangent function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-atan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_ceiling",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise ceiling function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-ceiling-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_cos",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise cosine function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-cos-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_divide",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise division of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-divide-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_equals",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise equals (`==`) logic operation of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-equals-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_exp",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise base-e exponential function (e^x) of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-exp-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_floor",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise floor function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-floor-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_greater",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise greater (`\u003e`) logic operation of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-greater-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_greater_equals",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise greater or equals (`\u003e=`) logic operation of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-greater-equals-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_less",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise less (`\u003c`) logic operation of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-less-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_less_equals",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise less or equal (`\u003c=`) logic operation of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-less-equals-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_log",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise natural logarithm function (base-e) of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-log-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_multiply",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise multiplication of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-multiply-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_not_equals",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise not equals (`!=`) logic operation of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-not-equals-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_pow",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise power of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-pow-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_sign",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise sign of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-sign-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_sin",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise sine function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-sin-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_subtract",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise subtraction of two numeric series inputs.",
+  "url": "https://learn.microsoft.com/kusto/query/series-subtract-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_tan",
+  "category": "Series element-wise functions",
+  "description": "Calculates the element-wise tangent function of the numeric series input.",
+  "url": "https://learn.microsoft.com/kusto/query/series-tan-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_cosine_similarity",
+  "category": "Series processing functions",
+  "description": "Calculates the cosine similarity of two numeric series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-cosine-similarity-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_decompose",
+  "category": "Series processing functions",
+  "description": "Does a decomposition of the series into components.",
+  "url": "https://learn.microsoft.com/kusto/query/series-decompose-function",
+  "supported": true,
+  "note": "Automatic seasonality (-1) uses series_periods_detect's estimate."
+ },
+ {
+  "kind": "function",
+  "name": "series_decompose_anomalies",
+  "category": "Series processing functions",
+  "description": "Finds anomalies in a series based on series decomposition.",
+  "url": "https://learn.microsoft.com/kusto/query/series-decompose-anomalies-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_decompose_forecast",
+  "category": "Series processing functions",
+  "description": "Forecast based on series decomposition.",
+  "url": "https://learn.microsoft.com/kusto/query/series-decompose-forecast-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_dot_product",
+  "category": "Series processing functions",
+  "description": "Calculates the dot product of two numeric series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-dot-product-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fft",
+  "category": "Series processing functions",
+  "description": "Applies the Fast Fourier Transform (FFT) on a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fft-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fill_backward",
+  "category": "Series processing functions",
+  "description": "Performs backward fill interpolation of missing values in a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fill-backward-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fill_const",
+  "category": "Series processing functions",
+  "description": "Replaces missing values in a series with a specified constant value.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fill-const-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fill_forward",
+  "category": "Series processing functions",
+  "description": "Performs forward fill interpolation of missing values in a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fill-forward-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fill_linear",
+  "category": "Series processing functions",
+  "description": "Performs linear interpolation of missing values in a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fill-linear-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fir",
+  "category": "Series processing functions",
+  "description": "Applies a Finite Impulse Response filter on a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fir-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fit_2lines",
+  "category": "Series processing functions",
+  "description": "Applies two segments linear regression on a series, returning multiple columns.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fit-2lines-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fit_2lines_dynamic",
+  "category": "Series processing functions",
+  "description": "Applies two segments linear regression on a series, returning dynamic object.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fit-2lines-dynamic-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fit_line",
+  "category": "Series processing functions",
+  "description": "Applies linear regression on a series, returning multiple columns.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fit-line-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fit_line_dynamic",
+  "category": "Series processing functions",
+  "description": "Applies linear regression on a series, returning dynamic object.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fit-line-dynamic-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_fit_poly",
+  "category": "Series processing functions",
+  "description": "Applies polynomial regression on a series, returning multiple columns.",
+  "url": "https://learn.microsoft.com/kusto/query/series-fit-poly-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_ifft",
+  "category": "Series processing functions",
+  "description": "Applies the Inverse Fast Fourier Transform (IFFT) on a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-ifft-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_iir",
+  "category": "Series processing functions",
+  "description": "Applies an Infinite Impulse Response filter on a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-iir-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_magnitude",
+  "category": "Series processing functions",
+  "description": "Calculates the magnitude#Euclidean_vector_space) of the numeric series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-magnitude-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_outliers",
+  "category": "Series processing functions",
+  "description": "Scores anomaly points in a series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-outliers-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_pearson_correlation",
+  "category": "Series processing functions",
+  "description": "Calculates the Pearson correlation coefficient of two series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-pearson-correlation-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_periods_detect",
+  "category": "Series processing functions",
+  "description": "Finds the most significant periods that exist in a time series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-periods-detect-function",
+  "supported": true,
+  "note": "Spectral peaks plus autocorrelation: the top period agrees with ADX, scores can differ by a few hundredths."
+ },
+ {
+  "kind": "function",
+  "name": "series_periods_validate",
+  "category": "Series processing functions",
+  "description": "Checks whether a time series contains periodic patterns of given lengths.",
+  "url": "https://learn.microsoft.com/kusto/query/series-periods-validate-function",
+  "supported": true,
+  "note": "As series_periods_detect."
+ },
+ {
+  "kind": "function",
+  "name": "series_product",
+  "category": "Series processing functions",
+  "description": "Calculates the product of numeric series elements.",
+  "url": "https://learn.microsoft.com/kusto/query/series-product-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_seasonal",
+  "category": "Series processing functions",
+  "description": "Finds the seasonal component of the series.",
+  "url": "https://learn.microsoft.com/kusto/query/series-seasonal-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_stats",
+  "category": "Series processing functions",
+  "description": "Returns statistics for a series in multiple columns.",
+  "url": "https://learn.microsoft.com/kusto/query/series-stats-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_stats_dynamic",
+  "category": "Series processing functions",
+  "description": "Returns statistics for a series in dynamic object.",
+  "url": "https://learn.microsoft.com/kusto/query/series-stats-dynamic-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "series_sum",
+  "category": "Series processing functions",
+  "description": "Calculates the sum of numeric series elements.",
+  "url": "https://learn.microsoft.com/kusto/query/series-sum-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "cluster",
+  "category": "Special functions",
+  "description": "Changes the reference of the query to a remote cluster.",
+  "url": "https://learn.microsoft.com/kusto/query/cluster-function",
+  "supported": true,
+  "note": "Clusters come from .okql-federation.json (guide/cluster.md)."
+ },
+ {
+  "kind": "function",
+  "name": "database",
+  "category": "Special functions",
+  "description": "Changes the reference of the query to a specific database within the cluster scope.",
+  "url": "https://learn.microsoft.com/kusto/query/database-function",
+  "supported": true,
+  "note": "Databases are this scope and the aliases of .okql-federation.json; database('*') and wildcards work in union, find and search."
+ },
+ {
+  "kind": "function",
+  "name": "external_table",
+  "category": "Special functions",
+  "description": "References an external table by name.",
+  "url": "https://learn.microsoft.com/kusto/query/external-table-function",
+  "supported": false,
+  "note": "No external tables: read files with externaldata."
+ },
+ {
+  "kind": "function",
+  "name": "graph",
+  "category": "Special functions",
+  "description": "The `graph` function is an intrinsic function that enables querying of a persisted graph entity, similar to the `cluster()`, `database()`, `external_table()`, and `table()` functions.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-function",
+  "supported": true,
+  "note": "Persistent graph models (.create-or-alter graph_model, .make graph_snapshot)."
+ },
+ {
+  "kind": "function",
+  "name": "materialize",
+  "category": "Special functions",
+  "description": "Captures the value of a tabular expression for the duration of the query execution so that it can be referenced multiple times by the query without recalculation.",
+  "url": "https://learn.microsoft.com/kusto/query/materialize-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "materialized_view",
+  "category": "Special functions",
+  "description": "References the materialized part of a materialized view.",
+  "url": "https://learn.microsoft.com/kusto/query/materialized-view-function",
+  "supported": true,
+  "note": "Views are always current, so max_age has nothing to bound."
+ },
+ {
+  "kind": "function",
+  "name": "stored_query_result",
+  "category": "Special functions",
+  "description": "Retrieves a previously created stored query result.",
+  "url": "https://learn.microsoft.com/kusto/query/stored-query-result-function",
+  "supported": false,
+  "note": "Not supported."
+ },
+ {
+  "kind": "function",
+  "name": "table",
+  "category": "Special functions",
+  "description": "The table() function references a table by providing its name as an expression of type `string`.",
+  "url": "https://learn.microsoft.com/kusto/query/table-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_decode_toarray",
+  "category": "String functions",
+  "description": "Decodes a base64 string to an array of long values.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-decode-toarray-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_decode_toguid",
+  "category": "String functions",
+  "description": "Decodes a base64 string to a GUID.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-decode-toguid-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_decode_tostring",
+  "category": "String functions",
+  "description": "Decodes a base64 string to a UTF-8 string.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-decode-tostring-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_encode_fromguid",
+  "category": "String functions",
+  "description": "Encodes a GUID as base64 string.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-encode-fromguid-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "base64_encode_tostring",
+  "category": "String functions",
+  "description": "Encodes a string as base64 string.",
+  "url": "https://learn.microsoft.com/kusto/query/base64-encode-tostring-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "countof",
+  "category": "String functions",
+  "description": "Counts occurrences of a substring in a string. Plain string matches can overlap; regex matches don't.",
+  "url": "https://learn.microsoft.com/kusto/query/countof-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extract",
+  "category": "String functions",
+  "description": "Get a match for a regular expression from a text string.",
+  "url": "https://learn.microsoft.com/kusto/query/extract-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extract_all",
+  "category": "String functions",
+  "description": "Get all matches for a regular expression from a text string.",
+  "url": "https://learn.microsoft.com/kusto/query/extract-all-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "extract_json",
+  "category": "String functions",
+  "description": "Get a specified element out of a JSON text using a path expression.",
+  "url": "https://learn.microsoft.com/kusto/query/extract-json-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "has_any_index",
+  "category": "String functions",
+  "description": "Searches the string for items specified in the array and returns the position of the first item found in the string.",
+  "url": "https://learn.microsoft.com/kusto/query/has-any-index-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "indexof",
+  "category": "String functions",
+  "description": "Function reports the zero-based index of the first occurrence of a specified string within input string.",
+  "url": "https://learn.microsoft.com/kusto/query/indexof-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isempty",
+  "category": "String functions",
+  "description": "Returns true if the argument is an empty string or is null.",
+  "url": "https://learn.microsoft.com/kusto/query/isempty-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isnotempty",
+  "category": "String functions",
+  "description": "Returns true if the argument isn't an empty string or a null.",
+  "url": "https://learn.microsoft.com/kusto/query/isnotempty-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isnotnull",
+  "category": "String functions",
+  "description": "Returns true if the argument isn't null.",
+  "url": "https://learn.microsoft.com/kusto/query/isnotnull-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "isnull",
+  "category": "String functions",
+  "description": "Evaluates its sole argument and returns a bool value indicating if the argument evaluates to a null value.",
+  "url": "https://learn.microsoft.com/kusto/query/isnull-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_command_line",
+  "category": "String functions",
+  "description": "Parses a Unicode command line string and returns an array of the command line arguments.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-command-line-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_csv",
+  "category": "String functions",
+  "description": "Splits a given string representing comma-separated values and returns a string array with these values.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-csv-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_ipv4",
+  "category": "String functions",
+  "description": "Converts input to long (signed 64-bit) number representation.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-ipv4-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_ipv4_mask",
+  "category": "String functions",
+  "description": "Converts input string and IP-prefix mask to long (signed 64-bit) number representation.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-ipv4-mask-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_ipv6",
+  "category": "String functions",
+  "description": "Converts IPv6 or IPv4 string to a canonical IPv6 string representation.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-ipv6-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_ipv6_mask",
+  "category": "String functions",
+  "description": "Converts IPv6 or IPv4 string and netmask to a canonical IPv6 string representation.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-ipv6-mask-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_json",
+  "category": "String functions",
+  "description": "Interprets a string as a JSON value and returns the value as dynamic.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-json-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_url",
+  "category": "String functions",
+  "description": "Parses an absolute URL string and returns a dynamic object contains all parts of the URL.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-url-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_urlquery",
+  "category": "String functions",
+  "description": "Parses a url query string and returns a dynamic object contains the Query parameters.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-url-query-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "parse_version",
+  "category": "String functions",
+  "description": "Converts input string representation of version to a comparable decimal number.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-version-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "punycode_from_string",
+  "category": "String functions",
+  "description": "Encodes domain name to Punycode form.",
+  "url": "https://learn.microsoft.com/kusto/query/punycode-from-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "punycode_to_string",
+  "category": "String functions",
+  "description": "Decodes domain name from Punycode form.",
+  "url": "https://learn.microsoft.com/kusto/query/punycode-to-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "replace_regex",
+  "category": "String functions",
+  "description": "Replace all regex matches with another string.",
+  "url": "https://learn.microsoft.com/kusto/query/replace-regex-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "replace_string",
+  "category": "String functions",
+  "description": "Replace all single string matches with a specified string.",
+  "url": "https://learn.microsoft.com/kusto/query/replace-string-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "replace_strings",
+  "category": "String functions",
+  "description": "Replace all multiple strings matches with specified strings.",
+  "url": "https://learn.microsoft.com/kusto/query/replace-strings-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "reverse",
+  "category": "String functions",
+  "description": "Function makes reverse of input string.",
+  "url": "https://learn.microsoft.com/kusto/query/reverse-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "split",
+  "category": "String functions",
+  "description": "Splits a given string according to a given delimiter and returns a string array with the contained substrings.",
+  "url": "https://learn.microsoft.com/kusto/query/split-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "strcat",
+  "category": "String functions",
+  "description": "Concatenates between 1 and 64 arguments.",
+  "url": "https://learn.microsoft.com/kusto/query/strcat-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "strcat_delim",
+  "category": "String functions",
+  "description": "Concatenates between 2 and 64 arguments, with delimiter, provided as first argument.",
+  "url": "https://learn.microsoft.com/kusto/query/strcat-delim-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "strcmp",
+  "category": "String functions",
+  "description": "Compares two strings.",
+  "url": "https://learn.microsoft.com/kusto/query/strcmp-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "strlen",
+  "category": "String functions",
+  "description": "Returns the length, in characters, of the input string.",
+  "url": "https://learn.microsoft.com/kusto/query/strlen-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "strrep",
+  "category": "String functions",
+  "description": "Repeats given string provided number of times (default - 1).",
+  "url": "https://learn.microsoft.com/kusto/query/strrep-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "substring",
+  "category": "String functions",
+  "description": "Extracts a substring from a source string starting from some index to the end of the string.",
+  "url": "https://learn.microsoft.com/kusto/query/substring-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "tohex",
+  "category": "String functions",
+  "description": "Converts input to a hexadecimal string.",
+  "url": "https://learn.microsoft.com/kusto/query/tohex-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "tolower",
+  "category": "String functions",
+  "description": "Converts input to a lowercase string.",
+  "url": "https://learn.microsoft.com/kusto/query/tolower-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "toupper",
+  "category": "String functions",
+  "description": "Converts a string to upper case.",
+  "url": "https://learn.microsoft.com/kusto/query/toupper-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "translate",
+  "category": "String functions",
+  "description": "Replaces a set of characters ('searchList') with another set of characters ('replacementList') in a given a string.",
+  "url": "https://learn.microsoft.com/kusto/query/translate-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "trim",
+  "category": "String functions",
+  "description": "Removes all leading and trailing matches of the specified regular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/trim-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "trim_end",
+  "category": "String functions",
+  "description": "Removes trailing match of the specified regular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/trim-end-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "trim_start",
+  "category": "String functions",
+  "description": "Removes leading match of the specified regular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/trim-start-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "url_decode",
+  "category": "String functions",
+  "description": "The function converts encoded URL into a regular URL representation.",
+  "url": "https://learn.microsoft.com/kusto/query/url-decode-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "url_encode",
+  "category": "String functions",
+  "description": "The function converts characters of the input URL into a format that can be transmitted over the Internet.",
+  "url": "https://learn.microsoft.com/kusto/query/url-encode-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "gettype",
+  "category": "Type functions",
+  "description": "Returns the runtime type of its single argument.",
+  "url": "https://learn.microsoft.com/kusto/query/gettype-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_angle",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one angle unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-angle-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_energy",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one energy unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-energy-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_force",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one force unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-force-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_length",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one length unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-length-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_mass",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one mass unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-mass-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_speed",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one speed unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-speed-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_temperature",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one temperature unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-temperature-function",
+  "supported": true
+ },
+ {
+  "kind": "function",
+  "name": "convert_volume",
+  "category": "Units conversion functions",
+  "description": "Returns the input value converted from one volume unit to another",
+  "url": "https://learn.microsoft.com/kusto/query/convert-volume-function",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "graph-mark-components",
+  "category": "Graph operators",
+  "description": "The `graph-mark-components` operator finds all connected components of a graph and marks each node with a component identifier.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-mark-components-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "graph-match",
+  "category": "Graph operators",
+  "description": "The `graph-match` operator searches for all occurrences of a graph pattern in an input graph source.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-match-operator",
+  "supported": true,
+  "note": "Also reachable from GQL and openCypher (guide/graphs.md)."
+ },
+ {
+  "kind": "operator",
+  "name": "graph-shortest-paths",
+  "category": "Graph operators",
+  "description": "The `graph-shortest-paths` operator finds the shortest paths between a set of source nodes and a set of target nodes in a graph and returns a table with the results.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-shortest-paths-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "graph-to-table",
+  "category": "Graph operators",
+  "description": "The `graph-to-table` operator exports nodes or edges from a graph to tables.",
+  "url": "https://learn.microsoft.com/kusto/query/graph-to-table-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "make-graph",
+  "category": "Graph operators",
+  "description": "The `make-graph` operator builds a graph structure from tabular inputs of edges and nodes.",
+  "url": "https://learn.microsoft.com/kusto/query/make-graph-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "as",
+  "category": "Tabular operators",
+  "description": "Binds a name to the operator's input tabular expression.",
+  "url": "https://learn.microsoft.com/kusto/query/as-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "consume",
+  "category": "Tabular operators",
+  "description": "Consumes the tabular data stream handed to the operator.",
+  "url": "https://learn.microsoft.com/kusto/query/consume-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "count",
+  "category": "Tabular operators",
+  "description": "Calculates the number of records in the input record set.",
+  "url": "https://learn.microsoft.com/kusto/query/count-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "datatable",
+  "category": "Tabular operators",
+  "description": "Creates a table whose schema and values are defined in the query itself.",
+  "url": "https://learn.microsoft.com/kusto/query/datatable-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "distinct",
+  "category": "Tabular operators",
+  "description": "Produces a table with the distinct combination of the provided columns of the input table.",
+  "url": "https://learn.microsoft.com/kusto/query/distinct-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "evaluate",
+  "category": "Tabular operators",
+  "description": "Invokes a service-side query extension (plugin).",
+  "url": "https://learn.microsoft.com/kusto/query/evaluate-operator",
+  "supported": true,
+  "note": "Can also start a query: evaluate http_request(...)."
+ },
+ {
+  "kind": "operator",
+  "name": "extend",
+  "category": "Tabular operators",
+  "description": "Creates calculated columns and append them to the result set.",
+  "url": "https://learn.microsoft.com/kusto/query/extend-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "externaldata",
+  "category": "Tabular operators",
+  "description": "The `externaldata` operator returns a table whose schema is defined in the query itself, and whose data is read from an external storage artifact, such as a blob in Azure Blob Storage or a file in Azure Data Lake Storage Gen2.",
+  "url": "https://learn.microsoft.com/kusto/query/externaldata-operator",
+  "supported": true,
+  "note": "Local paths, file:// and http(s) (callout policy); csv, tsv, psv, scsv, txt, json, multijson; .gz."
+ },
+ {
+  "kind": "operator",
+  "name": "facet",
+  "category": "Tabular operators",
+  "description": "Returns a set of tables, one for each column specified in the facet clause.",
+  "url": "https://learn.microsoft.com/kusto/query/facet-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "find",
+  "category": "Tabular operators",
+  "description": "Finds rows that match a predicate across a set of tables.",
+  "url": "https://learn.microsoft.com/kusto/query/find-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "fork",
+  "category": "Tabular operators",
+  "description": "Runs multiple consumer operators in parallel.",
+  "url": "https://learn.microsoft.com/kusto/query/fork-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "getschema",
+  "category": "Tabular operators",
+  "description": "Produce a table that represents a tabular schema of the input.",
+  "url": "https://learn.microsoft.com/kusto/query/getschema-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "invoke",
+  "category": "Tabular operators",
+  "description": "Invokes a lambda expression that receives the source of `invoke` as a tabular argument.",
+  "url": "https://learn.microsoft.com/kusto/query/invoke-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "join",
+  "category": "Tabular operators",
+  "description": "Merge the rows of two tables to form a new table by matching values of the specified columns from each table.",
+  "url": "https://learn.microsoft.com/kusto/query/join-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "lookup",
+  "category": "Tabular operators",
+  "description": "Extends the columns of a fact table with values looked-up in a dimension table.",
+  "url": "https://learn.microsoft.com/kusto/query/lookup-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "macro-expand",
+  "category": "Tabular operators",
+  "description": "The `macro-expand` operator simplifies running a subquery on a set of entities, such as clusters, databases, or tables, and then combining the results into a single output.",
+  "url": "https://learn.microsoft.com/kusto/query/macro-expand-operator",
+  "supported": true,
+  "note": "Entity groups of databases (inline or let); stored entity groups are not supported."
+ },
+ {
+  "kind": "operator",
+  "name": "mv-apply",
+  "category": "Tabular operators",
+  "description": "Applies a subquery to each record, and returns the union of the results of all subqueries.",
+  "url": "https://learn.microsoft.com/kusto/query/mv-apply-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "mv-expand",
+  "category": "Tabular operators",
+  "description": "Expands multi-value dynamic arrays or property bags into multiple records.",
+  "url": "https://learn.microsoft.com/kusto/query/mv-expand-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "parse",
+  "category": "Tabular operators",
+  "description": "Evaluates a string expression and parses its value into one or more calculated columns.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "parse-kv",
+  "category": "Tabular operators",
+  "description": "Extracts structured information from a string expression and represents the information in a key/value form.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-kv-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "parse-where",
+  "category": "Tabular operators",
+  "description": "Evaluates a string expression, and parses its value into one or more calculated columns.",
+  "url": "https://learn.microsoft.com/kusto/query/parse-where-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "partition",
+  "category": "Tabular operators",
+  "description": "The partition operator partitions the records of its input table into multiple subtables according to values in a key column.",
+  "url": "https://learn.microsoft.com/kusto/query/partition-operator",
+  "supported": true,
+  "note": "All strategies run the same way on one node."
+ },
+ {
+  "kind": "operator",
+  "name": "print",
+  "category": "Tabular operators",
+  "description": "Outputs a single row with one or more scalar expression results as columns.",
+  "url": "https://learn.microsoft.com/kusto/query/print-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "project",
+  "category": "Tabular operators",
+  "description": "Select the columns to include, rename or drop, and insert new computed columns.",
+  "url": "https://learn.microsoft.com/kusto/query/project-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "project-away",
+  "category": "Tabular operators",
+  "description": "Select what columns from the input table to exclude from the output table.",
+  "url": "https://learn.microsoft.com/kusto/query/project-away-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "project-by-names",
+  "category": "Tabular operators",
+  "description": "Select and reorder a subset of columns from the input table by their names, dynamic arrays, or name patterns.",
+  "url": "https://learn.microsoft.com/kusto/query/project-by-names-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "project-keep",
+  "category": "Tabular operators",
+  "description": "Select what columns from the input to keep in the output.",
+  "url": "https://learn.microsoft.com/kusto/query/project-keep-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "project-rename",
+  "category": "Tabular operators",
+  "description": "Renames columns in the output table.",
+  "url": "https://learn.microsoft.com/kusto/query/project-rename-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "project-reorder",
+  "category": "Tabular operators",
+  "description": "Reorders columns in the output table.",
+  "url": "https://learn.microsoft.com/kusto/query/project-reorder-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "range",
+  "category": "Tabular operators",
+  "description": "Generates a single-column table of values.",
+  "url": "https://learn.microsoft.com/kusto/query/range-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "reduce",
+  "category": "Tabular operators",
+  "description": "Groups a set of strings together based on value similarity.",
+  "url": "https://learn.microsoft.com/kusto/query/reduce-operator",
+  "supported": true,
+  "note": "Drain-style clustering with ADX's output shape; suited to log lines."
+ },
+ {
+  "kind": "operator",
+  "name": "render",
+  "category": "Tabular operators",
+  "description": "The `render` operator instructs the user agent to visualize query results.",
+  "url": "https://learn.microsoft.com/kusto/query/render-operator",
+  "supported": true,
+  "note": "Accepted; the result is returned unchanged (no charts)."
+ },
+ {
+  "kind": "operator",
+  "name": "sample",
+  "category": "Tabular operators",
+  "description": "Returns up to the specified number of random rows from the input table.",
+  "url": "https://learn.microsoft.com/kusto/query/sample-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "sample-distinct",
+  "category": "Tabular operators",
+  "description": "Returns a single column that contains up to the specified number of distinct values of the requested column.",
+  "url": "https://learn.microsoft.com/kusto/query/sample-distinct-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "scan",
+  "category": "Tabular operators",
+  "description": "Scans data, matches, and builds sequences based on the predicates.",
+  "url": "https://learn.microsoft.com/kusto/query/scan-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "search",
+  "category": "Tabular operators",
+  "description": "Searches a text pattern in multiple tables and columns.",
+  "url": "https://learn.microsoft.com/kusto/query/search-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "serialize",
+  "category": "Tabular operators",
+  "description": "Marks that the order of the input row set is safe to use for window functions.",
+  "url": "https://learn.microsoft.com/kusto/query/serialize-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "sort",
+  "category": "Tabular operators",
+  "description": "Sorts the rows of the input table into order by one or more columns.",
+  "url": "https://learn.microsoft.com/kusto/query/sort-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "summarize",
+  "category": "Tabular operators",
+  "description": "Produces a table that aggregates the content of the input table.",
+  "url": "https://learn.microsoft.com/kusto/query/summarize-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "take",
+  "category": "Tabular operators",
+  "description": "Return up to the specified number of rows.",
+  "url": "https://learn.microsoft.com/kusto/query/take-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "top",
+  "category": "Tabular operators",
+  "description": "Returns the first N records sorted by the specified column.",
+  "url": "https://learn.microsoft.com/kusto/query/top-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "top-hitters",
+  "category": "Tabular operators",
+  "description": "Returns an approximation for the most popular distinct values, or the values with the largest sum, in the input.",
+  "url": "https://learn.microsoft.com/kusto/query/top-hitters-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "top-nested",
+  "category": "Tabular operators",
+  "description": "The `top-nested` operator performs hierarchical aggregation and value selection.",
+  "url": "https://learn.microsoft.com/kusto/query/top-nested-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "union",
+  "category": "Tabular operators",
+  "description": "Takes two or more tables and returns the rows of all of them.",
+  "url": "https://learn.microsoft.com/kusto/query/union-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "where",
+  "category": "Tabular operators",
+  "description": "Filters a table to the subset of rows that satisfy a predicate.",
+  "url": "https://learn.microsoft.com/kusto/query/where-operator",
+  "supported": true
+ },
+ {
+  "kind": "operator",
+  "name": "make-series",
+  "category": "Time series analysis",
+  "description": "Create series of specified aggregated values along a specified axis.",
+  "url": "https://learn.microsoft.com/kusto/query/make-series-operator",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "bag_unpack",
+  "category": "Data reshaping plugins",
+  "description": "The `bag_unpack` plugin unpacks a single column of type `dynamic`, by treating each property bag top-level slot as a column.",
+  "url": "https://learn.microsoft.com/kusto/query/bag-unpack-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "narrow",
+  "category": "Data reshaping plugins",
+  "description": "The `narrow` plugin \"unpivots\" a wide table into a table with three columns:",
+  "url": "https://learn.microsoft.com/kusto/query/narrow-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "pivot",
+  "category": "Data reshaping plugins",
+  "description": "Rotates a table by turning the unique values from one column in the input table into multiple columns in the output table and performs aggregations as required on any remaining column values that will appear in the final output.",
+  "url": "https://learn.microsoft.com/kusto/query/pivot-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "dcount_intersect",
+  "category": "General plugins",
+  "description": "Calculates intersection between N sets based on `hll` values (N in range of [2..16]), and returns N `dcount` values.",
+  "url": "https://learn.microsoft.com/kusto/query/dcount-intersect-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "infer_storage_schema",
+  "category": "General plugins",
+  "description": "This plugin infers the schema of external data, and returns it as CSL schema string.",
+  "url": "https://learn.microsoft.com/kusto/query/infer-storage-schema-plugin",
+  "supported": true,
+  "note": "Local files and folders, http files; csv, tsv, psv, scsv, txt, json, multijson."
+ },
+ {
+  "kind": "plugin",
+  "name": "infer_storage_schema_with_suggestions",
+  "category": "General plugins",
+  "description": "This `infer_storage_schema_with_suggestions` plugin infers the schema of external data and returns a JSON object.",
+  "url": "https://learn.microsoft.com/kusto/query/infer-storage-schema-with-suggestions-plugin",
+  "supported": true,
+  "note": "As infer_storage_schema."
+ },
+ {
+  "kind": "plugin",
+  "name": "ipv4_lookup",
+  "category": "General plugins",
+  "description": "The `ipv4_lookup` plugin looks up an IPv4 value in a lookup table and returns rows with matched values.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv4-lookup-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "ipv6_lookup",
+  "category": "General plugins",
+  "description": "The `ipv6_lookup` plugin looks up an IPv6 value in a lookup table and returns rows with matched values.",
+  "url": "https://learn.microsoft.com/kusto/query/ipv6-lookup-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "preview",
+  "category": "General plugins",
+  "description": "Returns a table with up to the specified number of rows from the input record set, and the total number of records in the input record set.",
+  "url": "https://learn.microsoft.com/kusto/query/preview-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "schema_merge",
+  "category": "General plugins",
+  "description": "Merges tabular schema definitions into a unified schema.",
+  "url": "https://learn.microsoft.com/kusto/query/schema-merge-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "geo_line_lookup",
+  "category": "Geospatial plugins",
+  "description": "The `geo_line_lookup` plugin looks up a `Line` value in a lookup table and returns rows with matched values.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-line-lookup-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "geo_polygon_lookup",
+  "category": "Geospatial plugins",
+  "description": "The `geo_polygon_lookup` plugin looks up a `Polygon` value in a lookup table and returns rows with matched values.",
+  "url": "https://learn.microsoft.com/kusto/query/geo-polygon-lookup-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "python",
+  "category": "Language plugins",
+  "description": "",
+  "url": "https://learn.microsoft.com/kusto/query/python-plugin",
+  "supported": false,
+  "note": "Not implemented: would embed an interpreter."
+ },
+ {
+  "kind": "plugin",
+  "name": "r",
+  "category": "Language plugins",
+  "description": "The R plugin runs a user-defined function (UDF) using an R script.",
+  "url": "https://learn.microsoft.com/kusto/query/r-plugin",
+  "supported": false,
+  "note": "Not implemented: would embed an interpreter."
+ },
+ {
+  "kind": "plugin",
+  "name": "autocluster",
+  "category": "Machine learning plugins",
+  "description": "`autocluster` finds common patterns of discrete attributes (dimensions) in the data.",
+  "url": "https://learn.microsoft.com/kusto/query/autocluster-plugin",
+  "supported": true,
+  "note": "Same output shape; ADX's selection is unspecified, so the segments found can differ on large inputs."
+ },
+ {
+  "kind": "plugin",
+  "name": "basket",
+  "category": "Machine learning plugins",
+  "description": "The `basket` plugin finds frequent patterns of attributes in the data and returns the patterns that pass a frequency threshold in that data.",
+  "url": "https://learn.microsoft.com/kusto/query/basket-plugin",
+  "supported": true,
+  "note": "Same output shape; ADX's selection is unspecified."
+ },
+ {
+  "kind": "plugin",
+  "name": "diffpatterns",
+  "category": "Machine learning plugins",
+  "description": "Compares two datasets of the same structure and finds patterns of discrete attributes (dimensions) that characterize differences between the two datasets.",
+  "url": "https://learn.microsoft.com/kusto/query/diffpatterns-plugin",
+  "supported": true,
+  "note": "Closed-itemset contrast: ADX's segments appear with the same counts, possibly with a few more."
+ },
+ {
+  "kind": "plugin",
+  "name": "diffpatterns_text",
+  "category": "Machine learning plugins",
+  "description": "Compares two datasets of string values and finds text patterns that characterize differences between the two datasets.",
+  "url": "https://learn.microsoft.com/kusto/query/diffpatterns-text-plugin",
+  "supported": true,
+  "note": "Closed positional token patterns; ADX's patterns appear, possibly with more."
+ },
+ {
+  "kind": "plugin",
+  "name": "ai_chat_completion",
+  "category": "Query connectivity plugins",
+  "description": "The `ai_chat_completion` plugin enables generating chat completions using language models, supporting AI-related scenarios such as conversational AI and interactive systems.",
+  "url": "https://learn.microsoft.com/kusto/query/ai-chat-completion-plugin",
+  "supported": true,
+  "note": "Any OpenAI-compatible chat endpoint (azure_openai callout rule). Key from GOKQL_AI_API_KEY."
+ },
+ {
+  "kind": "plugin",
+  "name": "ai_chat_completion_prompt",
+  "category": "Query connectivity plugins",
+  "description": "The `ai_chat_completion_prompt` plugin enables generating chat completions using language models, supporting AI-related scenarios such as conversational AI and interactive systems.",
+  "url": "https://learn.microsoft.com/kusto/query/ai-chat-completion-prompt-plugin",
+  "supported": true,
+  "note": "As ai_chat_completion."
+ },
+ {
+  "kind": "plugin",
+  "name": "ai_embeddings",
+  "category": "Query connectivity plugins",
+  "description": "The `ai_embeddings` plugin allows embedding of text using language models, enabling various AI-related scenarios such as Retrieval Augmented Generation (RAG) applications and semantic search.",
+  "url": "https://learn.microsoft.com/kusto/query/ai-embeddings-plugin",
+  "supported": true,
+  "note": "Any OpenAI-compatible endpoint (azure_openai callout rule); an empty connection string uses gokql's embedder. Key from GOKQL_AI_API_KEY."
+ },
+ {
+  "kind": "plugin",
+  "name": "azure_digital_twins_query_request",
+  "category": "Query connectivity plugins",
+  "description": "The `azure_digital_twins_query_request` plugin runs an Azure Digital Twins query as part of a Kusto Query Language (KQL) query.",
+  "url": "https://learn.microsoft.com/kusto/query/azure-digital-twins-query-request-plugin",
+  "supported": false,
+  "note": "Not implemented."
+ },
+ {
+  "kind": "plugin",
+  "name": "cosmosdb_sql_request",
+  "category": "Query connectivity plugins",
+  "description": "The `cosmosdb_sql_request` plugin sends a SQL query to an Azure Cosmos DB SQL network endpoint and returns the results of the query.",
+  "url": "https://learn.microsoft.com/kusto/query/cosmosdb-plugin",
+  "supported": false,
+  "note": "Not implemented."
+ },
+ {
+  "kind": "plugin",
+  "name": "dax_request",
+  "category": "Query connectivity plugins",
+  "description": "The `dax_request` plugin runs a Data Analysis Expressions (DAX) query against a Power BI semantic model and returns the results as a table.",
+  "url": "https://learn.microsoft.com/kusto/query/dax-request-plugin",
+  "supported": false,
+  "note": "Not implemented."
+ },
+ {
+  "kind": "plugin",
+  "name": "http_request",
+  "category": "Query connectivity plugins",
+  "description": "The `http_request` plugin sends an HTTP GET request and converts the response into a table.",
+  "url": "https://learn.microsoft.com/kusto/query/http-request-plugin",
+  "supported": true,
+  "note": "Needs a webapi rule in the callout policy (guide/security.md). Can start a query."
+ },
+ {
+  "kind": "plugin",
+  "name": "http_request_post",
+  "category": "Query connectivity plugins",
+  "description": "The `http_request_post` plugin sends an HTTP POST request and converts the response into a table.",
+  "url": "https://learn.microsoft.com/kusto/query/http-request-post-plugin",
+  "supported": true,
+  "note": "Needs a webapi rule in the callout policy."
+ },
+ {
+  "kind": "plugin",
+  "name": "mysql_request",
+  "category": "Query connectivity plugins",
+  "description": "The `mysql_request` plugin sends a SQL query to an Azure MySQL Server network endpoint and returns the first rowset in the results.",
+  "url": "https://learn.microsoft.com/kusto/query/mysql-request-plugin",
+  "supported": false,
+  "note": "Not implemented: needs a database driver."
+ },
+ {
+  "kind": "plugin",
+  "name": "postgresql_request",
+  "category": "Query connectivity plugins",
+  "description": "The `postgresql_request` plugin sends a SQL query to an Azure PostgreSQL Server network endpoint and returns the first rowset in the results.",
+  "url": "https://learn.microsoft.com/kusto/query/postgresql-request-plugin",
+  "supported": false,
+  "note": "Not implemented: needs a database driver."
+ },
+ {
+  "kind": "plugin",
+  "name": "sql_request",
+  "category": "Query connectivity plugins",
+  "description": "The `sql_request` plugin sends a SQL query to an Azure SQL Server network endpoint and returns the results.",
+  "url": "https://learn.microsoft.com/kusto/query/sql-request-plugin",
+  "supported": false,
+  "note": "Not implemented: needs a database driver."
+ },
+ {
+  "kind": "plugin",
+  "name": "active_users_count",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates distinct count of values, where each value has appeared in at least a minimum number of periods in a lookback period.",
+  "url": "https://learn.microsoft.com/kusto/query/active-users-count-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "activity_counts_metrics",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates useful activity metrics for each time window compared/aggregated to all previous time windows.",
+  "url": "https://learn.microsoft.com/kusto/query/activity-counts-metrics-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "activity_engagement",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates activity engagement ratio based on ID column over a sliding timeline window.",
+  "url": "https://learn.microsoft.com/kusto/query/activity-engagement-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "activity_metrics",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates useful metrics that include distinct count values, distinct count of new values, retention rate, and churn rate.",
+  "url": "https://learn.microsoft.com/kusto/query/activity-metrics-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "funnel_sequence",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates distinct count of users who have taken a sequence of states, and the distribution of previous/next states that have led to/were followed by the sequence.",
+  "url": "https://learn.microsoft.com/kusto/query/funnel-sequence-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "funnel_sequence_completion",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates a funnel of completed sequence steps while comparing different time periods.",
+  "url": "https://learn.microsoft.com/kusto/query/funnel-sequence-completion-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "new_activity_metrics",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates useful activity metrics (distinct count values, distinct count of new values, retention rate, and churn rate) for the cohort of `New Users`.",
+  "url": "https://learn.microsoft.com/kusto/query/new-activity-metrics-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "rolling_percentile",
+  "category": "User and sequence analytics plugins",
+  "description": "Returns an estimate for the specified percentile of the ValueColumn population in a rolling (sliding) BinsPerWindow size window per BinSize.",
+  "url": "https://learn.microsoft.com/kusto/query/rolling-percentile-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "rows_near",
+  "category": "User and sequence analytics plugins",
+  "description": "Finds rows near a specified condition.",
+  "url": "https://learn.microsoft.com/kusto/query/rows-near-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "sequence_detect",
+  "category": "User and sequence analytics plugins",
+  "description": "Detects sequence occurrences based on provided predicates.",
+  "url": "https://learn.microsoft.com/kusto/query/sequence-detect-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "session_count",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates the session count based on the ID column over a timeline.",
+  "url": "https://learn.microsoft.com/kusto/query/session-count-plugin",
+  "supported": true
+ },
+ {
+  "kind": "plugin",
+  "name": "sliding_window_counts",
+  "category": "User and sequence analytics plugins",
+  "description": "Calculates counts and distinct count of values in a sliding window over a lookback period, using the technique described in the Perform aggregations over a sliding window example.",
+  "url": "https://learn.microsoft.com/kusto/query/sliding-window-counts-plugin",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!=",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't match a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-equals-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!contains",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't include a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-contains-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!contains_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't include a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-contains-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!endswith",
+  "category": "String operators",
+  "description": "Filters a record set for data that excludes a case-insensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-endswith-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!endswith_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't contain a case-insensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-endswith-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!has",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't have a matching case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-has-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!has_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't have a matching case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-has-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!hasprefix",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't include a case-insensitive starting string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-hasprefix-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!hasprefix_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't have a case-sensitive starting string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-hasprefix-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!hassuffix",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't have a case-insensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-hassuffix-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!hassuffix_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't have a case-sensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-hassuffix-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!startswith",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't start with a case-insensitive search string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-startswith-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!startswith_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't start with a case-sensitive search string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-startswith-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!~",
+  "category": "String operators",
+  "description": "Filters a record set for data that doesn't match a case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-equals-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "==",
+  "category": "String operators",
+  "description": "Filters a record set for data matching a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/equals-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "=~",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/equals-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "contains",
+  "category": "String operators",
+  "description": "Filters a record set for data containing a case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/contains-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "contains_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data containing a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/contains-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "endswith",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/endswith-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "endswith_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-sensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/endswith-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "has",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/has-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "has_all",
+  "category": "String operators",
+  "description": "Filters a record set for data with one or more case-insensitive search strings.",
+  "url": "https://learn.microsoft.com/kusto/query/has-all-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "has_any",
+  "category": "String operators",
+  "description": "Filters a record set for data with any set of case-insensitive strings.",
+  "url": "https://learn.microsoft.com/kusto/query/has-any-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "has_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-sensitive search string.",
+  "url": "https://learn.microsoft.com/kusto/query/has-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "hasprefix",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive starting string.",
+  "url": "https://learn.microsoft.com/kusto/query/hasprefix-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "hasprefix_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-sensitive starting string.",
+  "url": "https://learn.microsoft.com/kusto/query/hasprefix-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "hassuffix",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/hassuffix-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "hassuffix_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive ending string.",
+  "url": "https://learn.microsoft.com/kusto/query/hassuffix-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "matches regex",
+  "category": "String operators",
+  "description": "Filters a record set based on a case-sensitive regular expression value.",
+  "url": "https://learn.microsoft.com/kusto/query/matches-regex-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "startswith",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-insensitive string starting sequence.",
+  "url": "https://learn.microsoft.com/kusto/query/startswith-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "startswith_cs",
+  "category": "String operators",
+  "description": "Filters a record set for data with a case-sensitive string starting sequence.",
+  "url": "https://learn.microsoft.com/kusto/query/startswith-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!between",
+  "category": "between operators",
+  "description": "Matches the input that is outside of the inclusive range.",
+  "url": "https://learn.microsoft.com/kusto/query/not-between-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "between",
+  "category": "between operators",
+  "description": "Filters a record set for data matching the values in an inclusive range.",
+  "url": "https://learn.microsoft.com/kusto/query/between-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!in",
+  "category": "in operators",
+  "description": "Filters a record set for data without a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-in-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "!in~",
+  "category": "in operators",
+  "description": "Filters a record set for data without a case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/not-in-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "in",
+  "category": "in operators",
+  "description": "Filters a record set for data with a case-sensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/in-cs-operator",
+  "supported": true
+ },
+ {
+  "kind": "scalar-operator",
+  "name": "in~",
+  "category": "in operators",
+  "description": "Filters a record set for data with a case-insensitive string.",
+  "url": "https://learn.microsoft.com/kusto/query/in-operator",
+  "supported": true
+ },
+ {
+  "kind": "statement",
+  "name": "Alias",
+  "category": "Query statements",
+  "description": "Alias statements allow you to define an alias for a database, which can be used in the same query.",
+  "url": "https://learn.microsoft.com/kusto/query/alias-statement",
+  "supported": true,
+  "note": "Resolves through the cluster layer (.okql-federation.json)."
+ },
+ {
+  "kind": "statement",
+  "name": "Batches",
+  "category": "Query statements",
+  "description": "A query can include multiple tabular expression statements, as long as they're delimited by a semicolon (`;`) character.",
+  "url": "https://learn.microsoft.com/kusto/query/batches",
+  "supported": true
+ },
+ {
+  "kind": "statement",
+  "name": "Let",
+  "category": "Query statements",
+  "description": "A `let` statement is used to set a variable name equal to an expression or a function, or to create views.",
+  "url": "https://learn.microsoft.com/kusto/query/let-statement",
+  "supported": true
+ },
+ {
+  "kind": "statement",
+  "name": "Pattern",
+  "category": "Query statements",
+  "description": "A pattern is a construct that maps string tuples to tabular expressions.",
+  "url": "https://learn.microsoft.com/kusto/query/pattern-statement",
+  "supported": true
+ },
+ {
+  "kind": "statement",
+  "name": "Query parameters",
+  "category": "Query statements",
+  "description": "Queries sent to Kusto may include a set of name or value pairs.",
+  "url": "https://learn.microsoft.com/kusto/query/query-parameters-statement",
+  "supported": true,
+  "note": "The HTTP server reads properties.Parameters."
+ },
+ {
+  "kind": "statement",
+  "name": "Restrict",
+  "category": "Query statements",
+  "description": "The restrict statement limits the set of table/view entities which are visible to query statements that follow it.",
+  "url": "https://learn.microsoft.com/kusto/query/restrict-statement",
+  "supported": false,
+  "note": "Not supported: restriction belongs to a multi-tenant service."
+ },
+ {
+  "kind": "statement",
+  "name": "Set",
+  "category": "Query statements",
+  "description": "The `set` statement is used to set a request property for the duration of the query.",
+  "url": "https://learn.microsoft.com/kusto/query/set-statement",
+  "supported": true,
+  "note": "query_now, query_bin_auto_size/at and truncationmaxrecords take effect; other options are accepted."
+ },
+ {
+  "kind": "statement",
+  "name": "Tabular expression statements",
+  "category": "Query statements",
+  "description": "The tabular expression statement is what people usually have in mind when they talk about queries.",
+  "url": "https://learn.microsoft.com/kusto/query/tabular-expression-statements",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "next",
+  "category": "Window functions",
+  "description": "Returns the value of a column in a row that is at some offset following the current row in a serialized row set.",
+  "url": "https://learn.microsoft.com/kusto/query/next-function",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "prev",
+  "category": "Window functions",
+  "description": "Returns the value of a specific column in a specified row.",
+  "url": "https://learn.microsoft.com/kusto/query/prev-function",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "row_cumsum",
+  "category": "Window functions",
+  "description": "Calculates the cumulative sum of a column in a serialized row set.",
+  "url": "https://learn.microsoft.com/kusto/query/row-cumsum-function",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "row_number",
+  "category": "Window functions",
+  "description": "Returns the current row's index in a serialized row set.",
+  "url": "https://learn.microsoft.com/kusto/query/row-number-function",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "row_rank_dense",
+  "category": "Window functions",
+  "description": "Returns the current row's dense rank in a serialized row set.",
+  "url": "https://learn.microsoft.com/kusto/query/row-rank-dense-function",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "row_rank_min",
+  "category": "Window functions",
+  "description": "Returns the current row's minimal rank in a serialized row set.",
+  "url": "https://learn.microsoft.com/kusto/query/row-rank-min-function",
+  "supported": true
+ },
+ {
+  "kind": "window",
+  "name": "row_window_session",
+  "category": "Window functions",
+  "description": "Calculates session start values of a column in a serialized row set.",
+  "url": "https://learn.microsoft.com/kusto/query/row-window-session-function",
+  "supported": true
+ }
+]

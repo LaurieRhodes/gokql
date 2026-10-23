@@ -1,7 +1,7 @@
 package engine
 
 // func_series.go — Tier 1 (element-wise math/comparison) and Tier 2
-// (gap-filling) series_* functions, per docs/timeseries_backlog.md's
+// (gap-filling) series_* functions, per docs/dev/history/timeseries_backlog.md's
 // own suggested build order. Every function's exact semantics
 // (argument shapes, null/mismatched-length handling, return element
 // type) verified against real ADX's own docs before writing this, not

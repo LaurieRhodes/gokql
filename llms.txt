@@ -1,0 +1,55 @@
+# gokql
+
+> gokql is a single-binary Kusto Query Language (KQL) engine that runs locally over a directory of columnar files. It follows Azure Data Explorer semantics (verified against Microsoft's documentation examples and the Kusto emulator), stores data append-only with an engine-stamped ingestion time, and is designed to be used by AI agents through a shell as well as by people. Run it as `gokql -db <DIR> -mode jsonl -e '<KQL>'`.
+
+Key facts for a model using gokql:
+
+- Writes append (`.set-or-append T <| datatable(...)[...]`); there is no in-place update. The current version of a record is `T | summarize arg_max(_TimeReceived, *) by Id`.
+- Every row has a hidden `_TimeReceived` column. Strings are never null.
+- A write must supply every column of an existing table; extra columns need `with (extend_schema=true)`.
+- Errors are one line on stderr with exit status 1; `-readonly` refuses writes.
+- Other databases are configured in the directory's `gokql.yaml` and queried with `database("name")` / `cluster("name").database("name")`.
+- `http_request`, the `ai_*` plugins and remote `externaldata` need a callout policy rule in `gokql.yaml`.
+- Not available: python(), R(), SQL request plugins, external_table(), stored_query_result(), geo_info_from_ip_address().
+
+## Start here
+
+- [For AI agents](docs/for-agents.md): how to run gokql, where it differs from ADX, errors and fixes
+- [Getting started](docs/getting-started.md): first database, writes, queries, output modes
+- [Agent memory skill](docs/use-cases/agent-memory-skill/SKILL.md): a ready-made discipline for keeping tasks and findings across sessions
+
+## Reference
+
+- [support.json](docs/reference/support.json): every KQL operator, function, aggregation and plugin, with whether gokql supports it and notes
+- [Operators and statements](docs/reference/operators.md)
+- [Scalar functions](docs/reference/functions.md)
+- [Aggregation functions](docs/reference/aggregations.md)
+- [Plugins](docs/reference/plugins.md)
+- [Management commands](docs/reference/commands.md)
+- [Command line](docs/reference/cli.md)
+- [Configuration: gokql.yaml](docs/reference/configuration.md)
+- [Compatibility with ADX](docs/compatibility.md)
+
+## Guides
+
+- [Writing data](docs/guide/writing-data.md): write commands, current state, update policies, materialized views, stored functions
+- [Storage](docs/guide/storage.md): extents, concurrency, compaction
+- [Files and external data](docs/guide/files-and-external-data.md)
+- [The local cluster](docs/guide/cluster.md)
+- [Graphs, GQL and openCypher](docs/guide/graphs.md)
+- [Geospatial](docs/guide/geospatial.md)
+- [Embeddings and AI](docs/guide/embeddings-and-ai.md)
+- [Security](docs/guide/security.md)
+- [Serving over HTTP](docs/guide/serving.md)
+
+## Use cases
+
+- [Agent memory](docs/use-cases/agent-memory.md)
+- [Security data triage](docs/use-cases/security-triage.md)
+- [KQL development and testing](docs/use-cases/kql-development.md)
+- [Research knowledge graphs](docs/use-cases/research-graphs.md)
+- [A local cluster of databases](docs/use-cases/local-cluster.md)
+
+## Optional
+
+- [Development](docs/dev/README.md): architecture, building, testing

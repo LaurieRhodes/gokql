@@ -229,6 +229,9 @@ type Engine struct {
 	// motivation and contract.
 	ExternalResolver ExternalFunctionResolver
 
+	// ReadOnly refuses every write command (gokql -readonly).
+	ReadOnly bool
+
 	// Embedder supplies vectors for embed_text() and .embed-into.
 	// nil means "use the default" (GOKQL_EMBED, else Ollama at
 	// EmbedEndpoint), so this is purely additive: an engine that sets
@@ -368,6 +371,14 @@ func (e *Engine) getSharedDict(table, column string) (*sharedDict, error) {
 // Execute runs a parsed statement and returns the result table (if any).
 func (e *Engine) Execute(stmt parser.Statement) (*types.Table, error) {
 	outer := e.execDepth.Load() == 0
+	if outer && parser.IsWrite(stmt) {
+		if e.ReadOnly {
+			return nil, fmt.Errorf("the database is open read-only: write commands are refused")
+		}
+		if e.federation().ReadOnly {
+			return nil, fmt.Errorf("the database is read-only (readonly: true in its %s): write commands are refused", federationConfigFileName)
+		}
+	}
 	if outer {
 		e.queryNow = time.Now().UTC().UnixNano()
 		defer func() { e.queryNow, e.queryOptions, e.binAutoSize, e.binAutoAt = 0, nil, nil, nil }()
@@ -1034,10 +1045,18 @@ func (e *Engine) executeQueryRaw(q *parser.Query) (*types.Table, error) {
 	// stored_functions.go's resolveStoredFunction. Same shape as the
 	// federation case immediately above: resolve at the source, then
 	// hand off to the normal pipeline unchanged.
-	if q.SourceFuncCall != nil && q.SourceFuncCall.Name == "table" {
+	if q.SourceFuncCall != nil && (q.SourceFuncCall.Name == "table" || q.SourceFuncCall.Name == "materialized_view") {
 		// table(name): a table (or tabular let) named by a scalar,
 		// e.g. a function parameter: table(edgesTableName).
-		name, err := e.evalSourceNameArg("table", q.SourceFuncCall)
+		// materialized_view(name [, max_age]): views are always
+		// current here, so max_age has nothing to bound.
+		call := q.SourceFuncCall
+		if call.Name == "materialized_view" && len(call.ArgTexts) == 2 {
+			c := *call
+			c.ArgTexts = c.ArgTexts[:1]
+			call = &c
+		}
+		name, err := e.evalSourceNameArg(call.Name, call)
 		if err != nil {
 			return nil, err
 		}

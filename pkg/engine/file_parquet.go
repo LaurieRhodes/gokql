@@ -265,8 +265,17 @@ func parquetValueToKQL(v parquet.Value, kt types.KQLType) interface{} {
 	}
 }
 
-// parquetToDatetime converts a parquet timestamp value to time.Time.
+// parquetToDatetime converts a parquet timestamp value to a datetime
+// (int64 nanoseconds); parquetToTime does the decoding.
 func parquetToDatetime(v parquet.Value) interface{} {
+	// datetimes are int64 nanoseconds
+	if t, ok := parquetToTime(v).(time.Time); ok {
+		return t.UnixNano()
+	}
+	return nil
+}
+
+func parquetToTime(v parquet.Value) interface{} {
 	switch v.Kind() {
 	case parquet.Int64:
 		// Could be millis or micros since epoch
