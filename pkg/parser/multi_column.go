@@ -37,6 +37,8 @@ var multiColumnFuncs = map[string]struct {
 		{"baseline", "todynamic"}, {"seasonal", "todynamic"}, {"trend", "todynamic"}, {"residual", "todynamic"}}},
 	"series_decompose_anomalies": {"__series_decompose_anomalies_dynamic", []multiKey{
 		{"ad_flag", "todynamic"}, {"ad_score", "todynamic"}, {"baseline", "todynamic"}}},
+	"series_periods_detect":   {"__series_periods_detect_dynamic", []multiKey{{"periods", "todynamic"}, {"scores", "todynamic"}}},
+	"series_periods_validate": {"__series_periods_validate_dynamic", []multiKey{{"periods", "todynamic"}, {"scores", "todynamic"}}},
 	"series_fit_2lines": {"series_fit_2lines_dynamic", []multiKey{
 		{"rsquare", "todouble"}, {"split_idx", "tolong"}, {"variance", "todouble"}, {"rvariance", "todouble"},
 		{"line_fit", "todynamic"}, {"right.rsquare", "todouble"}, {"right.slope", "todouble"},

@@ -381,12 +381,6 @@ func decomposeArgs(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row t
 	return x, d, true, nil
 }
 
-// detectSeasonality is series_decompose's seasonality=-1: the best
-// period from series_periods_detect when its score passes thresh.
-func detectSeasonality(x []float64, thresh float64) (int, error) {
-	return 0, fmt.Errorf("series_decompose: automatic seasonality (-1, the default) needs series_periods_detect, which is not implemented; pass the period, or 0 for none")
-}
-
 func decompositionTrendJSON(d *decomposition) interface{} {
 	if d.trendNone {
 		z := make([]int, len(d.trend))

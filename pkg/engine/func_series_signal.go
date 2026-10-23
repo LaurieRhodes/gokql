@@ -207,8 +207,8 @@ func dft(x []complex128, inverse bool) []complex128 {
 
 // evalSeriesSeasonal is series_seasonal(series, period): each position
 // is the median of the values at that position across the periods.
-// Automatic period detection (period omitted or -1) needs
-// series_periods_detect, which is not implemented.
+// Period -1 (the default) detects it with series_periods_detect at
+// threshold 0.7; no period found, or 0, gives zeros.
 func evalSeriesSeasonal(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types.Row) (types.Value, bool, error) {
 	if len(fc.Args) < 1 || len(fc.Args) > 2 {
 		return nil, true, fmt.Errorf("series_seasonal requires (series [, period])")
@@ -227,8 +227,16 @@ func evalSeriesSeasonal(eng *Engine, fc *parser.FuncCall, schema *types.Schema, 
 			period = types.ToInt64(v)
 		}
 	}
+	if period < 0 {
+		// -1 (the default): series_periods_detect with threshold 0.7
+		d, err := detectSeasonality(x, 0.7)
+		if err != nil {
+			return nil, true, err
+		}
+		period = int64(d)
+	}
 	if period <= 0 {
-		return nil, true, fmt.Errorf("series_seasonal: automatic period detection (series_periods_detect) is not implemented; pass the period")
+		return floatsJSON(make([]float64, len(x))), true, nil
 	}
 	p := int(period)
 	med := make([]float64, p)

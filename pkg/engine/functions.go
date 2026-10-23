@@ -140,6 +140,9 @@ func evalFuncRaw(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row typ
 	if v, ok, err := evalSeriesDecomposeFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
+	if v, ok, err := evalSeriesPeriodsFunc(eng, fc, schema, row); ok {
+		return v, err
+	}
 	if v, ok, err := evalUserFunc(eng, fc, schema, row); ok {
 		return v, err
 	}
