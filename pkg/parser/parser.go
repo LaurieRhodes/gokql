@@ -331,6 +331,11 @@ func ParseWithParameters(input string, params map[string]string) (Statement, err
 
 	// Split on semicolons (respecting strings and parentheses)
 	stmts := splitStatements(input)
+	if exp, err := expandMacros(stmts); err != nil {
+		return nil, err
+	} else {
+		stmts = exp
+	}
 
 	// declare pattern statements: their invocations in the other
 	// statements are expanded before those are parsed.
@@ -766,6 +771,9 @@ func isTabularExpression(s string) bool {
 // when no pipe operator is present.
 func isTabularSource(s string) bool {
 	lower := keywordFold(strings.TrimSpace(s))
+	if isExternalDataSource(lower) {
+		return true
+	}
 	if strings.HasPrefix(lower, "datatable") {
 		rest := lower[len("datatable"):]
 		// Word boundary: next non-space char must be '(' so an identifier like
@@ -1943,6 +1951,26 @@ func parseQuery(input string) (Statement, error) {
 	// or find Predicate [project ...] (no "where" in this shorter form)
 	if strings.HasPrefix(keywordFold(source), "find ") {
 		return parseFindStatement(source[5:], segments[1:])
+	}
+
+	// externaldata (Col: type, ...) [uri, ...] [with (...)]
+	if isExternalDataSource(keywordFold(strings.TrimSpace(source))) {
+		tf, err := parseExternalData(source)
+		if err != nil {
+			return nil, err
+		}
+		query := &Query{SourceFunc: tf}
+		for _, seg := range segments[1:] {
+			if seg = strings.TrimSpace(seg); seg == "" {
+				continue
+			}
+			op, err := parseOperator(seg)
+			if err != nil {
+				return nil, err
+			}
+			query.Operators = append(query.Operators, op)
+		}
+		return query, nil
 	}
 
 	// datatable (Col1: type, Col2: type) [val1, val2, ...]

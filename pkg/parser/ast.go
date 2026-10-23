@@ -74,8 +74,13 @@ type DatabaseTableRef struct {
 
 // TableFunc represents a table-valued function call like csv("path") or json("path").
 type TableFunc struct {
-	Name string // "csv", "json", "ndjson", "vortex"
+	Name string // "csv", "json", "ndjson", "vortex", "externaldata"
 	Path string // File path argument
+	// externaldata: the declared schema, the storage URIs (local paths,
+	// file:// or http(s):// URLs) and the with(...) properties.
+	Schema *types.Schema
+	URIs   []string
+	Props  map[string]string
 }
 
 func (*Query) statementNode() {}

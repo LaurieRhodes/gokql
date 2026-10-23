@@ -37,6 +37,12 @@ func (e *Engine) executeTableFunc(q *parser.Query) (*types.Table, error) {
 		result, err = readNDJSONFile(tf.Path)
 	case "parquet":
 		result, err = readParquetFile(tf.Path)
+	case "externaldata":
+		result, err = e.readExternalData(tf)
+		if err != nil {
+			return nil, fmt.Errorf("externaldata: %w", err)
+		}
+		return e.applyPipeline(result, q.Operators)
 	default:
 		return nil, fmt.Errorf("unsupported table function %q", tf.Name)
 	}

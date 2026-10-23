@@ -38,14 +38,28 @@ func (e *Engine) federation() *federationConfig {
 
 // clusterName is this cluster's name.
 func (e *Engine) clusterName() string {
+	if e.hostCluster != "" {
+		return e.hostCluster
+	}
 	if c := e.federation().Cluster; c != "" {
 		return c
 	}
 	return "localhost"
 }
 
+// principal is what current_principal() reports.
+func (e *Engine) principal() string {
+	if e.hostPrincipal != "" {
+		return e.hostPrincipal
+	}
+	if p := e.federation().Principal; p != "" {
+		return p
+	}
+	return "<null identity>"
+}
+
 func (e *Engine) isThisCluster(name string) bool {
-	return strings.EqualFold(name, e.clusterName()) || strings.EqualFold(name, "localhost") && e.federation().Cluster == ""
+	return strings.EqualFold(name, e.clusterName()) || strings.EqualFold(name, "localhost") && e.clusterName() == "localhost"
 }
 
 func (e *Engine) localDatabaseName() string {
@@ -119,6 +133,10 @@ func (e *Engine) resolveOtherClusterTable(ref *parser.DatabaseTableRef, operator
 			return nil, nil, fmt.Errorf("cluster(%q).database(%q): opening %s: %w", ref.Cluster, ref.Alias, db.path, err)
 		}
 		remote := e.forNested(cat)
+		remote.hostCluster = ref.Cluster
+		if c, _ := loadFederationConfig(dbs[0].path); c != nil && c.Cluster != "" {
+			remote.hostCluster = c.Cluster
+		}
 		if cat.GetTable(ref.TableName) == nil {
 			return nil, nil, fmt.Errorf("cluster(%q).database(%q).%s: table not found", ref.Cluster, ref.Alias, ref.TableName)
 		}

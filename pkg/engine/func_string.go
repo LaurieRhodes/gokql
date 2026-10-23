@@ -691,16 +691,14 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 
 	case "current_principal":
 		if eng != nil {
-			if p := eng.federation().Principal; p != "" {
-				return p, true, nil
-			}
+			return eng.principal(), true, nil
 		}
 		return "<null identity>", true, nil
 
 	case "current_principal_details":
 		p := "<null identity>"
-		if eng != nil && eng.federation().Principal != "" {
-			p = eng.federation().Principal
+		if eng != nil {
+			p = eng.principal()
 		}
 		var buf strings.Builder
 		enc := json.NewEncoder(&buf)
@@ -711,8 +709,8 @@ func evalStringFunc(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row 
 	case "current_principal_is_member_of":
 		// No groups locally: true only when the principal itself is named.
 		p := "<null identity>"
-		if eng != nil && eng.federation().Principal != "" {
-			p = eng.federation().Principal
+		if eng != nil {
+			p = eng.principal()
 		}
 		for _, a := range fc.Args {
 			v, err := evalExpr(eng, a, schema, row)

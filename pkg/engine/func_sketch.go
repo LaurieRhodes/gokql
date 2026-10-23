@@ -160,7 +160,7 @@ func (t *tdigestSketch) percentile(p float64) types.Value {
 	if len(t.Samples) == 0 {
 		return nil
 	}
-	rank := math.Ceil(p / 100 * t.total())
+	rank := math.Ceil(p/100*t.total() - 1e-9)
 	if rank < 1 {
 		rank = 1
 	}

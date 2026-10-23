@@ -354,7 +354,7 @@ func nearestRankPercentile(vals []types.Value, p float64) types.Value {
 	}
 	s := append([]types.Value(nil), vals...)
 	sort.SliceStable(s, func(i, j int) bool { return types.ToFloat64(s[i]) < types.ToFloat64(s[j]) })
-	rank := int(math.Ceil(p / 100 * float64(len(s))))
+	rank := int(math.Ceil(p/100*float64(len(s)) - 1e-9))
 	if rank < 1 {
 		rank = 1
 	}

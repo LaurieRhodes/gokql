@@ -154,7 +154,11 @@ func (ctx *LetContext) LookupFunction(name string) (*parser.FunctionDef, bool) {
 
 // Engine is the query execution engine.
 type Engine struct {
-	Catalog *catalog.Catalog
+	// hostCluster / hostPrincipal: for an engine opened on another
+	// database of a cluster, the cluster name and principal of the
+	// query that opened it (cluster.go).
+	hostCluster, hostPrincipal string
+	Catalog                    *catalog.Catalog
 
 	// execDepth counts nested Execute calls; the outermost refreshes
 	// the catalog from disk (catalog.Refresh) so a long-lived engine
@@ -311,6 +315,7 @@ func (e *Engine) forNested(cat *catalog.Catalog) *Engine {
 	n.letContext = e.letContext
 	n.stmtEmbedder = e.stmtEmbedder
 	n.udfDepth = e.udfDepth
+	n.hostCluster, n.hostPrincipal = e.clusterName(), e.principal()
 	return n
 }
 

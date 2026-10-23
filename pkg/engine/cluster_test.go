@@ -50,6 +50,23 @@ func TestClusterQueries(t *testing.T) {
 	expectErrContains(t, eng, `cluster('nope').database('x').T`, "not listed")
 }
 
+// macro-expand runs the subquery per entity and unions the results;
+// the emulator rejects duplicate entities.
+func TestMacroExpand(t *testing.T) {
+	eng, otherDB := clusterScopes(t)
+	local := eng.localDatabaseName()
+	expectWrRows(t, eng, `macro-expand entity_group [database('`+local+`'), database('mstar')] as X (`+
+		`union X.* | project Name, db = X.$current_database) | order by db asc`,
+		"local Kusto | "+local, "Enki has Kusto | mstar")
+	expectWrRows(t, eng, `let G = entity_group [cluster('lab').database('`+otherDB+`')]; `+
+		`macro-expand G as X (X.Far | project Name, e = X.$current_cluster_endpoint)`, "far Kusto | lab")
+	expectWrRows(t, eng, `let G = entity_group [database('mstar')]; macro-expand X in G (X.Ent | count)`, "1")
+	expectWrRows(t, eng, `macro-expand entity_group [database('mstar')] as X (X.Ent | count | extend e = X.$current_cluster_endpoint)`, "1 | odm")
+	expectWrRows(t, eng, `print s = 'macro-expand X'`, "macro-expand X")
+	expectErrContains(t, eng, `macro-expand entity_group [database('mstar'), database('mstar')] as X (X.Ent)`, "twice")
+	expectErrContains(t, eng, `macro-expand Nope as X (X.Ent)`, "unknown entity group")
+}
+
 func TestCursors(t *testing.T) {
 	eng := discoverEngine(t, t.TempDir())
 	diskExec(t, eng, `.create table T (x:long)`)

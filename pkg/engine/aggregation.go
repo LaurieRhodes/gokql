@@ -1373,7 +1373,7 @@ func computePercentileValues(eng *Engine, agg parser.Aggregation, pcts []float64
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].key < items[j].key })
 	for i, p := range pcts {
-		rank := int64(math.Ceil(p / 100 * float64(total)))
+		rank := int64(math.Ceil(p/100*float64(total) - 1e-9)) // 99.9% of 1000 is 999, not float-noise 1000
 		if rank < 1 {
 			rank = 1
 		}
