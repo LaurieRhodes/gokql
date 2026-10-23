@@ -219,7 +219,7 @@ func evalGeoH3(eng *Engine, fc *parser.FuncCall, schema *types.Schema, row types
 		}
 		return h3CellsJSON(cells), true, nil
 	}
-	return nil, false, nil
+	return evalGeoOps(eng, fc, schema, row)
 }
 
 // h3MaxPolygonCells bounds geo_polygon_to_h3cells' output.

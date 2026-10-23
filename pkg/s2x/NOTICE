@@ -1,0 +1,10 @@
+pkg/s2x is a Go port of parts of the S2 Geometry Library
+(https://github.com/google/s2geometry, commit 677c8cebcff1), including
+S2Builder, S2Builder::Graph, S2BooleanOperation, S2BufferOperation,
+S2WindingOperation, the s2builderutil layers and snap functions, and the
+predicates and edge utilities they depend on. Its tests are converted from
+the library's C++ tests.
+
+Copyright Google Inc. Licensed under the Apache License, Version 2.0 (see
+LICENSE in this directory). The Go code was translated by hand and modified
+to build on github.com/golang/geo.
