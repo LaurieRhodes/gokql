@@ -73,6 +73,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -108,6 +109,30 @@ func dictionariesSchema() types.Schema {
 type sharedDict struct {
 	values []string
 	codeOf map[string]uint32
+
+	boxOnce sync.Once
+	box     []types.Value // values as row cells, built on first use
+}
+
+// maxBoxedDict bounds the dictionaries boxed up front: a cell then
+// costs no allocation, but boxing a huge dictionary for a query that
+// reads a few rows would cost more than it saves.
+const maxBoxedDict = 1 << 20
+
+// boxed returns the dictionary's values boxed once as row cells (nil
+// for a dictionary over maxBoxedDict).
+func (sd *sharedDict) boxed() []types.Value {
+	sd.boxOnce.Do(func() {
+		if len(sd.values) > maxBoxedDict {
+			return
+		}
+		box := make([]types.Value, len(sd.values))
+		for i, v := range sd.values {
+			box[i] = v
+		}
+		sd.box = box
+	})
+	return sd.box
 }
 
 // dictionariesLockPath is the single, scope-wide lock file

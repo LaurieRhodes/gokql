@@ -49,6 +49,7 @@ type colVec struct {
 	// backing with the decoded dictionary, so value() never copies.
 	dictCodes []int
 	dictVals  []string
+	dictBoxed []types.Value // dictVals boxed once (shared dictionaries), or nil
 
 	// valid is the null mask of a numeric or bool column (nil: no
 	// nulls in the chunk). A false entry is null whatever the slot
@@ -145,6 +146,9 @@ func (c *colVec) rawValue(i int) types.Value {
 		}
 	case c.dictCodes != nil:
 		if i < len(c.dictCodes) {
+			if c.dictBoxed != nil {
+				return c.dictBoxed[c.dictCodes[i]]
+			}
 			return c.dictVals[c.dictCodes[i]]
 		}
 	case c.str != nil:
@@ -429,5 +433,6 @@ func decodeDictRefColumnVec(e *Engine, tableName, colName string, arr *vortex.Ar
 		kt:        kt,
 		dictCodes: codes,
 		dictVals:  sd.values,
+		dictBoxed: sd.boxed(),
 	}, nil
 }
