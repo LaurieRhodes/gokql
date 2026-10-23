@@ -32,6 +32,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 	"runtime"
 	"strconv"
@@ -521,7 +522,126 @@ type aggAccum struct {
 type distinctSet struct {
 	str map[string]struct{}
 	num map[uint64]struct{}
+	// Coded mode (dictionary-encoded string columns): the codes seen,
+	// indexing dict, sparse in codes until a bitset is smaller. A set
+	// is coded or uses str, never both, so the count is a plain sum.
+	dict  []string
+	codes map[int32]struct{}
+	bits  []uint64
+	nbits int
 }
+
+// sameBacking reports whether two dictionaries are the same slice.
+func sameBacking(a, b []string) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
+// addCode records dictionary code code of dict.
+func (d *distinctSet) addCode(dict []string, code int) {
+	if d.str != nil || (d.dict != nil && !sameBacking(d.dict, dict)) {
+		d.toStr()
+		d.str[dict[code]] = struct{}{}
+		return
+	}
+	d.dict = dict
+	if d.bits != nil {
+		d.setBit(code)
+		return
+	}
+	if d.codes == nil {
+		d.codes = make(map[int32]struct{})
+	}
+	d.codes[int32(code)] = struct{}{}
+	// A map entry costs about 16 bytes, the bitset len(dict)/8.
+	if len(d.codes)*128 > len(dict) {
+		d.bits = make([]uint64, (len(dict)+63)/64)
+		for c := range d.codes {
+			d.setBit(int(c))
+		}
+		d.codes = nil
+	}
+}
+
+func (d *distinctSet) setBit(code int) {
+	w, m := code>>6, uint64(1)<<(code&63)
+	if d.bits[w]&m == 0 {
+		d.bits[w] |= m
+		d.nbits++
+	}
+}
+
+// toStr leaves coded mode: the codes become their strings.
+func (d *distinctSet) toStr() {
+	if d.str == nil {
+		d.str = make(map[string]struct{}, len(d.codes)+d.nbits)
+	}
+	if d.dict == nil {
+		return
+	}
+	for c := range d.codes {
+		d.str[d.dict[c]] = struct{}{}
+	}
+	for w, word := range d.bits {
+		for word != 0 {
+			b := bits.TrailingZeros64(word)
+			d.str[d.dict[w*64+b]] = struct{}{}
+			word &= word - 1
+		}
+	}
+	d.dict, d.codes, d.bits, d.nbits = nil, nil, nil, 0
+}
+
+// union adds src's elements to d.
+func (d *distinctSet) union(src *distinctSet) {
+	if src.dict != nil && d.str == nil && (d.dict == nil || sameBacking(d.dict, src.dict)) {
+		for c := range src.codes {
+			d.addCode(src.dict, int(c))
+		}
+		if src.bits != nil {
+			if d.bits == nil {
+				d.dict = src.dict
+				d.bits = make([]uint64, len(src.bits))
+				for c := range d.codes {
+					d.setBit(int(c))
+				}
+				d.codes = nil
+			}
+			if d.str == nil { // addCode above may have left coded mode
+				n := 0
+				for w := range d.bits {
+					d.bits[w] |= src.bits[w]
+					n += bits.OnesCount64(d.bits[w])
+				}
+				d.nbits = n
+				return
+			}
+		} else if d.str == nil {
+			return
+		}
+	}
+	if src.dict != nil {
+		src.toStr()
+	}
+	if d.dict != nil {
+		d.toStr()
+	}
+	if d.str == nil && src.str != nil {
+		d.str = src.str
+	} else {
+		for k := range src.str {
+			d.str[k] = struct{}{}
+		}
+	}
+	if d.num == nil {
+		d.num = src.num
+	} else {
+		for k := range src.num {
+			d.num[k] = struct{}{}
+		}
+	}
+}
+
+func (d *distinctSet) count() int { return len(d.str) + len(d.num) + len(d.codes) + d.nbits }
 
 // distinctNumKey maps a numeric/bool cell to a key that is equal
 // exactly when the row engine's fmt.Sprintf("%v") keys are equal:
@@ -572,13 +692,13 @@ func accumulate(a *aggAccum, fn string, isMax bool, c *colVec, row int) {
 		switch {
 		case c.dictCodes != nil:
 			if row < len(c.dictCodes) {
-				if a.d.str == nil {
-					a.d.str = make(map[string]struct{})
-				}
-				a.d.str[c.dictVals[c.dictCodes[row]]] = struct{}{}
+				a.d.addCode(c.dictVals, c.dictCodes[row])
 			}
 		case c.str != nil:
 			if row < len(c.str) {
+				if a.d.dict != nil {
+					a.d.toStr()
+				}
 				if a.d.str == nil {
 					a.d.str = make(map[string]struct{})
 				}
@@ -637,6 +757,9 @@ func accumulateEmptyString(a *aggAccum, fn string) {
 	if fn == "dcount" || fn == "count_distinct" {
 		if a.d == nil {
 			a.d = &distinctSet{}
+		}
+		if a.d.dict != nil {
+			a.d.toStr()
 		}
 		if a.d.str == nil {
 			a.d.str = make(map[string]struct{})
@@ -698,7 +821,7 @@ func finalizeAccum(a *aggAccum, fn string, k vecKind) types.Value {
 		if a.d == nil {
 			return int64(0)
 		}
-		return int64(len(a.d.str) + len(a.d.num))
+		return int64(a.d.count())
 	case "sum":
 		return a.sum // integral sums are taken from isum by the caller
 	case "avg":
@@ -777,20 +900,7 @@ func mergeAccum(dst, src *aggAccum, fn string, isMax bool) {
 		case dst.d == nil:
 			dst.d = src.d
 		default:
-			if dst.d.str == nil {
-				dst.d.str = src.d.str
-			} else {
-				for k := range src.d.str {
-					dst.d.str[k] = struct{}{}
-				}
-			}
-			if dst.d.num == nil {
-				dst.d.num = src.d.num
-			} else {
-				for k := range src.d.num {
-					dst.d.num[k] = struct{}{}
-				}
-			}
+			dst.d.union(src.d)
 		}
 	case "count", "avg":
 		dst.cnt += src.cnt
