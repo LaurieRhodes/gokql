@@ -58,6 +58,9 @@ func (e *Engine) applyGraphMatchDistinctBFS(g *Graph, op *parser.GraphMatchOp, p
 		}
 		out := make(types.Row, len(row))
 		copy(out, row)
+		if err := plan.finishRow(g, out); err != nil {
+			return err
+		}
 		matches.AddRow(out)
 		return nil
 	}

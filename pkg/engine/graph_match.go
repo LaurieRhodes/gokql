@@ -113,6 +113,7 @@ type gmElem struct {
 	left, right int
 	offset      int  // first column in the match schema (-1 = anonymous)
 	skipList    bool // variable-length edge never read: no JSON edge list
+	deferList   bool // read only by project: rendered when a match is emitted
 	pathOff     int  // hidden graph-path column (-1 = anonymous)
 	pos         int  // plan position at which it becomes bound
 	labelsOff   int  // hidden labels column (-1 = not used)
@@ -133,11 +134,12 @@ type gmStep struct {
 // (the first node of the first sequence); position k (k >= 1) is after
 // steps[k-1].
 type gmPlan struct {
-	vars   []gmVar
-	elems  []gmElem
-	steps  []gmStep
-	schema types.Schema
-	varPos map[string]int
+	deferred bool // some element defers its edge list (finishRow)
+	vars     []gmVar
+	elems    []gmElem
+	steps    []gmStep
+	schema   types.Schema
+	varPos   map[string]int
 }
 
 // graphPathPrefix names the hidden per-edge-variable column holding a
@@ -519,8 +521,17 @@ func (e *Engine) buildGraphMatchPlan(g *Graph, op *parser.GraphMatchOp) (*gmPlan
 	// (rendering it per partial path dominated long-path matches).
 	for i := range plan.elems {
 		el := &plan.elems[i]
-		if el.spec.VarLength && el.spec.Name != "" && !uses.all && !graphMatchReads(op, el.spec.Name) {
+		if !el.spec.VarLength || el.spec.Name == "" || uses.all {
+			continue
+		}
+		switch {
+		case !graphMatchReads(op, el.spec.Name):
 			el.skipList = true
+		case !graphMatchReads(&parser.GraphMatchOp{Where: op.Where}, el.spec.Name):
+			// Only project reads it: render the list once per emitted
+			// match, not per partial path.
+			el.deferList = true
+			plan.deferred = true
 		}
 	}
 	for i := range plan.elems {
@@ -654,6 +665,47 @@ func (plan *gmPlan) writePath(g *Graph, row types.Row, el int, start types.Value
 	if elem.skipList {
 		return nil
 	}
+	if elem.deferList {
+		cp := make([]int, len(edges))
+		copy(cp, edges)
+		row[elem.offset] = deferredEdges(cp)
+		return nil
+	}
+	s, err := edgeListJSON(g, edges)
+	if err != nil {
+		return err
+	}
+	row[elem.offset] = s
+	return nil
+}
+
+// deferredEdges is a variable-length edge's list awaiting rendering
+// (finishRow).
+type deferredEdges []int
+
+// finishRow renders deferred edge lists in an emitted match row.
+func (plan *gmPlan) finishRow(g *Graph, row types.Row) error {
+	if !plan.deferred {
+		return nil
+	}
+	for i := range plan.elems {
+		el := &plan.elems[i]
+		if !el.deferList {
+			continue
+		}
+		if d, ok := row[el.offset].(deferredEdges); ok {
+			s, err := edgeListJSON(g, d)
+			if err != nil {
+				return err
+			}
+			row[el.offset] = s
+		}
+	}
+	return nil
+}
+
+// edgeListJSON renders edges as the JSON array of their property bags.
+func edgeListJSON(g *Graph, edges []int) (string, error) {
 	list := make([]map[string]interface{}, len(edges))
 	for i, ei := range edges {
 		m := make(map[string]interface{}, len(g.EdgeSchema.Columns))
@@ -673,10 +725,9 @@ func (plan *gmPlan) writePath(g *Graph, row types.Row, el int, start types.Value
 	}
 	b, err := json.Marshal(list)
 	if err != nil {
-		return fmt.Errorf("graph-match: marshal edge list: %w", err)
+		return "", fmt.Errorf("graph-match: marshal edge list: %w", err)
 	}
-	row[elem.offset] = string(b)
-	return nil
+	return string(b), nil
 }
 
 // graphMatchCollectCap sizes the shared edge-collection buffer.
@@ -721,6 +772,9 @@ func (e *Engine) applyGraphMatch(g *Graph, op *parser.GraphMatchOp) (*types.Tabl
 		}
 		out := make(types.Row, len(row))
 		copy(out, row)
+		if err := plan.finishRow(g, out); err != nil {
+			return err
+		}
 		matches.AddRow(out)
 		return nil
 	})
@@ -1044,6 +1098,9 @@ func (e *Engine) applyGraphShortestPaths(g *Graph, op *parser.GraphMatchOp, plan
 		}
 		out := make(types.Row, len(row))
 		copy(out, row)
+		if err := plan.finishRow(g, out); err != nil {
+			return err
+		}
 		b.rows = append(b.rows, out)
 		total++
 		return nil
