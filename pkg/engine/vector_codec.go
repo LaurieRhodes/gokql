@@ -49,6 +49,12 @@ func encodeVector(v []float64) (string, error) {
 	if VectorEncoding == "json" {
 		return encodeVectorJSON(v)
 	}
+	return encodeVectorCompact(v)
+}
+
+// encodeVectorCompact renders v in the compact form, whatever
+// VectorEncoding says.
+func encodeVectorCompact(v []float64) (string, error) {
 	buf := make([]byte, 4*len(v))
 	for i, f := range v {
 		f32 := float32(f)

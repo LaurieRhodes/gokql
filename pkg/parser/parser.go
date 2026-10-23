@@ -1059,7 +1059,30 @@ func parseCommand(input string) (Statement, error) {
 		if name == "" {
 			return nil, fmt.Errorf(".compact table: missing table name")
 		}
-		return &CompactTableCmd{TableName: name, Where: whereExpr}, nil
+		var opts map[string]string
+		if idx := strings.Index(strings.ToLower(name), " with "); idx >= 0 {
+			optStr := strings.TrimSpace(name[idx+len(" with "):])
+			name = strings.TrimSpace(name[:idx])
+			if !strings.HasPrefix(optStr, "(") || !strings.HasSuffix(optStr, ")") {
+				return nil, fmt.Errorf(".compact table: expected with (name = value, ...)")
+			}
+			opts = map[string]string{}
+			for _, kv := range strings.Split(optStr[1:len(optStr)-1], ",") {
+				eq := strings.IndexByte(kv, '=')
+				if eq <= 0 {
+					return nil, fmt.Errorf(".compact table: bad option %q", strings.TrimSpace(kv))
+				}
+				k := strings.ToLower(strings.TrimSpace(kv[:eq]))
+				v := strings.Trim(strings.TrimSpace(kv[eq+1:]), `"'`)
+				opts[k] = strings.ToLower(v)
+			}
+			for k, v := range opts {
+				if k != "vectors" || v != "compact" {
+					return nil, fmt.Errorf(".compact table: unknown option %s=%s (supported: vectors=compact)", k, v)
+				}
+			}
+		}
+		return &CompactTableCmd{TableName: name, Where: whereExpr, Options: opts}, nil
 	}
 
 	// .gc table T — physically removes .superseded files for T, left

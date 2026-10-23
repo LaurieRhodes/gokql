@@ -24,7 +24,7 @@ var helpEntries = []helpEntry{
 	{".drop table T", "remove a table and all its extents"},
 	{".drop extent <guid>", "remove one specific extent by id"},
 	{".merge table T extents", "merge all of T's extents into one (on disk, the same as .compact table T)"},
-	{".compact table T", "discovery mode: merge T's extents into one, superseding (renaming, not deleting) the old ones"},
+	{".compact table T [with (vectors=compact)]", "discovery mode: merge T's extents (wide rows into several), superseding (renaming, not deleting) the old ones; vectors=compact re-encodes embedding columns from JSON to compact float32"},
 	{".gc table T", "discovery mode: physically remove files .compact superseded — safe to run any time"},
 	{chunkFileHelpCmd, "split a markdown file into paragraph-level chunks and write into T"},
 	{".embed-into T [with (model=\"name\")] <| query", "bulk-embed the query's Text column into T, resumably; one model per table"},

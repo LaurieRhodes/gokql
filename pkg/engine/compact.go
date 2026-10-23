@@ -66,6 +66,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
@@ -118,7 +119,7 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	// file is a permanently-redundant tiny file the moment any
 	// row-bearing extent exists, regardless of how many row-bearing
 	// extents there are.
-	if len(snapshot) <= 1 && len(shellFiles) == 0 && cmd.Where == nil {
+	if len(snapshot) <= 1 && len(shellFiles) == 0 && cmd.Where == nil && cmd.Options == nil {
 		result := types.NewTable("", types.Schema{Columns: []types.Column{
 			{Name: "Result", Type: types.TypeString},
 			{Name: "ExtentsBefore", Type: types.TypeLong},
@@ -174,6 +175,13 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	}
 	rowsDropped := totalScanned - len(allRows)
 
+	var vectorCols []string
+	if cmd.Options["vectors"] == "compact" {
+		if vectorCols, err = compactVectorColumns(tableDef.Schema, allRows); err != nil {
+			return nil, fmt.Errorf(".compact: vectors: %w", err)
+		}
+	}
+
 	// Write the merged (and possibly filtered) extent. Nothing about
 	// the old extents changes yet — both old and new are simultaneously
 	// valid, complete, and independently correct at this point; a crash
@@ -186,10 +194,22 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 	// zero-row extents, so this is not a special case downstream. This
 	// new extent takes over the schema-assertion role any old shell
 	// file was playing, so those are safe to supersede below too.
-	newExtentID, err := e.flushBatch(cmd.TableName, tableDef, allRows)
-	if err != nil {
-		return nil, fmt.Errorf(".compact: writing merged extent: %w", err)
+	// Wide rows (embeddings) are split into several extents so a scan
+	// can spread them across CPUs; others stay one extent.
+	var newIDs []string
+	per := extentRowsFor(allRows)
+	for start := 0; start == 0 || start < len(allRows); start += per {
+		end := start + per
+		if end > len(allRows) {
+			end = len(allRows)
+		}
+		id, err := e.flushBatch(cmd.TableName, tableDef, allRows[start:end])
+		if err != nil {
+			return nil, fmt.Errorf(".compact: writing merged extent: %w", err)
+		}
+		newIDs = append(newIDs, id)
 	}
+	newExtentID := strings.Join(newIDs, ",")
 
 	// Supersede exactly the snapshotted old extents, PLUS the shell
 	// files found above — rename, not delete. Update the in-memory
@@ -244,9 +264,10 @@ func (e *Engine) applyCompactTable(cmd *parser.CompactTableCmd) (*types.Table, e
 		{Name: "RowsScanned", Type: types.TypeLong},
 		{Name: "RowsDropped", Type: types.TypeLong},
 		{Name: "RowsPreserved", Type: types.TypeLong},
+		{Name: "VectorColumns", Type: types.TypeString},
 	}})
 	result.AddRow(types.Row{status, newExtentID, int64(len(snapshot) + len(shellFiles)), int64(superseded),
-		int64(totalScanned), int64(rowsDropped), int64(len(allRows))})
+		int64(totalScanned), int64(rowsDropped), int64(len(allRows)), strings.Join(vectorCols, ", ")})
 	return result, nil
 }
 
@@ -587,3 +608,71 @@ func normalizedCell(t *types.Table, colName string) interface{} {
 }
 
 var compactAfterSnapshotHook func()
+
+// minCompactVectorLen is the shortest array compactVectorColumns
+// treats as an embedding; shorter numeric arrays are ordinary data.
+const minCompactVectorLen = 16
+
+// compactVectorColumns re-encodes, in place, every dynamic column whose
+// non-null values are all numeric vectors of one length (at least
+// minCompactVectorLen) into the compact float32 form, returning the
+// columns changed. A column with any other value is left as it is, so
+// ordinary JSON never changes. Values already compact stay as they are.
+func compactVectorColumns(schema types.Schema, rows []types.Row) ([]string, error) {
+	var changed []string
+	for ci, col := range schema.Columns {
+		if col.Type != types.TypeDynamic {
+			continue
+		}
+		dim, jsonCells, ok := -1, 0, true
+		for _, row := range rows {
+			if ci >= len(row) || row[ci] == nil {
+				continue
+			}
+			s, isStr := row[ci].(string)
+			if !isStr {
+				ok = false
+				break
+			}
+			if s == "" || s == "null" {
+				continue // a null dynamic reads back as ""
+			}
+			var n int
+			if v, c := decodeCompactVector(s); c {
+				n = len(v)
+			} else if v, j := scanJSONFloatArray(s); j {
+				n = len(v)
+				jsonCells++
+			} else {
+				ok = false
+				break
+			}
+			if dim < 0 {
+				dim = n
+			}
+			if n != dim || n < minCompactVectorLen {
+				ok = false
+				break
+			}
+		}
+		if !ok || dim < 0 || jsonCells == 0 {
+			continue
+		}
+		for _, row := range rows {
+			if ci >= len(row) || row[ci] == nil {
+				continue
+			}
+			v, j := scanJSONFloatArray(row[ci].(string))
+			if !j {
+				continue // null, or already compact
+			}
+			enc, err := encodeVectorCompact(v)
+			if err != nil {
+				return nil, fmt.Errorf("column %s: %w", col.Name, err)
+			}
+			row[ci] = enc
+		}
+		changed = append(changed, col.Name)
+	}
+	return changed, nil
+}

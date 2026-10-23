@@ -33,6 +33,77 @@ import (
 // pruning. This matches the Rust Vortex default zone_len of 8192.
 const ZoneChunkSize = 8192
 
+// chunkTargetBytes bounds a chunk's approximate size. Rows are chunked
+// by count (ZoneChunkSize) unless they are wide: 8192 rows of 15 KB
+// embeddings made 120 MB chunks, and a scan decodes a chunk at a time,
+// so chunk size sets a query's memory floor.
+const chunkTargetBytes = 8 << 20
+
+// minChunkRows keeps very wide rows from producing tiny zones.
+const minChunkRows = 64
+
+// extentTargetBytes bounds an extent's approximate size when a table is
+// rewritten (.compact): wide rows then spread over several extents,
+// which scans process in parallel.
+const extentTargetBytes = 64 << 20
+
+// extentRowsFor is the rows per extent for a rewrite of rows:
+// ExtentTargetRows, or fewer so an extent stays near extentTargetBytes
+// (never fewer than one chunk).
+func extentRowsFor(rows []types.Row) int {
+	avg := avgRowBytes(rows)
+	if avg <= 0 {
+		return ExtentTargetRows
+	}
+	c := int(extentTargetBytes / avg)
+	if c >= ExtentTargetRows {
+		return ExtentTargetRows
+	}
+	if min := chunkRowsFor(rows); c < min {
+		return min
+	}
+	return c
+}
+
+// avgRowBytes estimates a row's stored size from a sample of up to
+// 1024 rows (strings by length, other values as 8 bytes).
+func avgRowBytes(rows []types.Row) int64 {
+	if len(rows) == 0 {
+		return 0
+	}
+	step := len(rows)/1024 + 1
+	var bytes, n int64
+	for i := 0; i < len(rows); i += step {
+		for _, v := range rows[i] {
+			if x, ok := v.(string); ok {
+				bytes += int64(len(x))
+			} else {
+				bytes += 8
+			}
+		}
+		n++
+	}
+	return bytes / n
+}
+
+// chunkRowsFor is the rows per chunk for one extent's rows: ZoneChunkSize,
+// or fewer so a chunk stays near chunkTargetBytes. One value per file:
+// zone maps assume equal zones.
+func chunkRowsFor(rows []types.Row) int {
+	avg := avgRowBytes(rows)
+	if avg <= 0 {
+		return ZoneChunkSize
+	}
+	c := int(chunkTargetBytes / avg)
+	switch {
+	case c >= ZoneChunkSize:
+		return ZoneChunkSize
+	case c < minChunkRows:
+		return minChunkRows
+	}
+	return c
+}
+
 // ExtentTargetRows is the target number of rows per extent file.
 // At 12 zones of 8192 rows each, this minimizes worst-case peak query
 // RSS across a moderate-selectivity group-by, a zone-prunable range
@@ -328,10 +399,11 @@ func (e *Engine) SaveExtent(relPath string, data *types.Table) error {
 		return fmt.Errorf("create vortex writer: %w", err)
 	}
 
-	// Write rows in ZoneChunkSize-row chunks for zone map generation
+	// Write rows in equal chunks (zones) for zone map generation.
 	totalRows := len(data.Rows)
-	for start := 0; start < totalRows; start += ZoneChunkSize {
-		end := start + ZoneChunkSize
+	chunk := chunkRowsFor(data.Rows)
+	for start := 0; start < totalRows; start += chunk {
+		end := start + chunk
 		if end > totalRows {
 			end = totalRows
 		}

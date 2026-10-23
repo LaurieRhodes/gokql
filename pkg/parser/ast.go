@@ -1661,6 +1661,10 @@ func (*ChunkFileCmd) statementNode() {}
 type CompactTableCmd struct {
 	TableName string
 	Where     Expr
+	// Options from `with (name = value, ...)` after the table name,
+	// names lower-cased. vectors=compact re-encodes embedding columns
+	// (engine/compact.go).
+	Options map[string]string
 }
 
 func (*CompactTableCmd) statementNode() {}
