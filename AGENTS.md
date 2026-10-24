@@ -26,6 +26,7 @@ touching `pkg/catalog` paging.
 | `pkg/catalog` | Database discovery from extent files, extent I/O |
 | `pkg/types` | Values, types, formatting |
 | `pkg/config` | `gokql.yaml` |
+| `pkg/arrowipc` | Apache Arrow IPC reader and writer (`arrow()`, `-mode arrow`) |
 | `pkg/gql` | GQL and openCypher, translated to `graph-match` |
 | `pkg/s2x`, `pkg/h3` | Sphere geometry (S2 shape algebra) and H3 cells |
 | `pkg/embed` | Embedding backends (Ollama, OpenAI-compatible) |

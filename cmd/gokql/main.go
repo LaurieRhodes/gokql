@@ -34,6 +34,7 @@ import (
 	// import removes that external dependency entirely, a real
 	// portability improvement, not just defensive boilerplate).
 
+	"github.com/LaurieRhodes/gokql/pkg/arrowipc"
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
 	"github.com/LaurieRhodes/gokql/pkg/config"
 	"github.com/LaurieRhodes/gokql/pkg/engine"
@@ -480,7 +481,7 @@ func (st *replState) printResult(t *types.Table) {
 	case "jsonl":
 		st.printJSONL(t)
 	case "arrow":
-		if err := writeArrow(st.output, t); err != nil {
+		if err := arrowipc.Write(st.output, t); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	default:

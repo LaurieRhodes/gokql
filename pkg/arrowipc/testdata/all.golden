@@ -1,0 +1,4 @@
+i8:long, u64:long, i32:int, f16:real, f32:real, b:bool, s:string, ls:string, bin:string, dec:real, d32:datetime, tod:timespan, ts_s:datetime, ts_us_tz:datetime, dur_ms:timespan, lst:dynamic, st:dynamic, mp:dynamic, dict:string, uid:guid
+-1 | 1 | 7 | 1.5 | 0.25 | true | a | x | ab | -12.345 | 2024-02-29T00:00:00Z | 01:02:03.4000000 | 2024-01-01T12:00:00Z | 2024-01-01T12:00:00.123456Z | 1.00:00:00.0050000 | [1,2] | {"k":"v","n":1} | {"a":1,"b":2} | p | 12345678-1234-5678-9abc-def012345678
+null | 2 | null | null | 1 | null |  | yy |  | null | null | null | null | null | null | null | null | null |  | null
+127 | null | -7 | -2 | null | false | ccc |  |  | 0.001 | 1969-12-31T00:00:00Z | 23:59:00 | 1960-06-01T00:00:00Z | null | -00:00:03 | [] | {"k":null,"n":3} | {} | p | 12345678-1234-5678-9abc-def012345678
