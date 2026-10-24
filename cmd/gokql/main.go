@@ -93,7 +93,7 @@ func buildInfo() string {
 type replState struct {
 	eng        *engine.Engine
 	timer      bool
-	mode       string // table, csv, json, jsonl, tsv, arrow
+	mode       string // table, csv, json, jsonl, tsv, arrow, vortex
 	output     io.Writer
 	outputFile *os.File // non-nil if redirected to file
 }
@@ -106,7 +106,7 @@ func main() {
 	readOnly := flag.Bool("readonly", false, "Open database read-only")
 	// Accepted for existing scripts; every database is discovered.
 	_ = flag.Bool("discover", false, "No effect: every database is read from its extent files")
-	modeFlag := flag.String("mode", "table", "Output mode: table, csv, json, jsonl, tsv, arrow (Apache Arrow IPC stream)")
+	modeFlag := flag.String("mode", "table", "Output mode: table, csv, json, jsonl, tsv, arrow (Apache Arrow IPC stream), vortex (a plain Vortex file)")
 	noRC := flag.Bool("no-rc", false, "Don't load ~/.gokqlrc")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	serveFlag := flag.Bool("serve", false, "Network mode: serve -db over HTTP, speaking Kustainer's REST protocol (POST /v1/rest/query, /v1/rest/mgmt). Single database, no auth — see server.go's file-level doc comment before exposing beyond a trusted network.")
@@ -449,8 +449,8 @@ func (st *replState) runCommand(input string) error {
 	case 1:
 		st.printResult(results[0])
 	default:
-		if st.mode == "arrow" {
-			return fmt.Errorf("-mode arrow writes one table; this query returns %d (fork/facet): use -mode json", len(results))
+		if st.mode == "arrow" || st.mode == "vortex" {
+			return fmt.Errorf("-mode %s writes one table; this query returns %d (fork/facet): use -mode json", st.mode, len(results))
 		}
 		// fork / facet: each table under its name, blank-line separated
 		for i, r := range results {
@@ -482,6 +482,10 @@ func (st *replState) printResult(t *types.Table) {
 		st.printJSONL(t)
 	case "arrow":
 		if err := arrowipc.Write(st.output, t); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
+	case "vortex":
+		if err := engine.WritePortableVortex(st.output, t); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 	default:
@@ -611,11 +615,11 @@ func (st *replState) handleMode(input string) {
 	}
 	mode := strings.ToLower(parts[1])
 	switch mode {
-	case "table", "csv", "json", "jsonl", "tsv", "arrow":
+	case "table", "csv", "json", "jsonl", "tsv", "arrow", "vortex":
 		st.mode = mode
 		fmt.Fprintf(st.output, "Mode: %s\n", st.mode)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown mode %q. Options: table, csv, json, jsonl, tsv, arrow\n", mode)
+		fmt.Fprintf(os.Stderr, "Unknown mode %q. Options: table, csv, json, jsonl, tsv, arrow, vortex\n", mode)
 	}
 }
 
@@ -838,7 +842,7 @@ REPL commands:
   .open [PATH]                           Switch database (no arg = in-memory)
   .schema [TABLE]                        Show table schema(s)
   .timer [on|off]                        Show query execution time
-  .mode [table|csv|json|jsonl|tsv|arrow] Output format
+  .mode [table|csv|json|jsonl|tsv|arrow|vortex] Output format
   .output [FILE|-]                       Redirect output to file
   .read FILE                             Execute KQL script file
   .version                               Show version

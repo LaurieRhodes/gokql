@@ -85,7 +85,7 @@ defined).
 | Charts | `render` is accepted and ignored. |
 | GQL, openCypher | `#crp query_language=gql` (or `opencypher`) and `#crp query_graph_reference=<graph>` lines before the query; `#crp` sets a client request property. |
 | Not available | `python()`, `R()`, the SQL/MySQL/PostgreSQL/Cosmos DB request plugins, `external_table()`, `stored_query_result()`, `geo_info_from_ip_address()`. |
-| gokql additions | `csv()`, `json()`, `ndjson()`, `parquet()`, `arrow()`, `vortex()` read files as tables, `-mode arrow` writes Apache Arrow; `embed_text()`, `.embed-into` and `.chunk-file` do embeddings. |
+| gokql additions | `csv()`, `json()`, `ndjson()`, `parquet()`, `arrow()`, `vortex()` read files as tables, `-mode arrow` and `-mode vortex` write Apache Arrow and portable Vortex; `embed_text()`, `.embed-into` and `.chunk-file` do embeddings. |
 
 Whether a specific operator, function, aggregation or plugin is
 supported is in [reference/support.json](reference/support.json)

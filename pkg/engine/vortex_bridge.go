@@ -96,6 +96,11 @@ func vortexDTypeToKQL(dt *vortex.DType) types.KQLType {
 			return types.TypeDecimal
 		case extKQLDictRef:
 			return types.TypeString
+		case "vortex.timestamp":
+			// gokql's datetimes are nanoseconds; other units read as long
+			if len(dt.ExtMetadata) > 0 && dt.ExtMetadata[0] == 0 {
+				return types.TypeDatetime
+			}
 		}
 		return vortexDTypeToKQL(dt.StorageDType)
 	}

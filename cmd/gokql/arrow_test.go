@@ -78,3 +78,35 @@ func TestVortexFileSource(t *testing.T) {
 		t.Errorf("vortex(): %q", got)
 	}
 }
+
+// TestVortexExport writes a result with -mode vortex and reads it back
+// with vortex(). The file uses standard Vortex types only (Python's
+// vortex package and DuckDB read it; see pkg/engine/vortex_export.go).
+func TestVortexExport(t *testing.T) {
+	dir := t.TempDir()
+	cat, err := catalog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	st := &replState{eng: engine.New(cat), mode: "vortex", output: &buf}
+	if err := st.runCommand(`range i from 1 to 5000 step 1 | extend s=strcat("a string longer than twelve bytes ", i % 9), d=datetime(2024-01-01)+i*1s, g=i*1ms, j=dynamic({"k":1})`); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "out.vtx")
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	rs := &replState{eng: engine.New(cat), mode: "csv", output: &out}
+	if err := rs.runCommand(`vortex("` + path + `") | summarize count(), dcount(s), max(d), max(g), take_any(j), t=take_any(gettype(d))`); err != nil {
+		t.Fatal(err)
+	}
+	want := "count_,dcount_s,max_d,max_g,j,t\n5000,9,2024-01-01T01:23:20Z,5000000000,\"{\"\"k\"\":1}\",datetime"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	if err := (&replState{eng: engine.New(cat), mode: "vortex", output: &out}).runCommand(`print 1 | fork (take 1) (take 1)`); err == nil {
+		t.Error("-mode vortex accepted two results")
+	}
+}

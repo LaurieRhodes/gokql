@@ -127,6 +127,46 @@ output back with its original types. A query that returns several
 results (`fork`, `facet`) is an error in this mode; use `-mode json`
 for those.
 
+## Vortex files
+
+`vortex("path")` reads one Vortex file: an extent copied out of a gokql
+database (the `_Dictionaries` extents beside it supply its strings), a
+file gokql exported, or one written by another Vortex implementation.
+
+A gokql database's own extents cannot be opened by other Vortex
+readers: they mark columns with gokql's own types (`kql.datetime`,
+`kql.dynamic` and others) and store strings as codes into the
+database's shared dictionaries. To hand data to Python's `vortex`
+package or DuckDB's `vortex` extension, export it with `-mode vortex`,
+which writes standard Vortex types:
+
+```bash
+gokql -db ./scope -mode vortex -e 'SigninLogs | where ResultType != 0' > failures.vtx
+```
+
+```python
+import vortex
+table = vortex.open("failures.vtx").to_arrow().read_all()
+```
+
+```sql
+-- DuckDB
+INSTALL vortex; LOAD vortex;
+SELECT count(*) FROM read_vortex('failures.vtx');
+```
+
+| KQL | Vortex |
+|---|---|
+| `long`, `int`, `real`, `bool`, `string` | `i64`, `i32`, `f64`, `bool`, `utf8` |
+| `datetime` | `vortex.timestamp[ns, tz=UTC]` |
+| `timespan` | `i64` nanoseconds (Vortex has no duration type) |
+| `guid`, `decimal`, `dynamic` | `utf8` (dynamic as JSON text; null as `""`) |
+
+Unlike `-mode arrow`, the export does not record the KQL types, so
+`vortex()` reads a timespan back as `long` nanoseconds and guid,
+decimal and dynamic as `string`. Use `-mode arrow` for a round trip,
+and `-mode vortex` for a compressed file other tools open directly.
+
 ## Load a file into a table
 
 Any of these sources can feed a write:

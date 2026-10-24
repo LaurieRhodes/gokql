@@ -113,7 +113,7 @@ equivalent on a single node.
 - **`render`** is accepted and returns the data unchanged.
 - **Additions**, all named so they cannot be mistaken for ADX:
   `csv()`, `json()`, `ndjson()`, `parquet()`, `arrow()`, `vortex()`
-  sources; `-mode arrow` output;
+  sources; `-mode arrow` and `-mode vortex` output;
   `embed_text()`, `.embed-into`, `.chunk-file`; `.compact`, `.gc`;
   `Atomic` in `.execute database script`; `BlockDirectWrites` in
   update policies; `.ingest csv into table T from "path"` (ADX's

@@ -23,7 +23,7 @@ database directory.
 |---|---|---|
 | `-db DIR` | | Database directory |
 | `-e QUERY` | | Run one query or command and exit |
-| `-mode M` | `table` | Output: `table`, `csv`, `tsv`, `json`, `jsonl`, `arrow` (an Apache Arrow IPC stream) |
+| `-mode M` | `table` | Output: `table`, `csv`, `tsv`, `json`, `jsonl`, `arrow` (an Apache Arrow IPC stream), `vortex` (a Vortex file other Vortex readers open) |
 | `-readonly` | false | Refuse every write command |
 | `-no-rc` | false | Do not read `~/.gokqlrc` |
 | `-v` | false | Print scan diagnostics to stderr |
