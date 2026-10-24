@@ -30,6 +30,7 @@ Key facts for a model using gokql:
 - [Command line](docs/reference/cli.md)
 - [Configuration: gokql.yaml](docs/reference/configuration.md)
 - [Compatibility with ADX](docs/compatibility.md)
+- [Performance](docs/performance.md): which query shapes are fast (columnar) and which fall back to the row engine
 
 ## Optional
 

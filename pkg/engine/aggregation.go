@@ -2,9 +2,11 @@ package engine
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1345,9 +1347,26 @@ func computePercentileValues(eng *Engine, agg parser.Aggregation, pcts []float64
 	}
 	var items []item
 	var total int64
+	// a plain column argument is read directly, not evaluated per row
+	col := -1
+	if ref, ok := agg.Args[0].(*parser.ColumnRef); ok {
+		col = schema.ColumnIndex(ref.Name)
+	}
+	items = make([]item, 0, len(rows))
 	for _, row := range rows {
-		val, err := evalExpr(eng, agg.Args[0], schema, row)
-		if err != nil || val == nil {
+		var val types.Value
+		if col >= 0 {
+			if col < len(row) {
+				val = row[col]
+			}
+		} else {
+			v, err := evalExpr(eng, agg.Args[0], schema, row)
+			if err != nil {
+				continue
+			}
+			val = v
+		}
+		if val == nil {
 			continue
 		}
 		w := int64(1)
@@ -1371,7 +1390,7 @@ func computePercentileValues(eng *Engine, agg parser.Aggregation, pcts []float64
 	if len(items) == 0 {
 		return out, nil
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].key < items[j].key })
+	slices.SortStableFunc(items, func(a, b item) int { return cmp.Compare(a.key, b.key) })
 	for i, p := range pcts {
 		rank := int64(math.Ceil(p/100*float64(total) - 1e-9)) // 99.9% of 1000 is 999, not float-noise 1000
 		if rank < 1 {

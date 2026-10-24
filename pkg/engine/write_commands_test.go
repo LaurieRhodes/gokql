@@ -152,3 +152,14 @@ func TestIngestInto(t *testing.T) {
 	diskExec(t, eng, `.ingest into table T (h@"`+p+`") with (format="csv", ignoreFirstRecord=true)`)
 	expectWrRows(t, eng, `T | order by Id asc`, "a | 1", "b | 2")
 }
+
+// between on the columnar path (stored table, where | count) gives the
+// row engine's answer, including a datetime .. timespan range.
+func TestColumnarBetween(t *testing.T) {
+	eng := diskEngineEmpty(t)
+	diskExec(t, eng, `.set-or-append T <| range i from 0 to 99 step 1 | extend At = datetime(2026-01-01) + i * 1h, N = i`)
+	expectWrRows(t, eng, `T | where At between (datetime(2026-01-02) .. 1d) | count`, "25")
+	expectWrRows(t, eng, `T | where N between (10 .. 19) | count`, "10")
+	expectWrRows(t, eng, `T | where N !between (10 .. 19) | count`, "90")
+	expectWrRows(t, eng, `T | where N between (10 .. 19) and At >= datetime(2026-01-01 15:00) | count`, "5")
+}

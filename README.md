@@ -76,6 +76,10 @@ suite, and the output shown is what gokql prints.
   current value of a record is one `arg_max` away and every earlier
   value is still there. (Replacing, deleting and compacting supersede
   files; nothing is removed until `.gc`.)
+- **Fast where it matters.** Filters and aggregations run on the
+  compressed columns in parallel: counting, filtering and grouping ten
+  million rows takes tens of milliseconds on a laptop
+  ([performance](docs/performance.md)).
 - **Built for tools.** `-mode csv | tsv | json | jsonl`, errors as one
   line on stderr, non-zero exit on failure. An HTTP mode speaks the
   Kusto REST protocol for existing clients.
@@ -123,6 +127,7 @@ Then follow [getting started](docs/getting-started.md).
 - [Guides](docs/README.md): storage, writing data, files and external data, the local cluster, graphs, geospatial, embeddings and AI, security, HTTP serving
 - [Reference](docs/reference/README.md): every operator, function, aggregation, plugin, command and CLI flag, with support status
 - [Compatibility with ADX](docs/compatibility.md): how parity is checked and where gokql differs
+- [Performance](docs/performance.md): loading and query times over ten million rows
 - [For AI agents](docs/for-agents.md): the compact rules an LLM needs to use gokql well ([llms.txt](llms.txt))
 - [Development](docs/dev/README.md): architecture, building, testing, contributing
 

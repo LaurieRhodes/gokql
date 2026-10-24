@@ -202,6 +202,17 @@ func planColumnarAggregate(eng *Engine, ops []parser.Operator, schema *types.Sch
 // predicates. Returns false if any conjunct is outside the supported
 // set (the whole plan is then abandoned).
 func collectExactPreds(eng *Engine, expr parser.Expr, schema *types.Schema, out *[]exactPred) bool {
+	// x between (lo .. hi) is x >= lo and x <= hi; with a datetime lo
+	// and a timespan hi, the upper bound is lo + hi
+	if bt, ok := expr.(*parser.BetweenExpr); ok && !bt.Negated {
+		hi := bt.High
+		empty := &types.Schema{}
+		if inferExprType(eng, bt.Low, empty) == types.TypeDatetime && inferExprType(eng, bt.High, empty) == types.TypeTimespan {
+			hi = &parser.BinaryExpr{Op: parser.OpAdd, Left: bt.Low, Right: bt.High}
+		}
+		return collectExactPreds(eng, &parser.BinaryExpr{Op: parser.OpGTE, Left: bt.Expr, Right: bt.Low}, schema, out) &&
+			collectExactPreds(eng, &parser.BinaryExpr{Op: parser.OpLTE, Left: bt.Expr, Right: hi}, schema, out)
+	}
 	be, ok := expr.(*parser.BinaryExpr)
 	if !ok {
 		return false

@@ -35,6 +35,7 @@ output shown is what gokql prints.
 - [Reference index](reference/README.md): operators, functions, aggregations, plugins, commands and CLI, generated from the engine
 - [Configuration](reference/configuration.md): `gokql.yaml`
 - [Compatibility with ADX](compatibility.md)
+- [Performance](performance.md)
 - [For AI agents](for-agents.md) and [llms.txt](../llms.txt)
 
 ## Development
