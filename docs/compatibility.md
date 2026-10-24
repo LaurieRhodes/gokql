@@ -11,10 +11,11 @@ purpose.
    [dataexplorer-docs](https://github.com/MicrosoftDocs/dataexplorer-docs)
    repository, 1,411 blocks) is run on both gokql and the Kusto
    emulator, and the results are compared cell by cell.
-2. **The Kusto emulator** (the `kustainer` container, ADX's own engine,
-   version 2025.07.06) is the reference where the documentation is
-   silent, ambiguous or wrong. Where the two disagree, gokql follows
-   the emulator and the test says so.
+2. **The Kusto emulator** ([Kustainer](https://learn.microsoft.com/azure/data-explorer/kusto-emulator-overview),
+   ADX's own engine in a container, version 2025.07.06) is the
+   reference where the documentation is silent, ambiguous or wrong.
+   Where the two disagree, gokql follows the emulator and the test says
+   so; the one exception is GQL and openCypher (below).
 3. **Kusto.Language** (Microsoft's KQL front end, version 12.4.1)
    supplies function signatures, return types and plugin output
    schemas.
@@ -24,31 +25,41 @@ purpose.
 
 ## Results
 
-Of the 1,411 documentation blocks, 1,041 give deterministic results
-on the emulator (the others use random functions, the current time, or
-the emulator cannot run them). Of those:
+Of the 1,411 documentation blocks, 1,042 give deterministic results
+on the emulator (the others use random functions or the current time,
+or are fragments the emulator cannot run). Of those:
 
 | | Blocks |
 |---|---|
-| Same result, same order | 940 |
-| Same rows, in a different order | 30 |
-| Same result, columns or ties ordered differently | 13 |
-| **Agree** | **983 (94.4%)** |
-| Differ | 58 |
+| Same result, same order | 942 |
+| Same rows in a different order; the query does not sort | 28 |
+| Same rows in a different order; the query sorts, and rows tie | 13 |
+| **Agree** | **983 (94%)** |
+| Differ | 59 |
 
-The 58 that differ are results ADX leaves unspecified:
+The counts move by one or two between runs, because a few examples
+(shortest paths with equal-length alternatives) give different answers
+on the emulator itself from one run to the next.
 
-- **Order** where no `order by` fixes it: ties in `top` and `sort`,
-  partition and `summarize` group order, the order of neighbour cells.
+Most of the 59 that differ are results ADX leaves unspecified:
+
+- **Which rows win a tie**: `top`, `take`, `arg_max` and similar pick
+  among equal rows differently, so the rows themselves differ; also
+  `partition` subresults and neighbour-cell lists.
 - **Approximate aggregates**: `dcount`, `hll` and `tdigest` estimates
-  agree within their error bounds but not digit for digit, and sketch
-  encodings are gokql's own (a sketch from ADX cannot be merged here).
-- **Heuristic plugins** (`autocluster`, `basket`, `diffpatterns`,
-  `diffpatterns_text`, `reduce`, `series_periods_*`): the output shape
+  agree within their error bounds but not digit for digit.
+- **Heuristic operators and plugins** (`autocluster`, `basket`,
+  `diffpatterns`, `diffpatterns_text`, the `reduce` operator, the
+  `series_periods_*` functions): the output shape
   is ADX's, but ADX's selection algorithm is not published; on the
   reference examples gokql finds ADX's patterns, sometimes with more.
-- **Byte-level encodings**: `gzip`/`zlib` compressed bytes, `hash()` of
-  decimal values.
+
+Some are known differences in deterministic results:
+
+- **Byte-level encodings**: `gzip`/`zlib` compressed bytes (they
+  decompress to the same data) and `hash()` of decimal values.
+- **Sketches**: `hll` and `tdigest` values from ADX cannot be merged
+  here, and vice versa.
 
 ## Support by area
 
@@ -69,11 +80,17 @@ missing, and why:
 |---|---|
 | `python()`, `R()` plugins | Would embed an interpreter in the binary |
 | `sql_request`, `mysql_request`, `postgresql_request`, `cosmosdb_sql_request`, `azure_digital_twins_query_request`, `dax_request` | Need database drivers or Azure services |
-| `external_table()`, `inline_external_table` | External tables are not modelled; `externaldata` reads the same files |
+| `external_table()` and the `inline_external_table` statement | External tables are not modelled; `externaldata` reads the same files |
 | `stored_query_result()` | Not implemented |
+| `columnnamesof()`, `extenttags()`, `percentile_array_tdigest()` | Listed in Microsoft's docs index but rejected by ADX itself |
 | `geo_info_from_ip_address()` | Needs a GeoIP database |
 | `restrict` statement | Access restriction belongs to a multi-tenant service |
 | `argmax`, `argmin` | Deprecated forms of `arg_max`, `arg_min` |
+
+Some features run in gokql but not in Log Analytics (Sentinel), which
+supports a subset of ADX: management commands, `http_request`, most
+plugins. A query that passes here may still need changes for Sentinel;
+see [KQL development](use-cases/kql-development.md#sentinel-and-log-analytics).
 
 Management commands cover tables, ingestion, stored functions,
 materialized views, update policies, graph models and scripts; cluster
@@ -98,7 +115,12 @@ equivalent on a single node.
   `csv()`, `json()`, `ndjson()`, `parquet()`, `vortex()` sources;
   `embed_text()`, `.embed-into`, `.chunk-file`; `.compact`, `.gc`;
   `Atomic` in `.execute database script`; `BlockDirectWrites` in
-  update policies.
+  update policies; `.ingest csv into table T from "path"` (ADX's
+  `.ingest into table T (...)` form is also accepted).
+- **`assert()`** is evaluated per row and accepts any expression; ADX
+  requires its condition to be a constant at query-analysis time, so
+  row-level `assert()` validation (as in this documentation's update
+  policy examples) is gokql-only.
 
 ## Reporting a difference
 

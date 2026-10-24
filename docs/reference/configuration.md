@@ -70,7 +70,7 @@ This is the file `-write-config` writes; uncomment what you need.
 | `databases` | Other databases of this cluster (`name`, absolute `path`), read-only from here | [cluster](../guide/cluster.md) |
 | `clusters` | Other clusters, each by its primary database (`name`, `path`) | [cluster](../guide/cluster.md) |
 | `callouts` | The callout policy: `CalloutType`, `CalloutUriRegex`, `CanCall`, as in ADX | [security](../guide/security.md) |
-| `server.addr` | Listen address for `-serve`; default `:8080` | [serving](../guide/serving.md) |
+| `server.addr` | Listen address for `-serve`; default `127.0.0.1:8080` (this machine only) | [serving](../guide/serving.md) |
 | `server.name` | Database name clients send; default the directory's name | [serving](../guide/serving.md) |
 | `server.readonly` | Refuse write commands from clients | [serving](../guide/serving.md) |
 | `server.tls.cert`, `server.tls.key` | PEM files; serve HTTPS | [serving](../guide/serving.md) |

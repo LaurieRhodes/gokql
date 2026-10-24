@@ -4,9 +4,11 @@ An LLM agent forgets everything between sessions. gokql gives it a
 store it can read and write through a shell, in a language it already
 writes well, with properties that suit how agents work:
 
-- **Append-only.** An agent cannot destroy what it wrote earlier by
-  updating a row; a correction is a new row, and the old one is still
-  there to audit.
+- **Append-only.** Changing a record means appending a new version,
+  so a correction never erases what it corrects, and the old version is
+  still there to audit. (Destructive commands such as `.drop table`
+  exist; an agent's instructions, or `-readonly`, keep them out of its
+  hands.)
 - **Current state is a query.** Stored functions define "the latest
   version of each task", "the findings still believed", "what depends
   on this". Every session, and every agent, reads the same definitions.
@@ -17,7 +19,7 @@ writes well, with properties that suit how agents work:
 - **No server.** A directory per project, any number of agents
   appending to it, `-readonly` for those that should only look.
 
-This page builds a small memory scope step by step. A ready-to-use
+This page builds a small memory database step by step. A ready-to-use
 skill that teaches an agent the same discipline is in
 [agent-memory-skill/SKILL.md](agent-memory-skill/SKILL.md).
 
@@ -27,15 +29,15 @@ Three tables carry most of the value: work to do, things learned, and
 the links between them.
 
 ```kql
-.create table Tasks (Id: string, Title: string, Status: string, Priority: long, Project: string, Note: string, SessionId: string)
+.create-merge table Tasks (Id: string, Title: string, Status: string, Priority: long, Project: string, Note: string, SessionId: string)
 ```
 
 ```kql
-.create table Findings (Id: string, Kind: string, Claim: string, Confidence: string, Lifecycle: string, Project: string, Source: string, SessionId: string)
+.create-merge table Findings (Id: string, Kind: string, Claim: string, Confidence: string, Lifecycle: string, Project: string, Source: string, SessionId: string)
 ```
 
 ```kql
-.create table Edges (EdgeId: string, Src: string, Dst: string, Rel: string, Basis: string, Status: string, SessionId: string)
+.create-merge table Edges (EdgeId: string, Src: string, Dst: string, Rel: string, Basis: string, Status: string, SessionId: string)
 ```
 
 - `Findings.Kind`: `finding`, `decision`, `constraint`, `hypothesis`,
@@ -72,7 +74,7 @@ writing their own collapse logic.
 ```
 
 ```kql
-.create-or-alter function with (folder = "memory", docstring = "Open and blocked tasks, highest priority first") OpenTasks() {
+.create-or-alter function with (folder = "memory", docstring = "Unfinished tasks, highest priority first") OpenTasks() {
     LatestTasks() | where Status in ("open", "in-progress", "blocked") | order by Priority asc, Id asc
 }
 ```
@@ -124,7 +126,7 @@ share one `_TimeReceived`).
 
 ```kql
 .set-or-append Tasks <| datatable(Id:string, Title:string, Status:string, Priority:long, Project:string, Note:string, SessionId:string)
-  ["T-1", "Establish the gate bearing", "done", 1, "girsu", "F-1", "s1"]
+  ["T-1", "Establish the gate bearing", "done", 1, "girsu", "answered by F-1", "s1"]
 ```
 
 ## A later session corrects
@@ -241,7 +243,7 @@ FindingsEmbeddings
 
 ## Several agents
 
-Agents can share one scope: writes are independent files and
+Agents can share one database: writes are independent files and
 `.compact` coordinates with readers ([storage](../guide/storage.md)).
 Give each session its own `SessionId`. Records written by more than
 one session are either a deliberate later change (as F-1's correction
@@ -261,9 +263,13 @@ F-1   2
 (1 rows)
 ```
 
-A claim table (`Claims (TaskId, SessionId, Kind, At)`) with a
-read-side expiry is enough for agents to avoid working on the same
-task; nothing needs a lock.
+To keep agents off the same task, each can append a claim row
+(`TaskId`, `SessionId`) before starting, then read back the claims for
+that task: the earliest `_TimeReceived` wins and the others move on.
+Claims older than an agreed time can be ignored, so an agent that
+stops does not hold a task for ever. If two claims carry the same
+stamp, the lower `SessionId` wins; what decides is the read-back, so
+every agent must read after it writes.
 
 ## Running it
 

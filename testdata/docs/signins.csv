@@ -9,3 +9,6 @@ TimeGenerated,UserPrincipalName,IPAddress,Location,ResultType,AppDisplayName
 2026-10-01T09:15:30Z,ana@contoso.example,192.0.2.44,RU,50126,Azure Portal
 2026-10-01T09:16:02Z,ana@contoso.example,192.0.2.44,RU,0,Azure Portal
 2026-10-01T10:20:00Z,lee@contoso.example,203.0.113.25,AU,0,SharePoint
+2026-10-01T11:00:01Z,ana@contoso.example,198.51.100.99,NL,50126,Outlook
+2026-10-01T11:00:02Z,raj@contoso.example,198.51.100.99,NL,50126,Outlook
+2026-10-01T11:00:03Z,lee@contoso.example,198.51.100.99,NL,50126,Outlook

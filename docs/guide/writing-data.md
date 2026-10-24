@@ -1,7 +1,7 @@
 # Writing data
 
 gokql's write commands are ADX's management commands, with the same
-names, options and results. All of them append: a write adds new
+names, options and results (gokql additions are marked). All of them append: a write adds new
 extents (files) and never changes an existing one. Changing a record
 means writing a new version of it, and the current state is a query.
 
@@ -32,8 +32,9 @@ extents read a new column as null. Column types are `string`, `long`,
 | `.append T <\| query` | Append; `T` must exist |
 | `.set T <\| query` | Create `T` from the query; fails if it exists |
 | `.set-or-replace T <\| query` | Replace `T`'s rows with the query's |
+| `.ingest into table T ("path or URL", ...) with (format="csv", ignoreFirstRecord=true)` | Append files, read as `externaldata` with T's schema |
 | `.ingest inline into table T <\| rows` | Append CSV text given inline |
-| `.ingest csv into table T from "path"` | Append a CSV file |
+| `.ingest csv into table T from "path"` | Append a CSV file, skipping its header (gokql shorthand) |
 
 The query can be anything tabular. A `datatable` literal is the usual
 way to write a batch, and one call with many rows is better than many
@@ -88,7 +89,9 @@ one stamp.
 ## Current state: the latest version of each record
 
 Append-only storage keeps every version. The current version of each
-record is the one received last:
+record is the one received last (`_TimeReceived` is gokql's; in ADX use
+`extend Ingested = ingestion_time()` and `arg_max(Ingested, *)`, which
+also works here):
 
 ```kql
 .set-or-append Readings <| datatable(Station:string, At:datetime, TempC:real, Humidity:real, Wind:real)
@@ -173,7 +176,9 @@ An update policy runs a query over the rows just appended to a source
 table and appends its result to the policy's table. With
 `IsTransactional`, a failure of that query fails the source write too.
 With `assert()` in the query, that makes the target table hold only
-rows that passed validation:
+rows that passed validation. (Row-level `assert()` is gokql's: ADX
+evaluates `assert()` once, at query analysis, on constants only. The
+policy itself is portable.)
 
 ```kql
 .create table RawObservations (Id: string, Status: string)

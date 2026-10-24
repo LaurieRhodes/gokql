@@ -51,7 +51,8 @@ raj   1          0.0012   2026-10-01T09:12:00Z
 (2 rows)
 ```
 
-Every example in this repository's documentation is run by the test
+Every KQL example in this repository's documentation, except those
+marked as needing a network or your own files, is run by the test
 suite, and the output shown is what gokql prints.
 
 ## Why gokql
@@ -60,18 +61,20 @@ suite, and the output shown is what gokql prints.
   Microsoft's security and data products and is extensively documented.
   gokql follows Azure Data Explorer's semantics, checked against
   Microsoft's documentation examples and against the Kusto emulator:
-  983 of the 1,041 deterministic examples in Microsoft's KQL
-  documentation give the same results, and the rest are results ADX
-  leaves unspecified. A query a model writes from that knowledge runs
-  as written. See [compatibility](docs/compatibility.md).
+  983 of the 1,042 deterministic examples in Microsoft's KQL
+  documentation give the same results; most of the rest are results ADX
+  leaves unspecified, such as row order. A query a model writes from
+  that knowledge almost always runs as written. See
+  [compatibility](docs/compatibility.md).
 - **One binary, one directory.** A database is a directory of
   self-describing Vortex columnar files. Nothing to install or run
   alongside it, no catalog file to corrupt. Any number of processes can
   read and append to the same directory.
-- **Append-only, with history.** Writes add files and never rewrite
+- **Append-only, with history.** Writes add files rather than changing
   earlier ones. Every row is stamped with the time it arrived, so the
   current value of a record is one `arg_max` away and every earlier
-  value is still there.
+  value is still there. (Replacing, deleting and compacting supersede
+  files; nothing is removed until `.gc`.)
 - **Built for tools.** `-mode csv | tsv | json | jsonl`, errors as one
   line on stderr, non-zero exit on failure. An HTTP mode speaks the
   Kusto REST protocol for existing clients.

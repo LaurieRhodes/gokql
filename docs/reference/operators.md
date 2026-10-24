@@ -135,7 +135,7 @@ Descriptions are the first sentence of each entry's page in Microsoft's [KQL doc
 
 | Name | gokql | Description | Notes |
 |---|---|---|---|
-| [Alias](https://learn.microsoft.com/kusto/query/alias-statement) | yes | Alias statements allow you to define an alias for a database, which can be used in the same query. | Resolves through the cluster layer (.okql-federation.json). |
+| [Alias](https://learn.microsoft.com/kusto/query/alias-statement) | yes | Alias statements allow you to define an alias for a database, which can be used in the same query. | Resolves through the cluster layer (gokql.yaml). |
 | [Batches](https://learn.microsoft.com/kusto/query/batches) | yes | A query can include multiple tabular expression statements, as long as they're delimited by a semicolon (`;`) character. |  |
 | [Let](https://learn.microsoft.com/kusto/query/let-statement) | yes | A `let` statement is used to set a variable name equal to an expression or a function, or to create views. |  |
 | [Pattern](https://learn.microsoft.com/kusto/query/pattern-statement) | yes | A pattern is a construct that maps string tuples to tabular expressions. |  |

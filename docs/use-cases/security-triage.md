@@ -3,18 +3,29 @@
 Security teams already write KQL every day in Microsoft Sentinel and
 Defender. gokql runs the same queries on a laptop over exported data:
 sign-in logs, cloud security findings, alerts and audit trails in CSV
-or JSON. Nothing leaves the machine, nothing needs a workspace, and
-the queries carry back to Sentinel unchanged.
+or JSON. Nothing leaves the machine and nothing needs a workspace. The
+hunting queries below use Sentinel's table and column names and
+types, so they port to Sentinel as written; the loading commands and
+the triage log are local workflow and do not.
 
 The examples use the sample files in `testdata/docs/` (paths relative
-to the repository root): ten Entra-style sign-in events and four cloud
+to the repository root): thirteen Entra-style sign-in events and four cloud
 security findings.
 
 ## Load the exports
 
 ```kql
-.set-or-append SigninLogs <| csv("./testdata/docs/signins.csv")
+.create table SigninLogs (TimeGenerated: datetime, UserPrincipalName: string, IPAddress: string, Location: string, ResultType: string, AppDisplayName: string)
 ```
+
+```kql
+.ingest into table SigninLogs ("./testdata/docs/signins.csv") with (format = "csv", ignoreFirstRecord = true)
+```
+
+The table uses Sentinel's types (`ResultType` is a string there), so
+the queries below behave as they would in the workspace. To reload an
+export, use `.set-or-replace SigninLogs <| ...` or drop the table
+first; appending the same file again doubles every count.
 
 ```kql
 .set-or-append CloudFindings <| json("./testdata/docs/findings.json")
@@ -23,42 +34,62 @@ security findings.
     Cves = cves, FirstSeen = firstSeen
 ```
 
-`csv()` and `json()` infer the schema. For a repeatable load, declare
-it with `externaldata` or `.create table` and `.ingest csv`
-([files and external data](../guide/files-and-external-data.md)).
+`json()` infers the schema; declaring it, as for `SigninLogs`, is more
+repeatable ([files and external data](../guide/files-and-external-data.md),
+which also covers portal exports and large files).
 
 ## Hunting queries
 
-Failed sign-ins followed by a success, the shape of a password-spray
-or brute-force hit:
+Failed sign-ins followed by a success from the same address, the
+shape of a successful brute-force attempt:
 
 ```kql
 SigninLogs
-| summarize Failures = countif(ResultType != 0), Successes = countif(ResultType == 0),
-    FirstFailure = minif(TimeGenerated, ResultType != 0), LastSuccess = maxif(TimeGenerated, ResultType == 0)
+| summarize Failures = countif(ResultType != "0"), Successes = countif(ResultType == "0"),
+    FirstFailure = minif(TimeGenerated, ResultType != "0"), LastSuccess = maxif(TimeGenerated, ResultType == "0")
     by UserPrincipalName, IPAddress, Location
 | where Failures >= 2 and Successes > 0 and LastSuccess > FirstFailure
-| project UserPrincipalName, IPAddress, Location, Failures, Minutes = datetime_diff("minute", LastSuccess, FirstFailure)
+| project UserPrincipalName, IPAddress, Location, Failures, Seconds = datetime_diff("second", LastSuccess, FirstFailure)
 ```
 
 ```output
-UserPrincipalName    IPAddress     Location  Failures  Minutes
+UserPrincipalName    IPAddress     Location  Failures  Seconds
 ─────────────────    ─────────     ────────  ────────  ───────
-raj@contoso.example  198.51.100.7  IN        2         0
-ana@contoso.example  192.0.2.44    RU        3         1
+raj@contoso.example  198.51.100.7  IN        2         36
+ana@contoso.example  192.0.2.44    RU        3         62
 (2 rows)
 ```
 
-A user signing in from a country they have not used before:
+Password spraying looks different: one address failing against many
+users. Count distinct users per address:
+
+```kql
+SigninLogs
+| where ResultType != "0"
+| summarize Users = dcount(UserPrincipalName), Failures = count() by IPAddress
+| order by Users desc
+```
+
+```output
+IPAddress      Users  Failures
+─────────      ─────  ────────
+198.51.100.99  3      3
+198.51.100.7   1      2
+192.0.2.44     1      3
+(3 rows)
+```
+
+A successful sign-in from a country the user had not used before, or
+by a user with no history at all:
 
 ```kql
 let known = SigninLogs
     | where TimeGenerated < datetime(2026-10-01 09:00)
     | summarize KnownLocations = make_set(Location) by UserPrincipalName;
 SigninLogs
-| where TimeGenerated >= datetime(2026-10-01 09:00) and ResultType == 0
-| join kind=inner known on UserPrincipalName
-| where not(set_has_element(KnownLocations, Location))
+| where TimeGenerated >= datetime(2026-10-01 09:00) and ResultType == "0"
+| join kind=leftouter known on UserPrincipalName
+| where isnull(KnownLocations) or not(set_has_element(KnownLocations, Location))
 | project TimeGenerated, UserPrincipalName, Location, KnownLocations, AppDisplayName
 ```
 
@@ -66,11 +97,12 @@ SigninLogs
 TimeGenerated         UserPrincipalName    Location  KnownLocations  AppDisplayName
 ─────────────         ─────────────────    ────────  ──────────────  ──────────────
 2026-10-01T09:16:02Z  ana@contoso.example  RU        ["AU"]          Azure Portal
-(1 rows)
+2026-10-01T10:20:00Z  lee@contoso.example  AU                        SharePoint
+(2 rows)
 ```
 
-The same queries work as Sentinel analytics rules: the column names
-follow `SigninLogs`.
+These queries use only operators and functions Log Analytics
+supports, so they work as Sentinel analytics rules.
 
 ## Findings: what to fix first
 
@@ -114,9 +146,12 @@ tickets) is an ordinary `join` on the resource name.
 
 ## Keeping a triage record
 
-Because gokql databases are append-only, a triage log written as
-rows keeps its own history: who decided what, when, and what changed
-later.
+A triage log written as rows keeps its own history: a changed
+decision is a new row, so who decided what, when, and what changed
+later stays visible. It is a record, not tamper-proof storage: anyone
+who can write to the database can also replace or delete rows, so
+give everyone but the log's writer read-only access to it (`-readonly`,
+or a read-only server).
 
 ```kql
 .set-or-append Triage <| datatable(FindingId:string, Decision:string, Owner:string, Note:string)
@@ -126,7 +161,7 @@ later.
 
 ```kql
 CloudFindings
-| join kind=leftouter (Triage | summarize arg_max(_TimeReceived, *) by FindingId) on FindingId
+| join kind=leftouter (Triage | extend Ingested = ingestion_time() | summarize arg_max(Ingested, *) by FindingId) on FindingId
 | project FindingId, Severity, Resource, Decision = coalesce(Decision, "untriaged"), Owner
 | order by FindingId asc
 ```
@@ -146,9 +181,13 @@ wiz-004    LOW       kv-shared  accept     security
 An assistant given shell access and the [agent notes](../for-agents.md)
 can run these queries itself, iterate on them, and record its
 conclusions in the triage table. Open the database `-readonly` when it
-should only investigate. Sentinel-specific tables and functions
-(`_GetWatchlist`, ASIM parsers) are not built in; load watchlists as
-tables and define the parsers you need as stored functions.
+should only investigate, and read [security](../guide/security.md)
+first: read-only stops writes, not reads of local files or, by default,
+`externaldata` fetches. Sentinel-specific tables and functions
+(`_GetWatchlist`, ASIM parsers) are not built in; load a watchlist CSV
+as a table and define the parsers you need as stored functions.
+`geo_info_from_ip_address()` is not available; load a GeoIP CSV and
+use `evaluate ipv4_lookup(...)` against it instead.
 
 ## See also
 

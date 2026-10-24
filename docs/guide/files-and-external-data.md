@@ -30,7 +30,10 @@ UserPrincipalName    Location  Failures  Apps
 ─────────────────    ────────  ────────  ────
 ana@contoso.example  RU        3         ["Azure Portal"]
 raj@contoso.example  IN        2         ["Outlook"]
-(2 rows)
+ana@contoso.example  NL        1         ["Outlook"]
+raj@contoso.example  NL        1         ["Outlook"]
+lee@contoso.example  NL        1         ["Outlook"]
+(5 rows)
 ```
 
 `getschema` shows what was inferred:
@@ -96,8 +99,10 @@ MEDIUM    1
 (4 rows)
 ```
 
-`.ingest csv into table T from "path"` appends a CSV file to an
-existing table, skipping its header row, and
+ADX's `.ingest into table T (...) with (...)` appends files to an
+existing table, reading them as `externaldata` with the table's schema
+(so update policies run). `.ingest csv into table T from "path"` is a
+gokql shorthand for a CSV with a header row, and
 `.ingest inline into table T <| ...` takes CSV text in the command
 itself:
 
@@ -106,20 +111,27 @@ itself:
 ```
 
 ```kql
-.ingest csv into table SignIns from "./testdata/docs/signins.csv"
+.ingest into table SignIns ("./testdata/docs/signins.csv") with (format = "csv", ignoreFirstRecord = true)
+```
+
+```kql
+SignIns
+| summarize SignIns = count(), Users = dcount(UserPrincipalName)
 ```
 
 ```output
-Result                                                          RowsIngested  Extents
-──────                                                          ────────────  ───────
-Ingested 10 rows into SignIns from ./testdata/docs/signins.csv  10            1
+SignIns  Users
+───────  ─────
+13       3
 (1 rows)
 ```
 
 ## externaldata: ADX's way to read files
 
 `externaldata` declares the schema and reads files or URLs, as in ADX.
-It reads local paths, `file://` URIs and `http(s)` URLs, in the formats
+It reads local paths, `file://` URIs and `http(s)` URLs (ADX itself
+reads only URLs, such as blob storage, so a query with a local path
+does not port), in the formats
 `csv`, `tsv`, `psv`, `scsv`, `txt`, `json` and `multijson`, and
 decompresses `.gz`. The format comes from `with (format=...)` or the
 file extension:
@@ -137,8 +149,11 @@ externaldata(TimeGenerated: datetime, User: string, IP: string, Location: string
 User                 Location  count_
 ────                 ────────  ──────
 ana@contoso.example  RU        4
+ana@contoso.example  NL        1
+lee@contoso.example  NL        1
 raj@contoso.example  IN        3
-(2 rows)
+raj@contoso.example  NL        1
+(5 rows)
 ```
 
 JSON formats match columns by name:
@@ -160,6 +175,43 @@ db02   warn   slow query  1840
 
 Over HTTP, `externaldata` is allowed by default, as in ADX; a callout
 policy rule can deny it ([security](security.md)).
+
+## Exports from the Azure portal
+
+CSV files exported from the portal's query results (Log Analytics,
+Sentinel, Defender) have a few habits: headers such as
+`TimeGenerated [UTC]`, 12-hour timestamps (`10/1/2026, 7:58:12.000
+AM`), and `dynamic` columns written as JSON text. All three are
+handled in the query:
+
+```kql
+csv("./testdata/docs/portal-signins.csv")
+| project-rename TimeGenerated = ['TimeGenerated [UTC]']
+| extend TimeGenerated = todatetime(TimeGenerated), DeviceDetail = parse_json(DeviceDetail)
+| project TimeGenerated, UserPrincipalName, ResultType, OS = tostring(DeviceDetail.operatingSystem)
+```
+
+```output
+TimeGenerated         UserPrincipalName    ResultType  OS
+─────────────         ─────────────────    ──────────  ────
+2026-10-01T07:58:12Z  ana@contoso.example  0           Windows 11
+2026-10-01T09:15:00Z  ana@contoso.example  50126       Linux
+(2 rows)
+```
+
+Exports through the API or `az monitor log-analytics query` are JSON
+with ISO timestamps and read directly with `json()`. Data exported
+continuously to storage arrives as one JSON object per line
+(`ndjson()`, or `externaldata` with `format="multijson"`).
+
+## Large files
+
+`csv()`, `json()`, `ndjson()` and `externaldata` read the whole file
+into memory for the query. For exports larger than memory comfortably
+holds, load them into a table once (the table is stored compressed and
+scanned column by column), in parts if necessary: one `.ingest into`
+per file. `externaldata` accepts several files in one call and reads
+at most 1 GB per call.
 
 ## Work out a schema: infer_storage_schema
 

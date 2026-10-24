@@ -275,10 +275,10 @@ Descriptions are the first sentence of each entry's page in Microsoft's [KQL doc
 | Name | gokql | Description | Notes |
 |---|---|---|---|
 | [column_ifexists()](https://learn.microsoft.com/kusto/query/column-ifexists-function) | yes | Takes a column name as a string and a default value. Returns a reference to the column if it exists, otherwise - returns the default value. |  |
-| [current_cluster_endpoint()](https://learn.microsoft.com/kusto/query/current-cluster-endpoint-function) | yes | Returns the current cluster running the query. | The "cluster" name in .okql-federation.json, default localhost. |
+| [current_cluster_endpoint()](https://learn.microsoft.com/kusto/query/current-cluster-endpoint-function) | yes | Returns the current cluster running the query. | The "cluster" name in gokql.yaml, default localhost. |
 | [current_database()](https://learn.microsoft.com/kusto/query/current-database-function) | yes | Returns the name of the database in scope. |  |
-| [current_principal()](https://learn.microsoft.com/kusto/query/current-principal-function) | yes | Returns the current principal running this query. | The "principal" in .okql-federation.json. |
-| [current_principal_details()](https://learn.microsoft.com/kusto/query/current-principal-details-function) | yes | Returns details of the principal running the query. | Built from the "principal" in .okql-federation.json. |
+| [current_principal()](https://learn.microsoft.com/kusto/query/current-principal-function) | yes | Returns the current principal running this query. | The "principal" in gokql.yaml. |
+| [current_principal_details()](https://learn.microsoft.com/kusto/query/current-principal-details-function) | yes | Returns details of the principal running the query. | Built from the "principal" in gokql.yaml. |
 | [current_principal_is_member_of()](https://learn.microsoft.com/kusto/query/current-principal-is-member-of-function) | yes | Checks group membership or principal identity of the current principal running the query. |  |
 | [cursor_after()](https://learn.microsoft.com/kusto/query/cursor-after-function) | yes | Used to access to the records that were ingested after the previous value of the cursor. | Over _TimeReceived; null for rows without one. |
 | [estimate_data_size()](https://learn.microsoft.com/kusto/query/estimate-data-size-function) | yes | Returns an estimated data size of the selected columns of the tabular expression. |  |
@@ -293,7 +293,7 @@ Descriptions are the first sentence of each entry's page in Microsoft's [KQL doc
 | [around()](https://learn.microsoft.com/kusto/query/around-function) | yes | Creates a `bool` value indicating if the first argument is within a range around the center value. |  |
 | [array_iif()](https://learn.microsoft.com/kusto/query/array-iff-function) | yes | Element-wise `iif` function on dynamic arrays. |  |
 | [arraylength()](https://learn.microsoft.com/kusto/query/array-length-function) | yes | Calculates the number of elements in a dynamic array. |  |
-| [assert()](https://learn.microsoft.com/kusto/query/assert-function) | yes | Checks for a condition. |  |
+| [assert()](https://learn.microsoft.com/kusto/query/assert-function) | yes | Checks for a condition. | Evaluated per row and with any expression; ADX requires a condition that is constant at query-analysis time, so row-level validation with assert() is gokql-only. |
 | [bag_has_key()](https://learn.microsoft.com/kusto/query/bag-has-key-function) | yes | Checks whether a dynamic property bag object contains a given key. |  |
 | [bag_zip()](https://learn.microsoft.com/kusto/query/bag-zip) | yes | Creates a dynamic property-bag from two input dynamic arrays. |  |
 | [base64_decodestring()](https://learn.microsoft.com/kusto/query/base64-decode-tostring-function) | yes | Decodes a base64 string to a UTF-8 string. |  |
@@ -427,8 +427,8 @@ Descriptions are the first sentence of each entry's page in Microsoft's [KQL doc
 
 | Name | gokql | Description | Notes |
 |---|---|---|---|
-| [cluster()](https://learn.microsoft.com/kusto/query/cluster-function) | yes | Changes the reference of the query to a remote cluster. | Clusters come from .okql-federation.json (guide/cluster.md). |
-| [database()](https://learn.microsoft.com/kusto/query/database-function) | yes | Changes the reference of the query to a specific database within the cluster scope. | Databases are this scope and the aliases of .okql-federation.json; database('*') and wildcards work in union, find and search. |
+| [cluster()](https://learn.microsoft.com/kusto/query/cluster-function) | yes | Changes the reference of the query to a remote cluster. | Clusters come from gokql.yaml (guide/cluster.md). |
+| [database()](https://learn.microsoft.com/kusto/query/database-function) | yes | Changes the reference of the query to a specific database within the cluster scope. | Databases are this one and those listed in gokql.yaml; database('*') and wildcards work in union, find and search. |
 | [external_table()](https://learn.microsoft.com/kusto/query/external-table-function) | **no** | References an external table by name. | No external tables: read files with externaldata. |
 | [graph()](https://learn.microsoft.com/kusto/query/graph-function) | yes | The `graph` function is an intrinsic function that enables querying of a persisted graph entity, similar to the `cluster()`, `database()`, `external_table()`, and `table()` functions. | Persistent graph models (.create-or-alter graph_model, .make graph_snapshot). |
 | [materialize()](https://learn.microsoft.com/kusto/query/materialize-function) | yes | Captures the value of a tabular expression for the duration of the query execution so that it can be referenced multiple times by the query without recalculation. |  |

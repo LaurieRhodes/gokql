@@ -1,8 +1,9 @@
 # gokql documentation
 
 Start with [getting started](getting-started.md). Every KQL example in
-these pages is run by the test suite (`cmd/gokql/docs_examples_test.go`)
-and the output shown is what gokql prints.
+these pages that is not marked as needing a network or your own files
+is run by the test suite (`cmd/gokql/docs_examples_test.go`), and the
+output shown is what gokql prints.
 
 ## Use cases
 

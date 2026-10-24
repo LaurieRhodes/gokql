@@ -2134,7 +2134,7 @@
   "description": "Returns the current cluster running the query.",
   "url": "https://learn.microsoft.com/kusto/query/current-cluster-endpoint-function",
   "supported": true,
-  "note": "The \"cluster\" name in .okql-federation.json, default localhost."
+  "note": "The \"cluster\" name in gokql.yaml, default localhost."
  },
  {
   "kind": "function",
@@ -2151,7 +2151,7 @@
   "description": "Returns the current principal running this query.",
   "url": "https://learn.microsoft.com/kusto/query/current-principal-function",
   "supported": true,
-  "note": "The \"principal\" in .okql-federation.json."
+  "note": "The \"principal\" in gokql.yaml."
  },
  {
   "kind": "function",
@@ -2160,7 +2160,7 @@
   "description": "Returns details of the principal running the query.",
   "url": "https://learn.microsoft.com/kusto/query/current-principal-details-function",
   "supported": true,
-  "note": "Built from the \"principal\" in .okql-federation.json."
+  "note": "Built from the \"principal\" in gokql.yaml."
  },
  {
   "kind": "function",
@@ -2244,7 +2244,8 @@
   "category": "Other scalar functions",
   "description": "Checks for a condition.",
   "url": "https://learn.microsoft.com/kusto/query/assert-function",
-  "supported": true
+  "supported": true,
+  "note": "Evaluated per row and with any expression; ADX requires a condition that is constant at query-analysis time, so row-level validation with assert() is gokql-only."
  },
  {
   "kind": "function",
@@ -3125,7 +3126,7 @@
   "description": "Changes the reference of the query to a remote cluster.",
   "url": "https://learn.microsoft.com/kusto/query/cluster-function",
   "supported": true,
-  "note": "Clusters come from .okql-federation.json (guide/cluster.md)."
+  "note": "Clusters come from gokql.yaml (guide/cluster.md)."
  },
  {
   "kind": "function",
@@ -3134,7 +3135,7 @@
   "description": "Changes the reference of the query to a specific database within the cluster scope.",
   "url": "https://learn.microsoft.com/kusto/query/database-function",
   "supported": true,
-  "note": "Databases are this scope and the aliases of .okql-federation.json; database('*') and wildcards work in union, find and search."
+  "note": "Databases are this one and those listed in gokql.yaml; database('*') and wildcards work in union, find and search."
  },
  {
   "kind": "function",
@@ -4153,7 +4154,7 @@
   "kind": "plugin",
   "name": "python",
   "category": "Language plugins",
-  "description": "",
+  "description": "Runs a user-defined function using a Python script.",
   "url": "https://learn.microsoft.com/kusto/query/python-plugin",
   "supported": false,
   "note": "Not implemented: would embed an interpreter."
@@ -4701,7 +4702,7 @@
   "description": "Alias statements allow you to define an alias for a database, which can be used in the same query.",
   "url": "https://learn.microsoft.com/kusto/query/alias-statement",
   "supported": true,
-  "note": "Resolves through the cluster layer (.okql-federation.json)."
+  "note": "Resolves through the cluster layer (gokql.yaml)."
  },
  {
   "kind": "statement",

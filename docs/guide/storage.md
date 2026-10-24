@@ -43,7 +43,9 @@ that reads back as an array.
 
 ## History and ingestion time
 
-Writes add extents and never modify existing ones. Each row gets a
+Writes add extents and never modify existing ones. `.set-or-replace`,
+`.delete table T records` and `.compact` write new extents and mark the
+old ones superseded (renamed, still on disk until `.gc`). Each row gets a
 hidden `_TimeReceived` column with the time of the write that added
 it. It does not appear in `T` or `project *` output, but can be named
 in any query; `ingestion_time()` returns it, and
@@ -71,13 +73,13 @@ first    true
 Any number of gokql processes, CLI or `-serve`, can read and append to
 one directory at the same time. Writes are new files, so they do not
 contend; a long-running engine notices extents written by others.
-`.compact` is the one operation that rewrites, and it takes an
-exclusive lock on `_scope.lock` while statements take a shared one, so
-no reader ever sees rows twice. The lock is released if a process
-dies.
+`.compact` takes an exclusive lock on `_scope.lock` while every other
+statement takes a shared one, so no reader ever sees rows twice. The
+lock is released if a process dies.
 
-`-readonly` opens a database so that every write command is refused.
-Give read-only access to anything that should only look.
+`_TimeReceived` is the wall-clock time of the write in nanoseconds:
+later commands on one machine get later stamps, and rows of one command
+share a stamp.
 
 ## Compaction and cleanup
 

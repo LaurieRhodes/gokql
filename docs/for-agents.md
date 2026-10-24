@@ -3,7 +3,7 @@
 This page is written for a language model that will use gokql through
 a shell. It assumes you already know KQL; it lists how to run gokql,
 where it differs from Azure Data Explorer, and how to recover from
-errors. Every statement here is checked against the engine.
+errors.
 
 ## Running queries
 
@@ -14,9 +14,16 @@ gokql -db <DIR> -mode csv < script.kql       # several statements
 
 - Use `-mode jsonl` (one JSON object per row) or `-mode csv` for
   results you will read; the default `table` mode is for people.
-- Put the query in single quotes and use double quotes inside it. For
-  long or multi-line queries, pipe them on stdin with a quoted heredoc
-  (`<<'EOF'`), which avoids shell quoting entirely.
+- Always pass `-db` with an absolute path, and `-e` for a single
+  statement (a lone argument is guessed to be a query or a directory).
+- Put the query in single quotes and use double quotes for strings
+  inside it; an apostrophe inside a double-quoted KQL string needs no
+  escaping. For writes, long or multi-line queries, send them on stdin
+  with a quoted heredoc (`<<'EOF'`), which avoids shell quoting; a
+  quoted heredoc does not expand `$VARIABLES`. Statements on stdin are
+  separated by blank lines; the full rules are in
+  [the CLI reference](reference/cli.md#statements-on-stdin-and-in-files).
+  Every statement runs even if an earlier one failed.
 - On error, gokql prints one line, `Error: ...`, to stderr and exits
   with status 1. Read the message; it usually names the fix.
 - `-readonly` refuses all writes. Use it whenever you only need to look.
@@ -46,9 +53,10 @@ defined).
    "N-2", "Second note", "report.pdf p3"]
 ```
 
-- Writes append. There is no update: to change a record, append a new
-  row with the same key, and read the latest with
-  `T | summarize arg_max(_TimeReceived, *) by Id`.
+- Writes append. To change a record, append a new row with the same
+  key, and read the latest with
+  `T | summarize arg_max(_TimeReceived, *) by Id`. Fix mistakes the
+  same way; do not use `.drop` or `.delete` unless asked.
 - Write many rows per command (one `datatable`), not one command per
   row.
 - The query must supply every column of an existing table, matched by
@@ -61,8 +69,8 @@ defined).
   `dynamic` ones.
 - `.set-or-append` creates the table if it does not exist;
   `.create-merge table T (...)` declares one up front.
-- Never write two versions of the same record in one command: they get
-  the same `_TimeReceived`.
+- Never write two rows with the same key in one command: they get the
+  same `_TimeReceived`. Separate commands get later stamps.
 
 ## Where gokql differs from ADX
 
@@ -72,11 +80,12 @@ defined).
 | Strings | Never null, as in ADX: test with `isempty()`, not `isnull()`. |
 | Row order | Unspecified without `order by`, as in ADX, and may differ from ADX. Sort whenever order matters. |
 | Databases | A database is a directory, named after it. Other databases come from the directory's `gokql.yaml` and are read-only from here; `database("name").T` and `cluster("name").database("name").T` work as in ADX. |
-| Outbound calls | `http_request`, `ai_*` plugins and remote `externaldata` need a callout policy rule in `gokql.yaml`. You cannot add one with a command; ask the operator. |
+| Outbound calls | `http_request` and the `ai_*` plugins need a callout policy rule in `gokql.yaml`; `externaldata` over http is allowed unless a rule denies it. You cannot change the policy with a command; ask the operator. |
 | Sentinel and Defender | Their tables, ASIM parsers and `_GetWatchlist` are not built in. |
 | Charts | `render` is accepted and ignored. |
+| GQL, openCypher | `#crp query_language=gql` (or `opencypher`) and `#crp query_graph_reference=<graph>` lines before the query; `#crp` sets a client request property. |
 | Not available | `python()`, `R()`, the SQL/MySQL/PostgreSQL/Cosmos DB request plugins, `external_table()`, `stored_query_result()`, `geo_info_from_ip_address()`. |
-| gokql additions | `csv()`, `json()`, `ndjson()`, `parquet()` read files as tables; `embed_text()`, `.embed-into` and `.chunk-file` do embeddings; GQL and openCypher run with `#crp query_language=gql` / `opencypher`. |
+| gokql additions | `csv()`, `json()`, `ndjson()`, `parquet()`, `vortex()` read files as tables; `embed_text()`, `.embed-into` and `.chunk-file` do embeddings. |
 
 Whether a specific operator, function, aggregation or plugin is
 supported is in [reference/support.json](reference/support.json)
@@ -87,7 +96,7 @@ supported is in [reference/support.json](reference/support.json)
 | Error contains | Cause and fix |
 |---|---|
 | `table "X" not found` | Wrong name (names are case sensitive) or wrong database: `.show tables`, `.show databases`. |
-| `column "X" not found` | Check `getschema`. A column added later may be missing from older rows' tables until written. |
+| `column "X" not found` | Check `getschema` for the exact name (case sensitive). |
 | `query result is missing column "X"` | A write must supply every column: add `X = <typed null>`. |
 | `with (extend_schema=true)` | The write adds a column the table lacks: add the option, or drop the column. |
 | `unsupported function: f` | Not implemented (see `support.json`), or a typo. |

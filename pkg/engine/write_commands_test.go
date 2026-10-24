@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -135,4 +137,18 @@ func TestUpdatePolicy(t *testing.T) {
 	diskExec(t, eng, `.delete table Claims policy update`)
 	expectWrRows(t, eng, `.show table Claims policy update | project Policy`, "null")
 	expectErrContains(t, eng, `.alter table Claims policy update @'[{"Source": "Nope", "Query": "1"}]'`, "not found")
+}
+
+// ADX's .ingest into table T (uris) with (...).
+func TestIngestInto(t *testing.T) {
+	eng := diskEngineEmpty(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "a.csv")
+	if err := os.WriteFile(p, []byte("Id,N\na,1\nb,2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectErrContains(t, eng, `.ingest into table T (h@"`+p+`") with (format="csv", ignoreFirstRecord=true)`, "does not exist")
+	diskExec(t, eng, `.create table T (Id:string, N:long)`)
+	diskExec(t, eng, `.ingest into table T (h@"`+p+`") with (format="csv", ignoreFirstRecord=true)`)
+	expectWrRows(t, eng, `T | order by Id asc`, "a | 1", "b | 2")
 }

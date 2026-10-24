@@ -33,6 +33,21 @@ stays writable locally (`server.readonly`, [serving](serving.md)).
 Databases reached through the [local cluster](cluster.md) are always
 read-only from the database that lists them.
 
+Read-only stops writes to the database. It does not stop a query from
+reading: `csv()`, `json()`, `externaldata` and the other file sources
+can read any file the gokql process can, and `externaldata` over http
+is allowed by default (below). For an agent or a server whose queries
+you do not fully control, run gokql as a user whose file access is
+limited to what queries may see, and deny `external_data` callouts:
+
+```yaml
+readonly: true
+callouts:
+  - CalloutType: external_data   # no fetching from anywhere
+    CalloutUriRegex: .*
+    CanCall: false
+```
+
 ## Outbound calls: the callout policy
 
 Queries reach outside the process only through:
@@ -89,8 +104,7 @@ Cluster immutable policy  [{"CalloutType":"external_data","CalloutUriRegex":".*"
 
 Local files read by `csv()`, `json()`, `externaldata` and the like are
 not covered by the policy: anything the gokql process can read, a
-query can read. Run gokql as a user whose file access matches what
-queries should see.
+query can read.
 
 ## Keys and secrets
 
@@ -111,10 +125,21 @@ HTTPS) requests carrying an `Authorization` header are refused.
 ## Serving
 
 `gokql -serve` has no authentication, like the Kusto emulator whose
-protocol it speaks. Bind it to localhost (`-addr 127.0.0.1:8080`) or a
-trusted network, use `-readonly` where clients should only query, and
-use TLS (`server.tls` in `gokql.yaml`) if it crosses a network. Put an authenticating proxy in front of it for anything
-wider. See [serving](serving.md).
+protocol it speaks. Every client can run any query the server process
+could: read local files through the file sources, and fetch URLs
+through `externaldata` unless the callout policy denies it. So:
+
+- It listens on `127.0.0.1:8080` (this machine) unless told otherwise;
+  widen `-addr` only to a trusted network.
+- Use `-readonly` or `server.readonly: true` where clients should only
+  query (both refuse writes from clients; the top-level `readonly`
+  also refuses them from the local CLI).
+- Deny `external_data` callouts and run the server as a user with
+  access only to its data, as above.
+- Use TLS (`server.tls` in `gokql.yaml`) if it crosses a network, and
+  put an authenticating proxy in front of it for anything wider.
+
+See [serving](serving.md).
 
 ## Multiple writers
 

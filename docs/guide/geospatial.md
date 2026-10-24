@@ -78,9 +78,10 @@ Ur      South
 (4 rows)
 ```
 
-Uruk lies in neither region and is left out; pass
-`return_unmatched = true` as the plugin's next argument to keep such
-rows with an empty region.
+Uruk lies in neither region and is left out; add the argument
+`return_unmatched = true` to keep such
+rows with an empty region (named, as here, or positionally after the
+optional radius).
 
 ## Shapes
 

@@ -333,6 +333,15 @@ func ParseValue(s string, typ KQLType) (Value, error) {
 			"1/2/2006 15:04:05",
 			"1/2/2006 15:04",
 			"1/2/2006",
+			// 12-hour times, as Azure portal CSV exports write them
+			// (the emulator parses "10/1/2026 7:58:12.000 AM"); a comma
+			// after the date ("10/1/2026, 7:58:12 AM") is accepted too.
+			"1/2/2006 3:04:05 PM",
+			"1/2/2006 3:04:05.000 PM",
+			"1/2/2006 3:04 PM",
+			"1/2/2006, 3:04:05 PM",
+			"1/2/2006, 3:04:05.000 PM",
+			"1/2/2006, 3:04 PM",
 			// M-d-yyyy too (the emulator: "12-02-2022" is 2 Dec 2022).
 			"1-2-2006 15:04:05",
 			"1-2-2006 15:04",

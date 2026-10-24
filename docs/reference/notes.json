@@ -11,11 +11,11 @@
  "function:percentile_array_tdigest": "Rejected by ADX itself; use percentiles_array_tdigest().",
  "function:external_table": "No external tables: read files with externaldata.",
  "function:stored_query_result": "Not supported.",
- "function:cluster": "Clusters come from .okql-federation.json (guide/cluster.md).",
- "function:database": "Databases are this scope and the aliases of .okql-federation.json; database('*') and wildcards work in union, find and search.",
- "function:current_cluster_endpoint": "The \"cluster\" name in .okql-federation.json, default localhost.",
- "function:current_principal": "The \"principal\" in .okql-federation.json.",
- "function:current_principal_details": "Built from the \"principal\" in .okql-federation.json.",
+ "function:cluster": "Clusters come from gokql.yaml (guide/cluster.md).",
+ "function:database": "Databases are this one and those listed in gokql.yaml; database('*') and wildcards work in union, find and search.",
+ "function:current_cluster_endpoint": "The \"cluster\" name in gokql.yaml, default localhost.",
+ "function:current_principal": "The \"principal\" in gokql.yaml.",
+ "function:current_principal_details": "Built from the \"principal\" in gokql.yaml.",
  "function:cursor_current": "Cursors are over the engine-stamped _TimeReceived.",
  "function:cursor_after": "Over _TimeReceived; null for rows without one.",
  "function:cursor_before_or_at": "Over _TimeReceived; null for rows without one.",
@@ -54,8 +54,9 @@
  "operator:reduce": "Drain-style clustering with ADX's output shape; suited to log lines.",
  "operator:graph-match": "Also reachable from GQL and openCypher (guide/graphs.md).",
  "operator:partition": "All strategies run the same way on one node.",
- "statement:Alias": "Resolves through the cluster layer (.okql-federation.json).",
+ "statement:Alias": "Resolves through the cluster layer (gokql.yaml).",
  "statement:Restrict": "Not supported: restriction belongs to a multi-tenant service.",
  "statement:Set": "query_now, query_bin_auto_size/at and truncationmaxrecords take effect; other options are accepted.",
- "statement:Query parameters": "The HTTP server reads properties.Parameters."
+ "statement:Query parameters": "The HTTP server reads properties.Parameters.",
+ "function:assert": "Evaluated per row and with any expression; ADX requires a condition that is constant at query-analysis time, so row-level validation with assert() is gokql-only."
 }

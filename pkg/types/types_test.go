@@ -229,3 +229,21 @@ func TestParseISODateMatchesLayout(t *testing.T) {
 		}
 	}
 }
+
+// Azure portal CSV exports write 12-hour times; the emulator parses them.
+func TestParseDatetimePortalFormats(t *testing.T) {
+	for in, want := range map[string]string{
+		"10/1/2026 7:58:12 AM":      "2026-10-01T07:58:12Z",
+		"10/1/2026 7:58:12.000 PM":  "2026-10-01T19:58:12Z",
+		"10/1/2026, 7:58:12.000 AM": "2026-10-01T07:58:12Z",
+		"12/31/2026 12:00:00 AM":    "2026-12-31T00:00:00Z",
+	} {
+		v, err := ParseValue(in, TypeDatetime)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got := FormatValue(v, TypeDatetime); got != want {
+			t.Errorf("%q = %s, want %s", in, got, want)
+		}
+	}
+}

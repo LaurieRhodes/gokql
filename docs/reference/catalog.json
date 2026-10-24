@@ -3601,7 +3601,7 @@
   "kind": "plugin",
   "name": "python",
   "category": "Language plugins",
-  "description": "",
+  "description": "Runs a user-defined function using a Python script.",
   "url": "https://learn.microsoft.com/kusto/query/python-plugin"
  },
  {

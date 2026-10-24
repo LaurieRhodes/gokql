@@ -1145,6 +1145,31 @@ func parseCommand(input string) (Statement, error) {
 		return parseCreateTable(input[len(".create table "):], false)
 	}
 
+	// .ingest [async] into table T (uri, ...) [with (...)]: ADX's form
+	if strings.HasPrefix(lower, ".ingest into table ") || strings.HasPrefix(lower, ".ingest async into table ") {
+		rest := input[strings.Index(lower, "into table ")+len("into table "):]
+		open := strings.Index(rest, "(")
+		if open < 0 {
+			return nil, fmt.Errorf(".ingest into table T (uri, ...) [with (...)]: expected (")
+		}
+		end := findMatchingParen(rest, open)
+		if end < 0 {
+			return nil, fmt.Errorf(".ingest into: unmatched (")
+		}
+		cmd := &IngestIntoCmd{TableName: strings.TrimSpace(rest[:open]), URIs: rest[open+1 : end]}
+		tail := strings.TrimSpace(rest[end+1:])
+		if tail != "" {
+			if !strings.HasPrefix(keywordFold(tail), "with") {
+				return nil, fmt.Errorf(".ingest into: unexpected %q", tail)
+			}
+			cmd.With = tail
+		}
+		if cmd.TableName == "" || strings.TrimSpace(cmd.URIs) == "" {
+			return nil, fmt.Errorf(".ingest into table T (uri, ...): table and at least one source are required")
+		}
+		return cmd, nil
+	}
+
 	// .ingest csv into table T from "path"
 	if strings.HasPrefix(lower, ".ingest csv into table ") {
 		rest := input[len(".ingest csv into table "):]

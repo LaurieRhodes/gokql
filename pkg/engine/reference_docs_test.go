@@ -345,6 +345,29 @@ func TestReferenceDocs(t *testing.T) {
 	js, _ := json.MarshalIndent(rows, "", " ")
 	pages["support.json"] = string(js) + "\n"
 
+	// the coverage tables in README.md and docs/compatibility.md
+	cov := func(label string, kinds ...string) string {
+		n, m := count(kinds...)
+		return fmt.Sprintf("| %s | %d of %d |", label, n, m)
+	}
+	for file, lines := range map[string][]string{
+		filepath.Join("..", "..", "README.md"): {cov("Tabular operators", "operator"), cov("Scalar functions", "function"),
+			cov("Aggregation functions", "aggregation"), cov("Window functions", "window"), cov("Plugins (`evaluate`)", "plugin")},
+		filepath.Join("..", "..", "docs", "compatibility.md"): {cov("Tabular operators", "operator"), cov("Scalar functions", "function"),
+			cov("Aggregation functions", "aggregation"), cov("Window functions", "window"), cov("Scalar operators", "scalar-operator"),
+			cov("Query statements", "statement"), cov("Plugins", "plugin")},
+	} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range lines {
+			if !strings.Contains(string(b), l) {
+				t.Errorf("%s: its coverage table should contain %q", file, l)
+			}
+		}
+	}
+
 	var stale []string
 	for name, content := range pages {
 		p := filepath.Join(dir, name)

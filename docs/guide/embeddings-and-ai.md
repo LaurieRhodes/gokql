@@ -2,10 +2,9 @@
 
 gokql can turn text into embedding vectors, store them in tables, and
 rank rows by similarity, so semantic search joins and filters like any
-other query. It can also call language models row by row. These are
-the only features that talk to anything outside the process, and each
-is either explicitly configured or allowed by the
-[callout policy](security.md).
+other query. It can also call language models row by row. Each call
+outside the process goes either to the embedding backend you configure
+or to an endpoint the [callout policy](security.md) allows.
 
 | Surface | Standard KQL? | What it does |
 |---|---|---|

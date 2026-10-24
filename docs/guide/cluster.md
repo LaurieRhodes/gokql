@@ -43,7 +43,7 @@ databases:              # the other databases of this cluster
     path: /data/scopes/texts
 clusters:               # other clusters, by their primary database
   - name: archive
-    path: /data/archive/primary
+    path: /data/archive/archive
 ```
 
 | Field | Meaning |
@@ -55,7 +55,9 @@ clusters:               # other clusters, by their primary database
 | `callouts` | The callout policy ([security](security.md)). |
 
 Paths must be absolute. The databases need no configuration of their
-own.
+own. A database's name is its directory's name: `stars` above, and
+`archive` for the other cluster's primary database, which is why the
+query below reads `cluster("archive").database("archive")`.
 
 ## Querying across databases
 

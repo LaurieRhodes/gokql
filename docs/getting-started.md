@@ -10,8 +10,9 @@ HTTP. It assumes you have built the binary ([install](../README.md#install)).
 gokql -db ./scope -e '.create table Tasks (Id: string, Title: string, Status: string, Priority: long)'
 ```
 
-`./scope` is created on the first write. From now on it holds one
-`.vtx` file per write ("extent"), each carrying its own schema. There
+`./scope` is created on the first write. From now on it holds the
+`.vtx` files ("extents") that each write adds, each carrying its own
+schema. There
 is no other state: copy the directory and you have copied the database.
 Without `-db`, gokql uses a temporary in-memory database.
 
@@ -20,12 +21,8 @@ The examples below are KQL; run each with
 
 ## 2. Write rows
 
-`.set-or-append` appends the rows of any query. A `datatable` literal is
-the usual way to write a batch:
-
-```kql
-.create table Tasks (Id: string, Title: string, Status: string, Priority: long)
-```
+`.set-or-append` appends the rows of any query, creating the table if
+needed. A `datatable` literal is the usual way to write a batch:
 
 ```kql
 .set-or-append Tasks <| datatable(Id:string, Title:string, Status:string, Priority:long)
@@ -135,11 +132,10 @@ agent that should only look.
 ## 5. Pipes and scripts
 
 Without `-e`, gokql reads statements from stdin when it is not a
-terminal. A statement may span lines: a line continues it when the
-statement has an open bracket or ends with `|`, `,` or `;`, or when the
-line starts with `|`. A blank line ends a statement. Whole-line `//`
-comments are skipped. Every statement runs; if any fails, the exit
-status is 1. `.read FILE` in the REPL follows the same rules.
+terminal. Separate statements with a blank line; a statement may span
+lines (the exact rules are in
+[the CLI reference](reference/cli.md#statements-on-stdin-and-in-files)).
+Every statement runs; if any fails, the exit status is 1.
 
 ```bash
 cat <<'EOF' | gokql -db ./scope -mode csv
@@ -153,10 +149,9 @@ EOF
 
 ## 6. The REPL
 
-`gokql -db ./scope` with a terminal opens an interactive prompt. Besides
-KQL and the management commands, it understands `.mode`, `.timer`,
-`.schema [T]`, `.output FILE`, `.read FILE`, `.open PATH`, `.help` and
-`.quit`. `~/.gokqlrc` may set `.mode` and `.timer` at start-up
+`gokql -db ./scope` with a terminal opens an interactive prompt for KQL,
+management commands and the REPL commands listed in
+[the CLI reference](reference/cli.md#repl). `~/.gokqlrc` may set `.mode` and `.timer` at start-up
 (`-no-rc` skips it).
 
 ## 7. Query files without loading them
@@ -174,14 +169,15 @@ these and loading them into tables.
 ## 8. Serve over HTTP
 
 ```bash
-gokql -serve -db ./scope -addr :8080
+gokql -serve -db ./scope -addr 127.0.0.1:8080
 ```
 
 The server speaks the Kusto REST protocol (`POST /v1/rest/query` and
 `/v1/rest/mgmt`), so Kusto clients and
 [kustainer-ui](https://github.com/LaurieRhodes/kustainer-ui) can use
-it. It has no authentication: see [serving](guide/serving.md) before
-exposing it beyond your machine.
+it. It listens on this machine only by default and has no
+authentication: see [serving](guide/serving.md) before exposing it
+further.
 
 ## Next
 

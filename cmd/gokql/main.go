@@ -109,7 +109,7 @@ func main() {
 	noRC := flag.Bool("no-rc", false, "Don't load ~/.gokqlrc")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	serveFlag := flag.Bool("serve", false, "Network mode: serve -db over HTTP, speaking Kustainer's REST protocol (POST /v1/rest/query, /v1/rest/mgmt). Single database, no auth — see server.go's file-level doc comment before exposing beyond a trusted network.")
-	serveAddr := flag.String("addr", ":8080", "Address to listen on in -serve mode")
+	serveAddr := flag.String("addr", "127.0.0.1:8080", "Address to listen on in -serve mode (default: this machine only; use :8080 for every interface)")
 	dbNameFlag := flag.String("dbname", "", "Database name clients must send in -serve mode (defaults to -db's final path component)")
 	writeConfig := flag.Bool("write-config", false, "Write gokql.yaml into -db: converted from the older .okql-*.json files if present, else a commented template; then exit")
 	embedCheck := flag.Bool("embed-check", false, "Probe the configured embedding backend and report whether it is ready, then exit")

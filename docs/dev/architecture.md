@@ -71,8 +71,8 @@ A database is the set of `<Table>_<id>.vtx` files in a directory.
 size and modification time) and groups them into tables; there is no
 catalog file. Each extent is written to a temporary name and renamed
 into place, so readers never see a partial extent. A shared or
-exclusive `flock` on `_scope.lock` keeps `.compact`, the one operation
-that rewrites, consistent with concurrent readers.
+exclusive `flock` on `_scope.lock` keeps `.compact` (the one operation
+that takes the exclusive lock) consistent with concurrent readers.
 
 Column encodings, zone statistics and the file format come from
 [vortex-go](https://github.com/LaurieRhodes/vortex-go). System tables

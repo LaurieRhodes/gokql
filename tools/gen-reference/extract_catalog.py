@@ -164,6 +164,8 @@ for it in items:
                "Time series analysis": "Series processing functions"}.get(sec, sec)
     if not desc:
         desc = first_sentence(it["href"])
+    if not desc:  # pages that open with an include
+        desc = {"python": "Runs a user-defined function using a Python script."}.get(name, "")
     key = (kind, name)
     if key in entries:
         continue

@@ -1367,6 +1367,17 @@ type DropExtentCmd struct {
 func (*DropExtentCmd) statementNode() {}
 
 // IngestCSVCmd: .ingest csv into table T from "path"
+// IngestIntoCmd is ADX's .ingest into table T (uri, ...) with (...):
+// the sources are read as externaldata with T's schema and appended
+// (update policies run). URIs and With are the raw texts.
+type IngestIntoCmd struct {
+	TableName string
+	URIs      string
+	With      string
+}
+
+func (*IngestIntoCmd) statementNode() {}
+
 type IngestCSVCmd struct {
 	TableName string
 	FilePath  string

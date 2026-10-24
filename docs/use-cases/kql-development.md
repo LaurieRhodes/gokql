@@ -14,21 +14,21 @@ parameters make that explicit:
 
 ```kql
 .create-or-alter function with (docstring = "Users with N or more failed sign-ins in a window")
-BruteForceCandidates(Signins: (TimeGenerated: datetime, UserPrincipalName: string, ResultType: long), threshold: long = 3, window: timespan = 10m) {
+BruteForceCandidates(Signins: (TimeGenerated: datetime, UserPrincipalName: string, ResultType: string), threshold: long = 3, window: timespan = 10m) {
     Signins
-    | where ResultType != 0
+    | where ResultType != "0"
     | summarize Failures = count() by UserPrincipalName, Window = bin(TimeGenerated, window)
     | where Failures >= threshold
 }
 ```
 
 ```kql
-let fixture = datatable(TimeGenerated: datetime, UserPrincipalName: string, ResultType: long)
-  [datetime(2026-10-01 09:00:01), "ana", 50126,
-   datetime(2026-10-01 09:00:05), "ana", 50126,
-   datetime(2026-10-01 09:00:09), "ana", 50126,
-   datetime(2026-10-01 09:00:20), "raj", 50126,
-   datetime(2026-10-01 09:01:00), "raj", 0];
+let fixture = datatable(TimeGenerated: datetime, UserPrincipalName: string, ResultType: string)
+  [datetime(2026-10-01 09:00:01), "ana", "50126",
+   datetime(2026-10-01 09:00:05), "ana", "50126",
+   datetime(2026-10-01 09:00:09), "ana", "50126",
+   datetime(2026-10-01 09:00:20), "raj", "50126",
+   datetime(2026-10-01 09:01:00), "raj", "0"];
 BruteForceCandidates(fixture)
 ```
 
@@ -43,12 +43,14 @@ ana                2026-10-01T09:00:00Z  3
 
 `assert()` fails the query when its condition is false, so a test is
 a query that either returns or errors, and gokql's exit status turns
-that into pass or fail:
+that into pass or fail. (These tests are for gokql: ADX accepts only
+constant conditions in `assert()`. The functions under test are
+portable; the assertions are not.)
 
 ```kql
-let fixture = datatable(TimeGenerated: datetime, UserPrincipalName: string, ResultType: long)
-  [datetime(2026-10-01 09:00:01), "ana", 50126,
-   datetime(2026-10-01 09:00:05), "ana", 50126];
+let fixture = datatable(TimeGenerated: datetime, UserPrincipalName: string, ResultType: string)
+  [datetime(2026-10-01 09:00:01), "ana", "50126",
+   datetime(2026-10-01 09:00:05), "ana", "50126"];
 let got = toscalar(BruteForceCandidates(fixture, 2) | count);
 print ok = assert(got == 1, strcat("expected 1 candidate, got ", tostring(got)))
 ```
@@ -61,8 +63,8 @@ true
 ```
 
 ```kql error
-let fixture = datatable(TimeGenerated: datetime, UserPrincipalName: string, ResultType: long)
-  [datetime(2026-10-01 09:00:01), "ana", 0];
+let fixture = datatable(TimeGenerated: datetime, UserPrincipalName: string, ResultType: string)
+  [datetime(2026-10-01 09:00:01), "ana", "0"];
 let got = toscalar(BruteForceCandidates(fixture) | count);
 print ok = assert(got == 1, strcat("expected 1 candidate, got ", tostring(got)))
 ```
@@ -71,9 +73,12 @@ print ok = assert(got == 1, strcat("expected 1 candidate, got ", tostring(got)))
 Error: print: assert() has failed with message: 'expected 1 candidate, got 0'
 ```
 
-Keep tests as `.kql` files and run them in CI:
+Keep the functions and the tests as `.kql` files and run them in CI:
+first load the functions into a fresh database, then run each test:
 
 ```bash
+rm -rf ./build/db
+for f in functions/*.kql; do gokql -db ./build/db < "$f" || exit 1; done
 for t in tests/*.kql; do
   gokql -db ./build/db -mode csv < "$t" > /dev/null || { echo "FAIL $t"; exit 1; }
 done
@@ -82,7 +87,7 @@ done
 Statements in a piped file run in order; any failure makes the exit
 status 1 ([getting started](../getting-started.md#5-pipes-and-scripts)).
 
-## Update policies and materialized views
+## Update policies
 
 Ingestion-time logic is the hardest to test in a service, because it
 only runs when data arrives. Locally it runs on every append:
@@ -128,12 +133,23 @@ Time                  Host   Level  Message
 
 The same policy JSON and function deploy to ADX unchanged.
 
+## Sentinel and Log Analytics
+
+Microsoft Sentinel runs on Log Analytics, which supports a subset of
+ADX's KQL: no management commands, no `http_request` or most other
+plugins, and its own tables (`SigninLogs`, `SecurityEvent`, ...) with
+their own column types, such as `SigninLogs.ResultType` being a
+string. gokql accepts the full ADX language, so a query that passes
+here can still be rejected by Sentinel. Keep analytics-rule queries to
+operators and functions Log Analytics documents, give fixture tables
+the real Sentinel schema, and test the final rule in the workspace.
+
 ## How close is "the same"?
 
 gokql is checked against Microsoft's documentation examples and the
-Kusto emulator: 983 of the 1,041 deterministic examples agree, and the
-differences are results ADX leaves unspecified, such as the order of
-rows without `order by` ([compatibility](../compatibility.md)). Write
+Kusto emulator: 983 of the 1,042 deterministic examples agree, and
+most differences are results ADX leaves unspecified, such as the order
+of rows without `order by` ([compatibility](../compatibility.md)). Write
 tests that do not depend on unspecified order (sort, or compare sets),
 and they will hold on both engines. Sentinel-specific tables, ASIM
 functions and `_GetWatchlist` are not built in; define stand-ins as

@@ -29,14 +29,14 @@ database directory.
 | `-v` | false | Print scan diagnostics to stderr |
 | `-version` | | Print the version and build (VCS revision) and exit |
 | `-serve` | false | Serve `-db` over HTTP ([serving](../guide/serving.md)) |
-| `-addr ADDR` | `:8080` | Listen address for `-serve` (overrides `server.addr`) |
+| `-addr ADDR` | `127.0.0.1:8080` | Listen address for `-serve` (overrides `server.addr`); `:8080` listens on every interface |
 | `-dbname NAME` | directory name | Database name clients send to `-serve` (overrides `server.name`) |
 | `-write-config` | | Write `gokql.yaml` into `-db` (a template, or converted from older JSON files) and exit |
 | `-embed-check` | | Probe the embedding backend and report whether it is ready, then exit |
 | `-embed-setup` | | Write a setup script for a local embedding server, then exit (writes only; runs nothing) |
 | `-embed-setup-path FILE` | `setup-embeddings.sh` | Where `-embed-setup` writes |
 | `-embed-eval FILE` | | Run a retrieval-quality eval set against `-db`, report recall@K and MRR, then exit |
-| `-embed-eval-table T` | `E` | Embeddings table for `-embed-eval` |
+| `-embed-eval-table T` | `E` | The embeddings table `-embed-eval` searches (written by `.embed-into`) |
 | `-embed-eval-chunks QUERY` | `Chunks \| project Id, Text` | Subquery giving Id and Text for `-embed-eval` |
 | `-embed-eval-min X` | `0.8` | Minimum recall@K for `-embed-eval` to exit 0 |
 | `-discover` | | Accepted for old scripts; has no effect |
@@ -54,13 +54,19 @@ database directory.
 
 ## Statements on stdin and in files
 
-A statement may span lines. A line continues the statement before it
-when that statement has an open bracket, string or ```` ``` ```` block,
-or ends with `|`, `,` or `;`, or when the line starts with `|`, `[`,
-`(`, `,`, `)`, `]` or `}`. A blank line ends a statement, as does any
-other line. A statement that starts with `#crp` lines (GQL or
-openCypher) runs to the next blank line. Whole-line `//` comments are
-skipped. `.read FILE` in the REPL follows the same rules.
+Separate statements with a blank line. Within a statement, a new line
+continues it when:
+
+- the statement so far has an unclosed bracket, string or
+  ```` ``` ```` block, or ends with `|`, `,` or `;`; or
+- the line, after leading spaces, starts with `|`, `[`, `(`, `,`, `)`,
+  `]` or `}`.
+
+Any other line starts a new statement. A statement that begins with
+`#crp` lines (client request properties, used for GQL and openCypher)
+runs to the next blank line. Whole-line `//` comments are skipped.
+`.read FILE` in the REPL follows the same rules. Every statement runs,
+even after one fails; the exit status is then 1.
 
 ## REPL
 

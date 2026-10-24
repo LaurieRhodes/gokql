@@ -4,8 +4,11 @@
 protocol of the Kusto emulator, so Kusto clients and tools can use it.
 
 ```bash
-gokql -serve -db ./scope -addr 127.0.0.1:8080
+gokql -serve -db ./scope                 # listens on 127.0.0.1:8080
 ```
+
+There is no authentication: read [security](security.md#serving)
+before listening on anything but this machine.
 
 ## Protocol
 

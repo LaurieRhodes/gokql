@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/LaurieRhodes/gokql/pkg/catalog"
+	"github.com/LaurieRhodes/gokql/pkg/parser"
 	"github.com/LaurieRhodes/gokql/pkg/types"
 )
 
@@ -576,4 +577,33 @@ func (e *Engine) mergeExtents(tableName string) (*types.Table, error) {
 		int64(totalRows),
 	})
 	return result, nil
+}
+
+// ingestInto implements .ingest into table T (uri, ...) with (...):
+// the sources are read as externaldata with T's schema (local paths,
+// file:// and http(s) under the callout policy; format and
+// ignoreFirstRecord as externaldata takes them) and appended as
+// .append would, so update policies run.
+func (e *Engine) ingestInto(cmd *parser.IngestIntoCmd) (*types.Table, error) {
+	def := e.Catalog.GetTable(cmd.TableName)
+	if def == nil {
+		return nil, fmt.Errorf(".ingest into: table %q does not exist; create it first (.create table)", cmd.TableName)
+	}
+	var cols []string
+	for _, c := range def.Schema.Columns {
+		if c.Name == timeReceivedColumnName {
+			continue
+		}
+		cols = append(cols, "['"+strings.ReplaceAll(c.Name, "'", "\\'")+"']:"+c.Type.String())
+	}
+	src := "externaldata(" + strings.Join(cols, ", ") + ") [" + cmd.URIs + "] " + cmd.With
+	stmt, err := parser.Parse(src)
+	if err != nil {
+		return nil, fmt.Errorf(".ingest into: %w", err)
+	}
+	q, ok := stmt.(*parser.Query)
+	if !ok {
+		return nil, fmt.Errorf(".ingest into: unexpected source")
+	}
+	return e.setOrAppend(&parser.SetOrAppendCmd{TableName: cmd.TableName, Mode: "append", Query: q})
 }

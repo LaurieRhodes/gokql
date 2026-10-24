@@ -99,7 +99,7 @@ func loadServerConfig(dbPath, addrFlag, dbNameFlag string, verbose bool, explici
 	cfg := serverConfig{
 		dbPath:  dbPath,
 		dbName:  filepath.Base(filepath.Clean(dbPath)),
-		addr:    ":8080",
+		addr:    "127.0.0.1:8080", // this machine only: there is no authentication
 		verbose: verbose,
 	}
 	f, err := config.Load(dbPath)

@@ -4,12 +4,13 @@
 
 Key facts for a model using gokql:
 
-- Writes append (`.set-or-append T <| datatable(...)[...]`); there is no in-place update. The current version of a record is `T | summarize arg_max(_TimeReceived, *) by Id`.
+- Writes append (`.set-or-append T <| datatable(...)[...]`). Change a record, or fix a mistake, by appending a new row with the same key; the current version is `T | summarize arg_max(_TimeReceived, *) by Id`.
 - Every row has a hidden `_TimeReceived` column. Strings are never null.
 - A write must supply every column of an existing table; extra columns need `with (extend_schema=true)`.
 - Errors are one line on stderr with exit status 1; `-readonly` refuses writes.
 - Other databases are configured in the directory's `gokql.yaml` and queried with `database("name")` / `cluster("name").database("name")`.
-- `http_request`, the `ai_*` plugins and remote `externaldata` need a callout policy rule in `gokql.yaml`.
+- `http_request` and the `ai_*` plugins need a callout policy rule in `gokql.yaml` (externaldata over http is allowed unless denied).
+- Always pass `-db <absolute path>`; use `-e` for one statement, or send statements on stdin with a quoted heredoc, separated by blank lines.
 - Not available: python(), R(), SQL request plugins, external_table(), stored_query_result(), geo_info_from_ip_address().
 
 ## Start here
@@ -30,7 +31,8 @@ Key facts for a model using gokql:
 - [Configuration: gokql.yaml](docs/reference/configuration.md)
 - [Compatibility with ADX](docs/compatibility.md)
 
-## Guides
+## Optional
+
 
 - [Writing data](docs/guide/writing-data.md): write commands, current state, update policies, materialized views, stored functions
 - [Storage](docs/guide/storage.md): extents, concurrency, compaction
@@ -42,14 +44,5 @@ Key facts for a model using gokql:
 - [Security](docs/guide/security.md)
 - [Serving over HTTP](docs/guide/serving.md)
 
-## Use cases
-
-- [Agent memory](docs/use-cases/agent-memory.md)
-- [Security data triage](docs/use-cases/security-triage.md)
-- [KQL development and testing](docs/use-cases/kql-development.md)
-- [Research knowledge graphs](docs/use-cases/research-graphs.md)
-- [A local cluster of databases](docs/use-cases/local-cluster.md)
-
-## Optional
-
+- [Agent memory](docs/use-cases/agent-memory.md), [security triage](docs/use-cases/security-triage.md), [KQL development](docs/use-cases/kql-development.md), [research graphs](docs/use-cases/research-graphs.md), [local cluster](docs/use-cases/local-cluster.md)
 - [Development](docs/dev/README.md): architecture, building, testing

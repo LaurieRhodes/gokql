@@ -634,6 +634,8 @@ func (e *Engine) execute(stmt parser.Statement) (*types.Table, error) {
 			return nil, err
 		}
 		return e.ingestInline(s.TableName, s.Data)
+	case *parser.IngestIntoCmd:
+		return e.ingestInto(s)
 	case *parser.IngestCSVCmd:
 		if err := e.checkDirectWrite(s.TableName, "ingest"); err != nil {
 			return nil, err

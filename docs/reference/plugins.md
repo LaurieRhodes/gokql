@@ -36,7 +36,7 @@ Descriptions are the first sentence of each entry's page in Microsoft's [KQL doc
 
 | Name | gokql | Description | Notes |
 |---|---|---|---|
-| [python](https://learn.microsoft.com/kusto/query/python-plugin) | **no** |  | Not implemented: would embed an interpreter. |
+| [python](https://learn.microsoft.com/kusto/query/python-plugin) | **no** | Runs a user-defined function using a Python script. | Not implemented: would embed an interpreter. |
 | [r](https://learn.microsoft.com/kusto/query/r-plugin) | **no** | The R plugin runs a user-defined function (UDF) using an R script. | Not implemented: would embed an interpreter. |
 
 ### Machine learning plugins
