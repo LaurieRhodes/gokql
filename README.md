@@ -80,7 +80,7 @@ suite, and the output shown is what gokql prints.
   compressed columns in parallel: counting, filtering and grouping ten
   million rows takes tens of milliseconds on a laptop
   ([performance](docs/performance.md)).
-- **Built for tools.** `-mode csv | tsv | json | jsonl`, errors as one
+- **Built for tools.** `-mode csv | tsv | json | jsonl | arrow`, errors as one
   line on stderr, non-zero exit on failure. An HTTP mode speaks the
   Kusto REST protocol for existing clients.
 - **More than queries.** Graphs (KQL `make-graph`/`graph-match`, plus

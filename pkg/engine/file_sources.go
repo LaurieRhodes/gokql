@@ -37,6 +37,10 @@ func (e *Engine) executeTableFunc(q *parser.Query) (*types.Table, error) {
 		result, err = readNDJSONFile(tf.Path)
 	case "parquet":
 		result, err = readParquetFile(tf.Path)
+	case "arrow":
+		result, err = readArrowFile(tf.Path)
+	case "vortex":
+		result, err = e.readVortexFile(tf.Path)
 	case "externaldata":
 		result, err = e.readExternalData(tf)
 		if err != nil {

@@ -112,7 +112,8 @@ equivalent on a single node.
   and `CASE` incorrectly).
 - **`render`** is accepted and returns the data unchanged.
 - **Additions**, all named so they cannot be mistaken for ADX:
-  `csv()`, `json()`, `ndjson()`, `parquet()`, `vortex()` sources;
+  `csv()`, `json()`, `ndjson()`, `parquet()`, `arrow()`, `vortex()`
+  sources; `-mode arrow` output;
   `embed_text()`, `.embed-into`, `.chunk-file`; `.compact`, `.gc`;
   `Atomic` in `.execute database script`; `BlockDirectWrites` in
   update policies; `.ingest csv into table T from "path"` (ADX's

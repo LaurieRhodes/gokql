@@ -116,7 +116,7 @@ Tasks      4     2
 ## 4. Output for programs
 
 The default output is a table for people. Programs should ask for
-`csv`, `tsv`, `json` or `jsonl`:
+`csv`, `tsv`, `json` or `jsonl` (or `arrow` for pandas and Polars):
 
 ```bash
 gokql -db ./scope -mode jsonl -e 'CurrentTasks() | project Id, Status | order by Id asc'
@@ -156,7 +156,7 @@ management commands and the REPL commands listed in
 
 ## 7. Query files without loading them
 
-`csv()`, `json()`, `ndjson()` and `parquet()` read a file as a table
+`csv()`, `json()`, `ndjson()`, `parquet()` and `arrow()` read a file as a table
 for one query, and `externaldata` reads files or URLs the way ADX does:
 
 ```bash

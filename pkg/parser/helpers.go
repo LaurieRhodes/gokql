@@ -500,7 +500,7 @@ func isValidIdentifier(s string) bool {
 
 func parseTableFunc(source string) *TableFunc {
 	lower := keywordFold(source)
-	for _, name := range []string{"csv", "json", "ndjson", "parquet", "vortex"} {
+	for _, name := range []string{"csv", "json", "ndjson", "parquet", "vortex", "arrow"} {
 		prefix := name + "("
 		if strings.HasPrefix(lower, prefix) && strings.HasSuffix(strings.TrimSpace(source), ")") {
 			// Extract the argument between parens

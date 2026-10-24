@@ -1,6 +1,6 @@
 # Files and external data
 
-gokql reads CSV, JSON and Parquet directly, loads them into tables, and
+gokql reads CSV, JSON, Parquet and Apache Arrow directly, loads them into tables, and
 can fetch data over HTTP when the callout policy allows it. The
 examples use the sample files in `testdata/docs/`, with paths relative
 to the repository root.
@@ -13,7 +13,8 @@ to the repository root.
 | `json("path")` | A JSON array of objects |
 | `ndjson("path")` | One JSON object per line |
 | `parquet("path")` | Apache Parquet |
-| `vortex("path")` | A single Vortex file |
+| `arrow("path")` | An Apache Arrow IPC file (Feather v2) or stream |
+| `vortex("path")` | One Vortex file, such as an extent of a gokql database |
 
 These are gokql additions for one-off work; they are not ADX syntax.
 For portable KQL use `externaldata`, below.
@@ -73,6 +74,58 @@ wiz-001  HIGH      vm-web-01  CVE-2023-4863
 wiz-003  CRITICAL  vm-db-02   CVE-2024-6387
 (3 rows)
 ```
+
+
+## Apache Arrow
+
+Arrow is how gokql exchanges tables with pandas, Polars, DuckDB and
+other columnar tools without going through text.
+
+`arrow("path")` reads the IPC file format (Feather v2, `.arrow`,
+`.feather`) and the IPC stream format. Integers become `long` (`int32`
+becomes `int`), floats and decimals `real`, timestamps and dates
+`datetime`, durations `timespan`, strings (dictionary-encoded or not)
+`string`, and lists, structs and maps `dynamic`. This file was written
+by pyarrow:
+
+```kql
+arrow("./testdata/docs/readings.arrow")
+| summarize Readings = count(), MaxC = max(Celsius) by Sensor
+| order by Sensor asc
+```
+
+```output
+Sensor  Readings  MaxC
+──────  ────────  ────
+s1      3         23
+s2      2         19.5
+s3      1         30.5
+(3 rows)
+```
+
+`-mode arrow` writes a query's result as an Arrow IPC stream:
+
+```bash
+gokql -db ./scope -mode arrow -e 'SigninLogs | where ResultType != 0' > failures.arrow
+```
+
+```python
+import pyarrow.ipc as ipc
+df = ipc.open_stream("failures.arrow").read_pandas()
+```
+
+| KQL | Arrow |
+|---|---|
+| `long`, `int`, `real`, `bool`, `string` | `int64`, `int32`, `float64`, `bool`, `utf8` |
+| `datetime` | `timestamp[ns, UTC]` |
+| `timespan` | `duration[ns]` |
+| `guid`, `decimal` | `utf8` |
+| `dynamic` | `utf8` holding JSON |
+
+Every field carries `kql.type` metadata, so `arrow()` reads gokql's own
+output back with its original types. A query that returns several
+results (`fork`, `facet`) is an error in this mode; use `-mode json`
+for those.
 
 ## Load a file into a table
 

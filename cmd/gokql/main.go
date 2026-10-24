@@ -92,7 +92,7 @@ func buildInfo() string {
 type replState struct {
 	eng        *engine.Engine
 	timer      bool
-	mode       string // table, csv, json, jsonl, tsv
+	mode       string // table, csv, json, jsonl, tsv, arrow
 	output     io.Writer
 	outputFile *os.File // non-nil if redirected to file
 }
@@ -105,7 +105,7 @@ func main() {
 	readOnly := flag.Bool("readonly", false, "Open database read-only")
 	// Accepted for existing scripts; every database is discovered.
 	_ = flag.Bool("discover", false, "No effect: every database is read from its extent files")
-	modeFlag := flag.String("mode", "table", "Output mode: table, csv, json, jsonl, tsv")
+	modeFlag := flag.String("mode", "table", "Output mode: table, csv, json, jsonl, tsv, arrow (Apache Arrow IPC stream)")
 	noRC := flag.Bool("no-rc", false, "Don't load ~/.gokqlrc")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	serveFlag := flag.Bool("serve", false, "Network mode: serve -db over HTTP, speaking Kustainer's REST protocol (POST /v1/rest/query, /v1/rest/mgmt). Single database, no auth — see server.go's file-level doc comment before exposing beyond a trusted network.")
@@ -448,6 +448,9 @@ func (st *replState) runCommand(input string) error {
 	case 1:
 		st.printResult(results[0])
 	default:
+		if st.mode == "arrow" {
+			return fmt.Errorf("-mode arrow writes one table; this query returns %d (fork/facet): use -mode json", len(results))
+		}
 		// fork / facet: each table under its name, blank-line separated
 		for i, r := range results {
 			if i > 0 {
@@ -476,6 +479,10 @@ func (st *replState) printResult(t *types.Table) {
 		st.printJSON(t)
 	case "jsonl":
 		st.printJSONL(t)
+	case "arrow":
+		if err := writeArrow(st.output, t); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
 	default:
 		st.printTable(t)
 	}
@@ -603,11 +610,11 @@ func (st *replState) handleMode(input string) {
 	}
 	mode := strings.ToLower(parts[1])
 	switch mode {
-	case "table", "csv", "json", "jsonl", "tsv":
+	case "table", "csv", "json", "jsonl", "tsv", "arrow":
 		st.mode = mode
 		fmt.Fprintf(st.output, "Mode: %s\n", st.mode)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown mode %q. Options: table, csv, json, jsonl, tsv\n", mode)
+		fmt.Fprintf(os.Stderr, "Unknown mode %q. Options: table, csv, json, jsonl, tsv, arrow\n", mode)
 	}
 }
 
@@ -813,6 +820,7 @@ File queries:
   json("file.json") | take 10            Query JSON array file
   ndjson("file.jsonl") | count           Query newline-delimited JSON
   parquet("file.parquet") | take 10      Query Apache Parquet file
+  arrow("file.arrow") | take 10          Query Apache Arrow IPC file
 
 Management:
   .create table T (Col1: type, ...)      Create table
@@ -829,7 +837,7 @@ REPL commands:
   .open [PATH]                           Switch database (no arg = in-memory)
   .schema [TABLE]                        Show table schema(s)
   .timer [on|off]                        Show query execution time
-  .mode [table|csv|json|jsonl|tsv]       Output format
+  .mode [table|csv|json|jsonl|tsv|arrow] Output format
   .output [FILE|-]                       Redirect output to file
   .read FILE                             Execute KQL script file
   .version                               Show version
@@ -852,7 +860,7 @@ func looksLikePath(s string) bool {
 	if strings.Contains(s, "|") {
 		return false
 	}
-	for _, prefix := range []string{"csv(", "json(", "ndjson(", "parquet(", "vortex(", "print ", "union "} {
+	for _, prefix := range []string{"csv(", "json(", "ndjson(", "parquet(", "vortex(", "arrow(", "print ", "union "} {
 		if strings.HasPrefix(lower, prefix) {
 			return false
 		}
