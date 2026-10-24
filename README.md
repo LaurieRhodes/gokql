@@ -23,6 +23,7 @@ gokql -db ./notes -mode jsonl -e 'Findings | where Confidence == "tested"'
 | **Security data triage** | Sentinel-style hunting queries over exported logs, Wiz or Defender findings, CSV and JSON, on a laptop | [security triage](docs/use-cases/security-triage.md) |
 | **KQL development** | Write and test queries, functions and update policies offline before they reach ADX | [KQL development](docs/use-cases/kql-development.md) |
 | **Research knowledge graphs** | Facts linked to their sources, competing hypotheses side by side, queried as graphs (KQL, GQL or openCypher) | [research graphs](docs/use-cases/research-graphs.md) |
+| **Exploratory reasoning** | Hypotheses generated from alternative definitions, tested by queries, with doubt propagating along if/then edges and a frontier of what to check next | [exploratory reasoning](docs/use-cases/exploratory-reasoning.md) |
 | **A local "cluster"** | Several specialised databases queried together with `database()` and `cluster()` | [local cluster](docs/use-cases/local-cluster.md) |
 
 ## A taste

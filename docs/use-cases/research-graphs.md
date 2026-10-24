@@ -165,12 +165,13 @@ The gate's opening faces away from the channel  The gate is a drain outlet
 ## Working with assumption variants
 
 Keeping hypotheses side by side means asking "if we assume X, what
-follows?" without deleting the alternative. Tag claims with the
-assumption set they belong to (`Variant`), or record each variant's
-computed result as its own rows, and compare with ordinary
-aggregation. Because every write is timestamped, a variant explored
-and abandoned remains visible as history, which is the point: the
-record of what was tried is part of the research.
+follows?" without deleting the alternative.
+[Exploratory reasoning](exploratory-reasoning.md) takes this further:
+alternative definitions are listed as data, every combination becomes
+a hypothesis tested by a query, and doubt about an assumption
+propagates to everything that rests on it. A variant explored and
+abandoned remains visible as history, which is the point: the record
+of what was tried is part of the research.
 
 ## Practical notes
 
@@ -185,5 +186,6 @@ record of what was tried is part of the research.
 
 ## See also
 
+- [Exploratory reasoning](exploratory-reasoning.md): generating and testing hypothesis variants from alternative definitions
 - [Graphs](../guide/graphs.md): graph-match, graph models, GQL and openCypher in full
 - [Agent memory](agent-memory.md)

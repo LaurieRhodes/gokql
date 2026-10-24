@@ -13,6 +13,7 @@ output shown is what gokql prints.
 | [Security data triage](use-cases/security-triage.md) | Hunting and summarising exported sign-in logs, cloud findings and alerts |
 | [KQL development](use-cases/kql-development.md) | Writing and testing queries, functions and update policies before they reach ADX |
 | [Research knowledge graphs](use-cases/research-graphs.md) | Claims linked to evidence, competing hypotheses, corrections that cascade |
+| [Exploratory reasoning](use-cases/exploratory-reasoning.md) | Generating hypotheses from alternative definitions, testing every variant by query, propagating doubt, ranking what to check next |
 | [A local cluster](use-cases/local-cluster.md) | Specialised databases kept apart and queried together |
 
 ## Guides

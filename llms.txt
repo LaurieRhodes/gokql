@@ -44,5 +44,5 @@ Key facts for a model using gokql:
 - [Security](docs/guide/security.md)
 - [Serving over HTTP](docs/guide/serving.md)
 
-- [Agent memory](docs/use-cases/agent-memory.md), [security triage](docs/use-cases/security-triage.md), [KQL development](docs/use-cases/kql-development.md), [research graphs](docs/use-cases/research-graphs.md), [local cluster](docs/use-cases/local-cluster.md)
+- [Agent memory](docs/use-cases/agent-memory.md), [security triage](docs/use-cases/security-triage.md), [KQL development](docs/use-cases/kql-development.md), [research graphs](docs/use-cases/research-graphs.md), [exploratory reasoning](docs/use-cases/exploratory-reasoning.md), [local cluster](docs/use-cases/local-cluster.md)
 - [Development](docs/dev/README.md): architecture, building, testing
